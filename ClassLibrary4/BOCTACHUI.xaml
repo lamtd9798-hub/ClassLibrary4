@@ -1,0 +1,139 @@
+﻿<UserControl x:Class="ClassLibrary4.BOCTACHUI"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             Background="White" Width="360" Height="600"
+             Unloaded="UserControl_Unloaded">
+    <Grid>
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="8*"/>
+            <ColumnDefinition/>
+        </Grid.ColumnDefinitions>
+        <TabControl Margin="5,5,5,5" Background="#FFF9F9F9" TabStripPlacement="Right" Grid.ColumnSpan="2">
+            <TabControl.ItemContainerStyle>
+                <Style TargetType="TabItem">
+                    <Setter Property="LayoutTransform">
+                        <Setter.Value>
+                            <RotateTransform Angle="90"/>
+                        </Setter.Value>
+                    </Setter>
+                    <Setter Property="Padding" Value="15,10"/>
+                    <Setter Property="FontSize" Value="13"/>
+                    <Setter Property="FontWeight" Value="Bold"/>
+                    <Setter Property="Background" Value="#FFE6E6E6"/>
+                </Style>
+            </TabControl.ItemContainerStyle>
+
+            <!-- TAB 1: ỐNG -->
+            <TabItem Header="1. ỐNG">
+                <Grid Margin="10" VerticalAlignment="Top">
+                    <StackPanel Orientation="Vertical">
+
+                        <!-- CHỌN HỆ THỐNG -->
+                        <TextBlock Text="Chọn hệ thống ống:" FontWeight="Bold" Margin="0,0,0,5" Foreground="#FF333333"/>
+                        <ComboBox Name="CmbHeThong" Height="30" FontSize="13" Margin="0,0,0,12" SelectionChanged="CmbHeThong_SelectionChanged">
+                            <ComboBoxItem Content="Chữa cháy _ FF"/>
+                            <ComboBoxItem Content="Báo cháy _ FA"/>
+                            <ComboBoxItem Content="Exit _ EX"/>
+                            <ComboBoxItem Content="Cấp thoát nước _ PL"/>
+                            <ComboBoxItem Content="Điều hòa không khí _ HVAC"/>
+                            <ComboBoxItem Content="Hút khói _ SM"/>
+                            <ComboBoxItem Content="Thông gió _ TG"/>
+                        </ComboBox>
+
+                        <!-- CHỌN VẬT LIỆU ỐNG -->
+                        <TextBlock Text="Chọn vật liệu ống:" FontWeight="Bold" Margin="0,0,0,5" Foreground="#FF333333"/>
+                        <ComboBox Name="CmbVatLieuOng" Height="30" FontSize="13" SelectionChanged="CmbVatLieuOng_SelectionChanged" Margin="0,0,0,12">
+                        </ComboBox>
+
+                        <!-- HÀNG CHUNG: SIZE ỐNG VÀ TÙY CHỌN -->
+                        <Grid Margin="0,0,0,5">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="1.2*"/>
+                                <ColumnDefinition Width="10"/>
+                                <ColumnDefinition Width="1*"/>
+                            </Grid.ColumnDefinitions>
+
+                            <!-- CỘT TRÁI: DANH SÁCH SIZE -->
+                            <StackPanel Grid.Column="0">
+                                <TextBlock Text="Size ống:" FontWeight="Bold" Margin="0,0,0,5" Foreground="#FF333333"/>
+                                <ListBox Name="LstSizeOng" Height="140" FontSize="13" Margin="0,0,0,5" ScrollViewer.VerticalScrollBarVisibility="Auto" BorderBrush="#FFCCCCCC" KeyDown="LstSizeOng_KeyDown"/>
+                                <TextBox Name="TxtCustomSize" Height="30" FontSize="13" Padding="4" ToolTip="Nhập kích thước (ấn Enter để thêm)" KeyDown="TxtCustomSize_KeyDown"/>
+                            </StackPanel>
+
+                            <!-- CỘT PHẢI: TÙY CHỌN ỐNG NƯỚC (ÁP SUẤT & NƯỚC THẢI) -->
+                            <StackPanel Grid.Column="2" Name="PnlApSuat">
+
+                                <StackPanel Orientation="Horizontal" Margin="0,0,0,5">
+                                    <TextBlock Text="Áp suất:" FontWeight="Bold" Foreground="#FF333333" VerticalAlignment="Center"/>
+                                    <CheckBox Name="ChkApSuat" Margin="5,0,0,0" VerticalAlignment="Center" Cursor="Hand"/>
+                                </StackPanel>
+                                <ComboBox Name="CmbApSuat" Height="30" FontSize="13" SelectedIndex="0" IsEnabled="{Binding IsChecked, ElementName=ChkApSuat}">
+                                    <ComboBoxItem Content="PN5"/>
+                                    <ComboBoxItem Content="PN6"/>
+                                    <ComboBoxItem Content="PN8"/>
+                                    <ComboBoxItem Content="PN10"/>
+                                    <ComboBoxItem Content="PN12"/>
+                                    <ComboBoxItem Content="PN16"/>
+                                    <ComboBoxItem Content="PN20"/>
+                                </ComboBox>
+
+                                <StackPanel Orientation="Horizontal" Margin="0,15,0,5">
+                                    <TextBlock Text="Nước thải:" FontWeight="Bold" Foreground="#FF333333" VerticalAlignment="Center"/>
+                                    <CheckBox Name="ChkNuocThai" Margin="5,0,0,0" VerticalAlignment="Center" Cursor="Hand"/>
+                                </StackPanel>
+                                <ComboBox Name="CmbNuocThai" Height="30" FontSize="13" SelectedIndex="0" IsEnabled="{Binding IsChecked, ElementName=ChkNuocThai}">
+                                    <ComboBoxItem Content="Thải phân _ WS"/>
+                                    <ComboBoxItem Content="Thải SH _ WW"/>
+                                    <ComboBoxItem Content="Thông hơi _ VP"/>
+                                </ComboBox>
+
+                            </StackPanel>
+                        </Grid>
+
+                        <!-- NÚT VẼ ỐNG VÀ TẠO LAYER -->
+                        <Button Name="BtnVeOng" Content="VẼ ỐNG (POLYLINE)" Height="40" FontSize="15" FontWeight="Bold" Background="#FF0078D7" Foreground="White" Margin="0,15,0,0" Cursor="Hand" Click="BtnVeOng_Click"/>
+
+                    </StackPanel>
+                </Grid>
+            </TabItem>
+
+            <!-- TAB 2: THIẾT BỊ -->
+            <TabItem Header="2. THIẾT BỊ">
+                <Grid>
+                    <TextBlock Text="Chức năng vẽ/đếm Thiết bị sẽ cập nhật sau..." HorizontalAlignment="Center" VerticalAlignment="Center" Foreground="Gray" FontStyle="Italic"/>
+                </Grid>
+            </TabItem>
+
+            <!-- TAB 3: THỐNG KÊ -->
+            <TabItem Header="3. THỐNG KÊ">
+                <Grid Margin="5">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                    </Grid.RowDefinitions>
+                    <Button Content="1. Quét Bảng Đối Chiếu" Height="35" Click="BtnQuetBang_Click" FontSize="14" FontWeight="Bold" Background="#FF28A745" Foreground="White" Margin="0,0,0,10"/>
+                    <Button Content="2. Quét Khối Lượng" Height="35" Click="BtnQuetMatBang_Click" FontSize="14" FontWeight="Bold" Background="#FF0078D7" Foreground="White" Grid.Row="1" Margin="0,0,0,10"/>
+                    <DataGrid Name="DgvKetQua" Grid.Row="2" AutoGenerateColumns="False" CanUserAddRows="False" HeadersVisibility="Column" GridLinesVisibility="All" AlternatingRowBackground="#FFF0F0F0" SelectionChanged="DgvKetQua_SelectionChanged" SelectionMode="Single">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Tên Thiết Bị" Width="200" Binding="{Binding TenHienThi}"/>
+                            <DataGridTextColumn Header="SL" Width="50" Binding="{Binding SoLuong}" IsReadOnly="True"/>
+                        </DataGrid.Columns>
+                    </DataGrid>
+                </Grid>
+            </TabItem>
+
+            <TabItem Header="4. EXCEL">
+                <Grid>
+                    <TextBlock Text="Chức năng xuất Excel sẽ cập nhật sau..." HorizontalAlignment="Center" VerticalAlignment="Center" Foreground="Gray" FontStyle="Italic"/>
+                </Grid>
+            </TabItem>
+
+            <TabItem Header="5. NÂNG CAO">
+                <Grid>
+                    <TextBlock Text="Các cài đặt hệ thống sẽ nằm ở đây..." HorizontalAlignment="Center" VerticalAlignment="Center" Foreground="Gray" FontStyle="Italic"/>
+                </Grid>
+            </TabItem>
+        </TabControl>
+    </Grid>
+</UserControl>
