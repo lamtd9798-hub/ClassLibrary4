@@ -463,6 +463,19 @@
                                                 </ToolTip>
                                             </Button.ToolTip>
                                         </Button>
+
+                                        <Button x:Name="BtnDatThietBiMau" Content="ĐẶT THIẾT BỊ MẪU"
+                                                Height="36" FontSize="13" FontWeight="Bold"
+                                                Background="#FF00875A" Foreground="White"
+                                                Margin="0,8,0,0" Cursor="Hand"
+                                                Click="BtnDatThietBiMau_Click">
+                                            <Button.ToolTip>
+                                                <ToolTip>
+                                                    <TextBlock MaxWidth="260" TextWrapping="Wrap"
+                                                               Text="ĐẶT THIẾT BỊ MẪU: Chọn 1 text + 1 block mẫu đã đặt, Enter rồi quét vùng. Tool tìm các block giống mẫu và tự đặt text y hệt vị trí tương đối."/>
+                                                </ToolTip>
+                                            </Button.ToolTip>
+                                        </Button>
                                     </StackPanel>
                                 </Grid>
 
@@ -479,8 +492,27 @@
                                         </Style>
                                     </Grid.Style>
                                     <StackPanel>
-                                        <TextBlock Text="THỐNG KÊ CHỮA CHÁY" FontWeight="Bold" FontSize="13" Foreground="#FF0078D7" Margin="0,0,0,8"/>
-                                        <TextBlock Text="Bạn xây dựng nội dung riêng của tab THỐNG KÊ tại đây." Foreground="Gray"/>
+                                        <TextBlock Text="THỐNG KÊ CHỮA CHÁY" FontWeight="Bold" FontSize="13" Foreground="#FF0078D7" Margin="0,0,0,10"/>
+                                        <Button Content="THỐNG KÊ ỐNG" Height="40" FontSize="14" FontWeight="Bold"
+                                                Background="#FF0078D7" Foreground="White" Margin="0,0,0,8" Cursor="Hand"
+                                                Click="BtnThongKeOng_Click">
+                                            <Button.ToolTip>
+                                                <ToolTip>
+                                                    <TextBlock MaxWidth="260" TextWrapping="Wrap"
+                                                               Text="THỐNG KÊ ỐNG: Quét chọn vùng chứa đường ống. Tool tính tổng chiều dài theo Layer, sắp xếp theo Hệ thống rồi theo Kích thước. Đơn vị: mét."/>
+                                                </ToolTip>
+                                            </Button.ToolTip>
+                                        </Button>
+                                        <Button Content="THỐNG KÊ THIẾT BỊ + VAN" Height="40" FontSize="14" FontWeight="Bold"
+                                                Background="#FF00875A" Foreground="White" Cursor="Hand"
+                                                Click="BtnThongKeThietBiVan_Click">
+                                            <Button.ToolTip>
+                                                <ToolTip>
+                                                    <TextBlock MaxWidth="260" TextWrapping="Wrap"
+                                                               Text="THỐNG KÊ THIẾT BỊ + VAN: Quét chọn vùng. Tool đếm số lượng text thiết bị/van theo Layer, sắp xếp theo Hệ thống rồi tên. Đơn vị: cái."/>
+                                                </ToolTip>
+                                            </Button.ToolTip>
+                                        </Button>
                                     </StackPanel>
                                 </Grid>
                             </Grid>
@@ -921,6 +953,19 @@
                                                 </ToolTip>
                                             </Button.ToolTip>
                                         </Button>
+
+                                        <Button x:Name="BtnDatThietBiMauACMV" Content="ĐẶT THIẾT BỊ MẪU"
+                                                Height="36" FontSize="13" FontWeight="Bold"
+                                                Background="#FF00875A" Foreground="White"
+                                                Margin="0,8,0,0" Cursor="Hand"
+                                                Click="BtnDatThietBiMau_Click">
+                                            <Button.ToolTip>
+                                                <ToolTip>
+                                                    <TextBlock MaxWidth="260" TextWrapping="Wrap"
+                                                               Text="ĐẶT THIẾT BỊ MẪU: Chọn 1 text + 1 block mẫu đã đặt, Enter rồi quét vùng. Tool tìm các block giống mẫu và tự đặt text y hệt vị trí tương đối."/>
+                                                </ToolTip>
+                                            </Button.ToolTip>
+                                        </Button>
                                     </StackPanel>
                                 </Grid>
 
@@ -937,8 +982,27 @@
                                         </Style>
                                     </Grid.Style>
                                     <StackPanel>
-                                        <TextBlock Text="THỐNG KÊ ACMV" FontWeight="Bold" FontSize="13" Foreground="#FF0078D7" Margin="0,0,0,8"/>
-                                        <TextBlock Text="Bạn xây dựng nội dung riêng của tab THỐNG KÊ tại đây." Foreground="Gray"/>
+                                        <TextBlock Text="THỐNG KÊ ACMV" FontWeight="Bold" FontSize="13" Foreground="#FF0078D7" Margin="0,0,0,10"/>
+                                        <Button Content="THỐNG KÊ ỐNG" Height="40" FontSize="14" FontWeight="Bold"
+                                                Background="#FF0078D7" Foreground="White" Margin="0,0,0,8" Cursor="Hand"
+                                                Click="BtnThongKeOng_Click">
+                                            <Button.ToolTip>
+                                                <ToolTip>
+                                                    <TextBlock MaxWidth="260" TextWrapping="Wrap"
+                                                               Text="THỐNG KÊ ỐNG: Quét chọn vùng chứa đường ống. Tool tính tổng chiều dài theo Layer, sắp xếp theo Hệ thống rồi theo Kích thước. Đơn vị: mét."/>
+                                                </ToolTip>
+                                            </Button.ToolTip>
+                                        </Button>
+                                        <Button Content="THỐNG KÊ THIẾT BỊ + VAN" Height="40" FontSize="14" FontWeight="Bold"
+                                                Background="#FF00875A" Foreground="White" Cursor="Hand"
+                                                Click="BtnThongKeThietBiVan_Click">
+                                            <Button.ToolTip>
+                                                <ToolTip>
+                                                    <TextBlock MaxWidth="260" TextWrapping="Wrap"
+                                                               Text="THỐNG KÊ THIẾT BỊ + VAN: Quét chọn vùng. Tool đếm số lượng text thiết bị/van theo Layer, sắp xếp theo Hệ thống rồi tên. Đơn vị: cái."/>
+                                                </ToolTip>
+                                            </Button.ToolTip>
+                                        </Button>
                                     </StackPanel>
                                 </Grid>
                             </Grid>
@@ -1174,6 +1238,19 @@
 
                                         <Button x:Name="BtnDatThietBiCTN" Content="ĐẶT THIẾT BỊ" Height="36" FontSize="14" FontWeight="Bold"
                                                 Background="#FF0078D7" Foreground="White" Margin="0,10,0,0" Cursor="Hand" Click="BtnDatThietBi_Click"/>
+
+                                        <Button x:Name="BtnDatThietBiMauCTN" Content="ĐẶT THIẾT BỊ MẪU"
+                                                Height="36" FontSize="13" FontWeight="Bold"
+                                                Background="#FF00875A" Foreground="White"
+                                                Margin="0,8,0,0" Cursor="Hand"
+                                                Click="BtnDatThietBiMau_Click">
+                                            <Button.ToolTip>
+                                                <ToolTip>
+                                                    <TextBlock MaxWidth="260" TextWrapping="Wrap"
+                                                               Text="ĐẶT THIẾT BỊ MẪU: Chọn 1 text + 1 block mẫu đã đặt, Enter rồi quét vùng. Tool tìm các block giống mẫu và tự đặt text y hệt vị trí tương đối."/>
+                                                </ToolTip>
+                                            </Button.ToolTip>
+                                        </Button>
                                     </StackPanel>
                                 </Grid>
 
@@ -1190,8 +1267,27 @@
                                         </Style>
                                     </Grid.Style>
                                     <StackPanel>
-                                        <TextBlock Text="THỐNG KÊ CTN" FontWeight="Bold" FontSize="13" Foreground="#FF0078D7" Margin="0,0,0,8"/>
-                                        <TextBlock Text="Bạn xây dựng nội dung riêng của tab THỐNG KÊ tại đây." Foreground="Gray"/>
+                                        <TextBlock Text="THỐNG KÊ CTN" FontWeight="Bold" FontSize="13" Foreground="#FF0078D7" Margin="0,0,0,10"/>
+                                        <Button Content="THỐNG KÊ ỐNG" Height="40" FontSize="14" FontWeight="Bold"
+                                                Background="#FF0078D7" Foreground="White" Margin="0,0,0,8" Cursor="Hand"
+                                                Click="BtnThongKeOng_Click">
+                                            <Button.ToolTip>
+                                                <ToolTip>
+                                                    <TextBlock MaxWidth="260" TextWrapping="Wrap"
+                                                               Text="THỐNG KÊ ỐNG: Quét chọn vùng chứa đường ống. Tool tính tổng chiều dài theo Layer, sắp xếp theo Hệ thống rồi theo Kích thước. Đơn vị: mét."/>
+                                                </ToolTip>
+                                            </Button.ToolTip>
+                                        </Button>
+                                        <Button Content="THỐNG KÊ THIẾT BỊ + VAN" Height="40" FontSize="14" FontWeight="Bold"
+                                                Background="#FF00875A" Foreground="White" Cursor="Hand"
+                                                Click="BtnThongKeThietBiVan_Click">
+                                            <Button.ToolTip>
+                                                <ToolTip>
+                                                    <TextBlock MaxWidth="260" TextWrapping="Wrap"
+                                                               Text="THỐNG KÊ THIẾT BỊ + VAN: Quét chọn vùng. Tool đếm số lượng text thiết bị/van theo Layer, sắp xếp theo Hệ thống rồi tên. Đơn vị: cái."/>
+                                                </ToolTip>
+                                            </Button.ToolTip>
+                                        </Button>
                                     </StackPanel>
                                 </Grid>
                             </Grid>

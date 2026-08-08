@@ -7621,6 +7621,115 @@ namespace ClassLibrary4
             }
         }
 
+
+        /// <summary>
+        /// Layer do tool tạo luôn bắt đầu bằng mã hệ thống: FF_ / ACMV_ / CTN_
+        /// </summary>
+        private static bool LaLayerCuaTool(string layerName)
+        {
+            if (string.IsNullOrWhiteSpace(layerName))
+                return false;
+
+            string u = layerName.Trim().ToUpperInvariant();
+
+            return u.StartsWith("FF_") ||
+                   u.StartsWith("ACMV_") ||
+                   u.StartsWith("CTN_") ||
+                   u.StartsWith("CHUA_CHAY_") ||
+                   u.StartsWith("CHỮA_CHÁY_");
+        }
+
+        /// <summary>
+        /// Phân biệt layer ống (vật liệu + DN) với layer van / thiết bị.
+        /// </summary>
+        private static bool LaLayerOng(string layerName)
+        {
+            if (string.IsNullOrWhiteSpace(layerName))
+                return false;
+
+            string u = layerName.Trim().ToUpperInvariant()
+                .Replace("Á", "A").Replace("À", "A").Replace("Ả", "A")
+                .Replace("Ã", "A").Replace("Ạ", "A")
+                .Replace("É", "E").Replace("È", "E").Replace("Ẻ", "E")
+                .Replace("Ẽ", "E").Replace("Ẹ", "E")
+                .Replace("Ó", "O").Replace("Ò", "O").Replace("Ỏ", "O")
+                .Replace("Õ", "O").Replace("Ọ", "O")
+                .Replace("Ú", "U").Replace("Ù", "U").Replace("Ủ", "U")
+                .Replace("Ũ", "U").Replace("Ụ", "U")
+                .Replace("Í", "I").Replace("Ì", "I").Replace("Ỉ", "I")
+                .Replace("Ĩ", "I").Replace("Ị", "I")
+                .Replace("Ý", "Y").Replace("Ỳ", "Y").Replace("Ỷ", "Y")
+                .Replace("Ỹ", "Y").Replace("Ỵ", "Y")
+                .Replace("Đ", "D");
+
+            // Từ khóa vật liệu ống
+            string[] vatLieuOng =
+            {
+                "TRANG KEM", "TRANGKEM", "HDPE", "THEP DEN", "THEPDEN",
+                "INOX", "NHUNG NONG", "NHUNGNONG", "UPVC", "ONG DONG",
+                "ONGDONG", "OG THAI", "OG HUT", "OG LANH", "OG CAP",
+                "PPR", "PVC", "PEHD", "THEP"
+            };
+
+            bool coVatLieu = false;
+            foreach (var vl in vatLieuOng)
+            {
+                if (u.Contains(vl))
+                {
+                    coVatLieu = true;
+                    break;
+                }
+            }
+
+            // Có DN / size ống điển hình
+            bool coSizeOng =
+                Regex.IsMatch(u, @"DN\s*\d+") ||
+                Regex.IsMatch(u, @"D\d{2,}") ||
+                Regex.IsMatch(u, @"\d+\s*X\s*\d+"); // ống gió WxH
+
+            return coVatLieu || (coSizeOng && !LaLayerThietBiHoacVan(layerName));
+        }
+
+        private static bool LaLayerThietBiHoacVan(string layerName)
+        {
+            if (string.IsNullOrWhiteSpace(layerName))
+                return false;
+
+            string u = layerName.Trim().ToUpperInvariant()
+                .Replace("Á", "A").Replace("À", "A").Replace("Ả", "A")
+                .Replace("Ã", "A").Replace("Ạ", "A")
+                .Replace("É", "E").Replace("È", "E").Replace("Ẻ", "E")
+                .Replace("Ẽ", "E").Replace("Ẹ", "E")
+                .Replace("Ó", "O").Replace("Ò", "O").Replace("Ỏ", "O")
+                .Replace("Õ", "O").Replace("Ọ", "O")
+                .Replace("Ú", "U").Replace("Ù", "U").Replace("Ủ", "U")
+                .Replace("Ũ", "U").Replace("Ụ", "U")
+                .Replace("Í", "I").Replace("Ì", "I").Replace("Ỉ", "I")
+                .Replace("Ĩ", "I").Replace("Ị", "I")
+                .Replace("Đ", "D");
+
+            string[] keywords =
+            {
+                // Van
+                "VAN", "V.CONG", "VCONG", "Y LOC", "YLOC", "KNM",
+                "VCD", "MFD", "PRD", "LOUVER", "DAMPER", "MG CAP", "MG THAI",
+                // Thiết bị
+                "BINH", "DAU PHUN", "DAUPHUN", "PHUN",
+                "MAY LANH", "MAYLANH", "QUAT", "BOM",
+                "DONG HO", "DONGHO", "BON",
+                "CASSETTE", "GAN TUONG", "AM TRAN", "AP TRAN", "DAN NONG",
+                "HL-", "HX-", "HN-", " HL ", " HX ", " HN "
+            };
+
+            foreach (var k in keywords)
+            {
+                if (u.Contains(k))
+                    return true;
+            }
+
+            return false;
+        }
+
         private void BtnThongKeOng_Click(
             object sender,
             RoutedEventArgs e)
@@ -7679,6 +7788,10 @@ namespace ClassLibrary4
 
                         if (pline != null)
                         {
+                            // Chỉ thống kê layer do tool tạo
+                            if (!LaLayerCuaTool(pline.Layer))
+                                continue;
+
                             if (!dictChieuDai.ContainsKey(
                                 pline.Layer))
                             {
@@ -7747,8 +7860,146 @@ namespace ClassLibrary4
             }
         }
 
+        private void BtnThongKeThietBiVan_Click(
+            object sender,
+            RoutedEventArgs e)
+        {
+            var doc =
+                Autodesk.AutoCAD.ApplicationServices.Core.Application
+                    .DocumentManager
+                    .MdiActiveDocument;
+
+            if (doc == null)
+                return;
+
+            var ed = doc.Editor;
+            var db = doc.Database;
+
+            Autodesk.AutoCAD.Internal.Utils.SetFocusToDwgView();
+
+            using (doc.LockDocument())
+            {
+                // Chỉ lấy TEXT + MTEXT (thiết bị / van được đặt bằng text)
+                TypedValue[] tvs =
+                    new TypedValue[]
+                    {
+                        new TypedValue(
+                            (int)DxfCode.Start,
+                            "TEXT,MTEXT")
+                    };
+
+                SelectionFilter filter =
+                    new SelectionFilter(tvs);
+
+                PromptSelectionOptions pso =
+                    new PromptSelectionOptions();
+
+                pso.MessageForAdding =
+                    "\nQuét chọn khu vực thiết bị / van cần thống kê: ";
+
+                PromptSelectionResult psr =
+                    ed.GetSelection(pso, filter);
+
+                if (psr.Status != PromptStatus.OK)
+                    return;
+
+                // Đếm số lượng theo Layer
+                Dictionary<string, double> dictSoLuong =
+                    new Dictionary<string, double>(
+                        StringComparer.OrdinalIgnoreCase);
+
+                using (Transaction tr =
+                    db.TransactionManager.StartTransaction())
+                {
+                    foreach (SelectedObject so in psr.Value)
+                    {
+                        Entity ent =
+                            tr.GetObject(
+                                so.ObjectId,
+                                OpenMode.ForRead)
+                                as Entity;
+
+                        if (ent == null)
+                            continue;
+
+                        string layer = ent.Layer ?? "";
+
+                        // Chỉ text trên layer do tool tạo VÀ là van / thiết bị
+                        // (bỏ chữ size ống trên layer TRÁNG KẼM_DN..., HDPE_DN...)
+                        if (!LaLayerCuaTool(layer))
+                            continue;
+                        if (!LaLayerThietBiHoacVan(layer))
+                            continue;
+
+                        if (!dictSoLuong.ContainsKey(layer))
+                            dictSoLuong[layer] = 0;
+
+                        dictSoLuong[layer] += 1;
+                    }
+
+                    tr.Commit();
+                }
+
+                if (dictSoLuong.Count == 0)
+                {
+                    MessageBox.Show(
+                        "Không tìm thấy text thiết bị / van nào trong vùng chọn.",
+                        "Thông báo");
+                    return;
+                }
+
+                List<ThongKeOng> danhSachThongKe =
+                    new List<ThongKeOng>();
+
+                foreach (var item in dictSoLuong)
+                {
+                    string heThong = item.Key;
+                    if (heThong.Contains("_"))
+                        heThong = heThong.Split('_')[0];
+
+                    double kichThuoc = 0;
+                    var match = Regex.Match(item.Key, @"\d+(\.\d+)?");
+                    if (match.Success)
+                    {
+                        double.TryParse(
+                            match.Value,
+                            NumberStyles.Any,
+                            CultureInfo.InvariantCulture,
+                            out kichThuoc);
+                    }
+
+                    danhSachThongKe.Add(
+                        new ThongKeOng
+                        {
+                            TenLayer = item.Key,
+                            SoLuong = item.Value,
+                            HeThongSort = heThong,
+                            KichThuocSort = kichThuoc
+                        });
+                }
+
+                // Sắp xếp: Hệ thống → tên layer → kích thước
+                var danhSachDaSapXep =
+                    danhSachThongKe
+                        .OrderBy(x => x.HeThongSort)
+                        .ThenBy(x => x.TenLayer)
+                        .ThenByDescending(x => x.KichThuocSort)
+                        .ToList();
+
+                for (int i = 0; i < danhSachDaSapXep.Count; i++)
+                    danhSachDaSapXep[i].STT = i + 1;
+
+                XuatBangRaCad(
+                    danhSachDaSapXep,
+                    "BẢNG THỐNG KÊ THIẾT BỊ + VAN",
+                    "SỐ LƯỢNG (cái)");
+            }
+        }
+
         private void XuatBangRaCad(
-            List<ThongKeOng> data)
+            List<ThongKeOng> data,
+            string tieuDe = "BẢNG THỐNG KÊ KHỐI LƯỢNG ỐNG",
+            string cotSoLuong = "SỐ LƯỢNG (m)")
         {
             var doc =
                 Autodesk.AutoCAD.ApplicationServices.Core.Application
@@ -7793,7 +8044,8 @@ namespace ClassLibrary4
                 tb.SetSize(data.Count + 2, 3);
                 tb.Position = ppr.Value;
 
-                double sf = 3.0;
+                // Phóng to x3 so với bản hiện tại (sf=6 → sf=18)
+                double sf = 18.0;
 
                 for (int r = 0;
                     r < tb.Rows.Count;
@@ -7805,24 +8057,25 @@ namespace ClassLibrary4
                         c < tb.Columns.Count;
                         c++)
                     {
-                        tb.Cells[r, c].TextHeight =
-                            150 * sf;
+                        // Cùng 1 TextStyle + cùng chiều cao → nét chữ đều
+                        tb.Cells[r, c].TextStyleId = db.Textstyle;
+                        tb.Cells[r, c].TextHeight = 150 * sf;
                     }
                 }
 
-                tb.Columns[0].Width = 500 * sf;
-                tb.Columns[1].Width = 8500;
-                tb.Columns[2].Width = 4000;
+                tb.Columns[0].Width = 500 * sf;              // STT
+                // Cột layer: bản trước 20000 + thêm 4cm (~4000)
+                tb.Columns[1].Width = 20000 + 4000;          // = 24000
+                tb.Columns[2].Width = 4000 * 2 * 1.5;        // số lượng
 
-                tb.Cells[0, 0].TextString =
-                    "BẢNG THỐNG KÊ KHỐI LƯỢNG ỐNG";
+                tb.Cells[0, 0].TextString = tieuDe;
 
                 tb.Cells[0, 0].Alignment =
                     CellAlignment.MiddleCenter;
 
                 tb.Cells[1, 0].TextString = "STT";
                 tb.Cells[1, 1].TextString = "TÊN LAYER";
-                tb.Cells[1, 2].TextString = "SỐ LƯỢNG (m)";
+                tb.Cells[1, 2].TextString = cotSoLuong;
 
                 for (int i = 0; i < 3; i++)
                 {
@@ -8512,6 +8765,214 @@ namespace ClassLibrary4
             UiScale.ScaleY = scale;
         }
 
+        // ==================== ĐẶT THIẾT BỊ MẪU ====================
+
+        private void BtnDatThietBiMau_Click(object sender, RoutedEventArgs e)
+        {
+            var doc = Autodesk.AutoCAD.ApplicationServices.Core.Application
+                .DocumentManager.MdiActiveDocument;
+            if (doc == null) return;
+
+            var db = doc.Database;
+            var ed = doc.Editor;
+
+            Autodesk.AutoCAD.Internal.Utils.SetFocusToDwgView();
+
+            // 1. Chọn text mẫu
+            ed.WriteMessage("\n[ĐẶT THIẾT BỊ MẪU] Chọn TEXT mẫu đã đặt: ");
+            var peoText = new PromptEntityOptions("\nChọn Text mẫu: ");
+            peoText.SetRejectMessage("\nChỉ chọn TEXT hoặc MTEXT.");
+            peoText.AddAllowedClass(typeof(DBText), false);
+            peoText.AddAllowedClass(typeof(MText), false);
+            var perText = ed.GetEntity(peoText);
+            if (perText.Status != PromptStatus.OK) return;
+
+            // 2. Chọn block mẫu
+            ed.WriteMessage("\nChọn BLOCK mẫu tương ứng: ");
+            var peoBlock = new PromptEntityOptions("\nChọn Block mẫu: ");
+            peoBlock.SetRejectMessage("\nChỉ chọn Block Reference.");
+            peoBlock.AddAllowedClass(typeof(BlockReference), false);
+            var perBlock = ed.GetEntity(peoBlock);
+            if (perBlock.Status != PromptStatus.OK) return;
+
+            string sampleTextString = "";
+            string sampleLayer = "0";
+            double sampleHeight = MinimumLabelTextHeight;
+            double sampleRotation = 0;
+            Point3d sampleTextPos = Point3d.Origin;
+            AttachmentPoint sampleJustify = AttachmentPoint.MiddleCenter;
+            bool isMText = false;
+
+            string sampleBlockName = "";
+            Point3d sampleBlockPos = Point3d.Origin;
+            double sampleBlockRotation = 0;
+            Scale3d sampleBlockScale = new Scale3d(1);
+
+            using (doc.LockDocument())
+            using (Transaction tr = db.TransactionManager.StartTransaction())
+            {
+                Entity textEnt = tr.GetObject(perText.ObjectId, OpenMode.ForRead) as Entity;
+                BlockReference blk = tr.GetObject(perBlock.ObjectId, OpenMode.ForRead) as BlockReference;
+
+                if (textEnt == null || blk == null)
+                {
+                    MessageBox.Show("Không đọc được text hoặc block mẫu.", "Lỗi");
+                    return;
+                }
+
+                sampleBlockName = blk.Name;
+                sampleBlockPos = blk.Position;
+                sampleBlockRotation = blk.Rotation;
+                sampleBlockScale = blk.ScaleFactors;
+
+                if (textEnt is DBText dbText)
+                {
+                    sampleTextString = dbText.TextString;
+                    sampleLayer = dbText.Layer;
+                    sampleHeight = dbText.Height;
+                    sampleRotation = dbText.Rotation;
+                    sampleTextPos = dbText.AlignmentPoint;
+                    if (sampleTextPos.IsEqualTo(Point3d.Origin) ||
+                        dbText.Justify == AttachmentPoint.BaseLeft)
+                        sampleTextPos = dbText.Position;
+                    sampleJustify = dbText.Justify;
+                }
+                else if (textEnt is MText mText)
+                {
+                    isMText = true;
+                    sampleTextString = mText.Contents;
+                    sampleLayer = mText.Layer;
+                    sampleHeight = mText.TextHeight;
+                    sampleRotation = mText.Rotation;
+                    sampleTextPos = mText.Location;
+                }
+
+                tr.Commit();
+            }
+
+            if (string.IsNullOrWhiteSpace(sampleTextString) ||
+                string.IsNullOrWhiteSpace(sampleBlockName))
+            {
+                MessageBox.Show("Text hoặc Block mẫu không hợp lệ.", "Cảnh báo");
+                return;
+            }
+
+            // Vector offset từ block → text (trong hệ tọa độ thế giới)
+            Vector3d offsetWorld = sampleTextPos - sampleBlockPos;
+
+            // 3. Quét chọn vùng
+            ed.WriteMessage(
+                $"\n[ĐẶT THIẾT BỊ MẪU] Block mẫu: {sampleBlockName} | Text: {sampleTextString}");
+            ed.WriteMessage("\nQuét chọn vùng chứa các block cần đặt text (Enter kết thúc): ");
+
+            var pso = new PromptSelectionOptions
+            {
+                MessageForAdding = "\nChọn các đối tượng trong vùng (hoặc quét cửa sổ): ",
+                AllowDuplicates = false
+            };
+
+            // Chỉ lấy BlockReference
+            var filter = new SelectionFilter(new[]
+            {
+                new TypedValue((int)DxfCode.Start, "INSERT")
+            });
+
+            var psr = ed.GetSelection(pso, filter);
+            if (psr.Status != PromptStatus.OK || psr.Value.Count == 0)
+            {
+                ed.WriteMessage("\nKhông có block nào được chọn.");
+                return;
+            }
+
+            int placed = 0;
+            int skippedSame = 0;
+
+            using (doc.LockDocument())
+            using (Transaction tr = db.TransactionManager.StartTransaction())
+            {
+                BlockTableRecord btr = (BlockTableRecord)tr.GetObject(
+                    db.CurrentSpaceId, OpenMode.ForWrite);
+
+                EnsureLayerExists(tr, db, sampleLayer, false);
+
+                foreach (SelectedObject so in psr.Value)
+                {
+                    if (so == null || so.ObjectId == perBlock.ObjectId)
+                    {
+                        skippedSame++;
+                        continue; // bỏ qua block mẫu
+                    }
+
+                    BlockReference other = tr.GetObject(so.ObjectId, OpenMode.ForRead) as BlockReference;
+                    if (other == null) continue;
+
+                    // Chỉ lấy block cùng tên
+                    if (!string.Equals(other.Name, sampleBlockName, StringComparison.OrdinalIgnoreCase))
+                        continue;
+
+                    // Tính vị trí text mới = vị trí block mới + offset (có xét scale & rotation nếu cần)
+                    // Đơn giản: giữ offset theo hệ thế giới (đủ dùng hầu hết trường hợp)
+                    Point3d newTextPos = other.Position + offsetWorld;
+
+                    // Nếu block bị xoay / scale khác mẫu thì có thể biến đổi offset
+                    // (nâng cao – hiện tại giữ offset cố định cho ổn định)
+
+                    if (isMText)
+                    {
+                        MText mt = new MText();
+                        mt.SetDatabaseDefaults(db);
+                        mt.Contents = sampleTextString;
+                        mt.TextHeight = sampleHeight;
+                        mt.Layer = sampleLayer;
+                        mt.ColorIndex = 256;
+                        mt.Location = newTextPos;
+                        mt.Rotation = sampleRotation;
+                        btr.AppendEntity(mt);
+                        tr.AddNewlyCreatedDBObject(mt, true);
+                    }
+                    else
+                    {
+                        DBText txt = new DBText();
+                        txt.SetDatabaseDefaults(db);
+                        txt.TextStyleId = db.Textstyle;
+                        txt.TextString = sampleTextString;
+                        txt.Height = sampleHeight;
+                        txt.WidthFactor = 1.0;
+                        txt.Layer = sampleLayer;
+                        txt.ColorIndex = 256;
+                        txt.Justify = sampleJustify;
+                        txt.Rotation = sampleRotation;
+
+                        if (sampleJustify == AttachmentPoint.BaseLeft ||
+                            sampleJustify == AttachmentPoint.BaseCenter ||
+                            sampleJustify == AttachmentPoint.BaseRight ||
+                            sampleJustify == AttachmentPoint.BaseAlign ||
+                            sampleJustify == AttachmentPoint.BaseFit)
+                        {
+                            txt.Position = newTextPos;
+                        }
+                        else
+                        {
+                            txt.AlignmentPoint = newTextPos;
+                            try { txt.AdjustAlignment(db); } catch { }
+                        }
+
+                        btr.AppendEntity(txt);
+                        tr.AddNewlyCreatedDBObject(txt, true);
+                    }
+
+                    placed++;
+                }
+
+                tr.Commit();
+            }
+
+            ed.Regen();
+            ed.WriteMessage(
+                $"\n[ĐẶT THIẾT BỊ MẪU] Đã đặt {placed} text trên các block '{sampleBlockName}'." +
+                (skippedSame > 0 ? $" (bỏ qua {skippedSame} block mẫu)" : ""));
+        }
+
         // ==================== VAN ====================
 
         private void LstLoaiVan_SelectionChanged(
@@ -8763,9 +9224,8 @@ namespace ClassLibrary4
                 $"{GetValveLayerPrefix(ctx)}_{size}";
             string displayText = $"{valveType} {size}";
 
-            double textHeight = Math.Max(
-                LayWidthTuSize(size) * LabelTextHeightToWidthRatio,
-                MinimumLabelTextHeight);
+            // Chiều cao chữ cố định → nét đều, không phụ thuộc size van
+            double textHeight = MinimumLabelTextHeight;
 
             Autodesk.AutoCAD.Internal.Utils.SetFocusToDwgView();
 
@@ -8830,8 +9290,10 @@ namespace ClassLibrary4
 
                     DBText txt = new DBText();
                     txt.SetDatabaseDefaults(db);
+                    txt.TextStyleId = db.Textstyle;   // font/nét thống nhất
                     txt.TextString = displayText;
                     txt.Height = textHeight;
+                    txt.WidthFactor = 1.0;
                     txt.Layer = layerName;
                     txt.ColorIndex = 256;
                     txt.Justify = AttachmentPoint.MiddleCenter;
@@ -9132,9 +9594,8 @@ namespace ClassLibrary4
                 ? model
                 : $"{equipType} {model}";
 
-            double textHeight = Math.Max(
-                50.0 * LabelTextHeightToWidthRatio,
-                MinimumLabelTextHeight);
+            // Chiều cao chữ cố định → nét đều
+            double textHeight = MinimumLabelTextHeight;
 
             Autodesk.AutoCAD.Internal.Utils.SetFocusToDwgView();
 
@@ -9199,8 +9660,10 @@ namespace ClassLibrary4
 
                     DBText txt = new DBText();
                     txt.SetDatabaseDefaults(db);
+                    txt.TextStyleId = db.Textstyle;   // font/nét thống nhất
                     txt.TextString = displayText;
                     txt.Height = textHeight;
+                    txt.WidthFactor = 1.0;
                     txt.Layer = layerName;
                     txt.ColorIndex = 256;
                     txt.Justify = AttachmentPoint.MiddleCenter;
