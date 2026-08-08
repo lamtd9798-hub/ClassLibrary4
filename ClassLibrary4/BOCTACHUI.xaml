@@ -1,139 +1,875 @@
 ﻿<UserControl x:Class="ClassLibrary4.BOCTACHUI"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-             Background="White" Width="360" Height="600"
+             Background="White" Width="360" Height="700"
              Unloaded="UserControl_Unloaded">
     <Grid>
         <Grid.ColumnDefinitions>
-            <ColumnDefinition Width="8*"/>
-            <ColumnDefinition/>
+            <ColumnDefinition Width="127*"/>
+            <ColumnDefinition Width="53*"/>
         </Grid.ColumnDefinitions>
-        <TabControl Margin="5,5,5,5" Background="#FFF9F9F9" TabStripPlacement="Right" Grid.ColumnSpan="2">
-            <TabControl.ItemContainerStyle>
-                <Style TargetType="TabItem">
-                    <Setter Property="LayoutTransform">
-                        <Setter.Value>
-                            <RotateTransform Angle="90"/>
-                        </Setter.Value>
-                    </Setter>
-                    <Setter Property="Padding" Value="15,10"/>
-                    <Setter Property="FontSize" Value="13"/>
-                    <Setter Property="FontWeight" Value="Bold"/>
-                    <Setter Property="Background" Value="#FFE6E6E6"/>
-                </Style>
-            </TabControl.ItemContainerStyle>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="35"/>
+            <RowDefinition Height="*"/>
+        </Grid.RowDefinitions>
 
-            <!-- TAB 1: ỐNG -->
-            <TabItem Header="1. ỐNG">
-                <Grid Margin="10" VerticalAlignment="Top">
-                    <StackPanel Orientation="Vertical">
+        <Border Grid.Row="0" Background="#FF1E1E1E" Grid.ColumnSpan="2">
+            <TextBlock Text="THÁI ĐÌNH LÂM _ QS ĐẤU THẦU"
+                       Foreground="White" FontWeight="Bold" FontSize="13"
+                       VerticalAlignment="Center" HorizontalAlignment="Center"/>
+        </Border>
 
-                        <!-- CHỌN HỆ THỐNG -->
-                        <TextBlock Text="Chọn hệ thống ống:" FontWeight="Bold" Margin="0,0,0,5" Foreground="#FF333333"/>
-                        <ComboBox Name="CmbHeThong" Height="30" FontSize="13" Margin="0,0,0,12" SelectionChanged="CmbHeThong_SelectionChanged">
-                            <ComboBoxItem Content="Chữa cháy _ FF"/>
-                            <ComboBoxItem Content="Báo cháy _ FA"/>
-                            <ComboBoxItem Content="Exit _ EX"/>
-                            <ComboBoxItem Content="Cấp thoát nước _ PL"/>
-                            <ComboBoxItem Content="Điều hòa không khí _ HVAC"/>
-                            <ComboBoxItem Content="Hút khói _ SM"/>
-                            <ComboBoxItem Content="Thông gió _ TG"/>
-                        </ComboBox>
+        <Grid Grid.Row="1" Grid.ColumnSpan="2">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="8*"/>
+                <ColumnDefinition/>
+            </Grid.ColumnDefinitions>
 
-                        <!-- CHỌN VẬT LIỆU ỐNG -->
-                        <TextBlock Text="Chọn vật liệu ống:" FontWeight="Bold" Margin="0,0,0,5" Foreground="#FF333333"/>
-                        <ComboBox Name="CmbVatLieuOng" Height="30" FontSize="13" SelectionChanged="CmbVatLieuOng_SelectionChanged" Margin="0,0,0,12">
-                        </ComboBox>
+            <TabControl x:Name="MainSystemTabs"
+                        Margin="5"
+                        Background="#FFF9F9F9"
+                        TabStripPlacement="Right"
+                        Grid.ColumnSpan="2">
+                <TabControl.Resources>
+                    <Style x:Key="TabNgangStyle" TargetType="RadioButton">
+                        <Setter Property="Height" Value="30"/>
+                        <Setter Property="Padding" Value="1"/>
+                        <Setter Property="FontSize" Value="9"/>
+                        <Setter Property="FontWeight" Value="Bold"/>
+                        <Setter Property="Background" Value="#FFE6E6E6"/>
+                        <Setter Property="BorderBrush" Value="#FFBDBDBD"/>
+                        <Setter Property="BorderThickness" Value="1"/>
+                        <Setter Property="HorizontalContentAlignment" Value="Center"/>
+                        <Setter Property="VerticalContentAlignment" Value="Center"/>
+                        <Setter Property="Template">
+                            <Setter.Value>
+                                <ControlTemplate TargetType="RadioButton">
+                                    <Border x:Name="Bd"
+                                            Background="{TemplateBinding Background}"
+                                            BorderBrush="{TemplateBinding BorderBrush}"
+                                            BorderThickness="{TemplateBinding BorderThickness}">
+                                        <ContentPresenter ContentSource="Content"
+                                                          Margin="{TemplateBinding Padding}"
+                                                          HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
+                                                          VerticalAlignment="{TemplateBinding VerticalContentAlignment}"/>
+                                    </Border>
+                                    <ControlTemplate.Triggers>
+                                        <Trigger Property="IsChecked" Value="True">
+                                            <Setter TargetName="Bd" Property="Background" Value="White"/>
+                                            <Setter TargetName="Bd" Property="BorderBrush" Value="#FF777777"/>
+                                        </Trigger>
+                                        <Trigger Property="IsMouseOver" Value="True">
+                                            <Setter TargetName="Bd" Property="Background" Value="#FFF3F3F3"/>
+                                        </Trigger>
+                                    </ControlTemplate.Triggers>
+                                </ControlTemplate>
+                            </Setter.Value>
+                        </Setter>
+                    </Style>
 
-                        <!-- HÀNG CHUNG: SIZE ỐNG VÀ TÙY CHỌN -->
-                        <Grid Margin="0,0,0,5">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="1.2*"/>
-                                <ColumnDefinition Width="10"/>
-                                <ColumnDefinition Width="1*"/>
-                            </Grid.ColumnDefinitions>
+                    <Style x:Key="VatLieuItemStyle" TargetType="ListBoxItem">
+                        <Setter Property="Height" Value="32"/>
+                        <Setter Property="Padding" Value="2"/>
+                        <Setter Property="FontSize" Value="10.5"/>
+                        <Setter Property="FontWeight" Value="Bold"/>
+                        <Setter Property="HorizontalContentAlignment" Value="Center"/>
+                        <Setter Property="VerticalContentAlignment" Value="Center"/>
+                        <Setter Property="Template">
+                            <Setter.Value>
+                                <ControlTemplate TargetType="ListBoxItem">
+                                    <Border x:Name="Bd" Background="White"
+                                            BorderBrush="#FFCCCCCC"
+                                            BorderThickness="1"
+                                            Margin="1">
+                                        <ContentPresenter HorizontalAlignment="Center"
+                                                          VerticalAlignment="Center"/>
+                                    </Border>
+                                    <ControlTemplate.Triggers>
+                                        <Trigger Property="IsSelected" Value="True">
+                                            <Setter TargetName="Bd" Property="Background" Value="#FF0078D7"/>
+                                            <Setter Property="Foreground" Value="White"/>
+                                        </Trigger>
+                                        <Trigger Property="IsMouseOver" Value="True">
+                                            <Setter TargetName="Bd" Property="Background" Value="#FFEAF4FF"/>
+                                        </Trigger>
+                                    </ControlTemplate.Triggers>
+                                </ControlTemplate>
+                            </Setter.Value>
+                        </Setter>
+                    </Style>
+                </TabControl.Resources>
 
-                            <!-- CỘT TRÁI: DANH SÁCH SIZE -->
-                            <StackPanel Grid.Column="0">
-                                <TextBlock Text="Size ống:" FontWeight="Bold" Margin="0,0,0,5" Foreground="#FF333333"/>
-                                <ListBox Name="LstSizeOng" Height="140" FontSize="13" Margin="0,0,0,5" ScrollViewer.VerticalScrollBarVisibility="Auto" BorderBrush="#FFCCCCCC" KeyDown="LstSizeOng_KeyDown"/>
-                                <TextBox Name="TxtCustomSize" Height="30" FontSize="13" Padding="4" ToolTip="Nhập kích thước (ấn Enter để thêm)" KeyDown="TxtCustomSize_KeyDown"/>
-                            </StackPanel>
+                <TabControl.ItemContainerStyle>
+                    <Style TargetType="TabItem">
+                        <Setter Property="LayoutTransform">
+                            <Setter.Value>
+                                <RotateTransform Angle="90"/>
+                            </Setter.Value>
+                        </Setter>
+                        <Setter Property="Padding" Value="15,10"/>
+                        <Setter Property="FontSize" Value="13"/>
+                        <Setter Property="FontWeight" Value="Bold"/>
+                        <Setter Property="Background" Value="#FFE6E6E6"/>
+                    </Style>
+                </TabControl.ItemContainerStyle>
 
-                            <!-- CỘT PHẢI: TÙY CHỌN ỐNG NƯỚC (ÁP SUẤT & NƯỚC THẢI) -->
-                            <StackPanel Grid.Column="2" Name="PnlApSuat">
+                <TabItem Header="1. CHỮA CHÁY">
+                    <Grid Margin="2">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="30"/>
+                            <RowDefinition Height="*"/>
+                        </Grid.RowDefinitions>
 
-                                <StackPanel Orientation="Horizontal" Margin="0,0,0,5">
-                                    <TextBlock Text="Áp suất:" FontWeight="Bold" Foreground="#FF333333" VerticalAlignment="Center"/>
-                                    <CheckBox Name="ChkApSuat" Margin="5,0,0,0" VerticalAlignment="Center" Cursor="Hand"/>
+                        <UniformGrid Grid.Row="0" Rows="1" Columns="4">
+                            <RadioButton x:Name="RbDuongOng" Content="ĐƯỜNG ỐNG" GroupName="TabChuaChay" IsChecked="True" Style="{StaticResource TabNgangStyle}"/>
+                            <RadioButton x:Name="RbVan" Content="VAN" GroupName="TabChuaChay" Style="{StaticResource TabNgangStyle}"/>
+                            <RadioButton x:Name="RbThietBi" Content="THIẾT BỊ" GroupName="TabChuaChay" Style="{StaticResource TabNgangStyle}"/>
+                            <RadioButton x:Name="RbThongKe" Content="THỐNG KÊ" GroupName="TabChuaChay" Style="{StaticResource TabNgangStyle}"/>
+                        </UniformGrid>
+
+                        <Grid Grid.Row="1" Margin="2,5,2,2">
+                            <Grid VerticalAlignment="Top">
+                                <Grid.Style>
+                                    <Style TargetType="Grid">
+                                        <Setter Property="Visibility" Value="Collapsed"/>
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsChecked, ElementName=RbDuongOng}" Value="True">
+                                                <Setter Property="Visibility" Value="Visible"/>
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </Grid.Style>
+
+                                <StackPanel Orientation="Vertical">
+                                    <ComboBox x:Name="CmbHeThong" Visibility="Collapsed" SelectedIndex="0" SelectionChanged="CmbHeThong_SelectionChanged">
+                                        <ComboBoxItem Content="Chữa cháy _ FF"/>
+                                    </ComboBox>
+
+                                    <ComboBox x:Name="CmbVatLieuOng" Visibility="Collapsed"/>
+
+                                    <TextBlock Text="Chọn đường ống:" FontWeight="Bold" Margin="0,0,0,5" Foreground="#FF333333"/>
+
+                                    <ListBox x:Name="LstVatLieuOngBang"
+                                             MinHeight="66" FontSize="11" BorderThickness="0" SelectedIndex="0"
+                                             ScrollViewer.VerticalScrollBarVisibility="Disabled"
+                                             ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                                             ItemContainerStyle="{StaticResource VatLieuItemStyle}"
+                                             SelectionChanged="LstVatLieuOngBang_SelectionChanged"
+                                             KeyDown="LstVatLieuOngBang_KeyDown">
+                                        <ListBox.ItemsPanel>
+                                            <ItemsPanelTemplate>
+                                                <WrapPanel ItemWidth="84" ItemHeight="32"/>
+                                            </ItemsPanelTemplate>
+                                        </ListBox.ItemsPanel>
+                                        <ListBoxItem Content="TRÁNG KẼM"/>
+                                        <ListBoxItem Content="HDPE"/>
+                                        <ListBoxItem Content="THÉP ĐEN"/>
+                                        <ListBoxItem Content="INOX"/>
+                                        <ListBoxItem Content="NHÚNG NÓNG"/>
+                                    </ListBox>
+
+                                    <TextBox x:Name="TxtVatLieuOngBoSung" Height="28" FontSize="12" Padding="4"
+                                             Margin="0,4,0,10"
+                                             ToolTip="Nhập thêm loại ống rồi nhấn Enter"
+                                             KeyDown="TxtVatLieuOngBoSung_KeyDown"/>
+
+                                    <TextBlock Text="Size ống (Kèm màu Layer):" FontWeight="Bold" Margin="0,0,0,5" Foreground="#FF333333"/>
+
+                                    <ListBox x:Name="LstSizeOng" Height="140" FontSize="13" Margin="0,0,0,5"
+                                             ScrollViewer.VerticalScrollBarVisibility="Auto"
+                                             BorderBrush="#FFCCCCCC"
+                                             KeyDown="LstSizeOng_KeyDown"
+                                             HorizontalContentAlignment="Stretch">
+                                        <ListBox.ItemTemplate>
+                                            <DataTemplate>
+                                                <Grid>
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="*"/>
+                                                        <ColumnDefinition Width="Auto"/>
+                                                    </Grid.ColumnDefinitions>
+                                                    <TextBlock Text="{Binding SizeName}" VerticalAlignment="Center"/>
+                                                    <Button Grid.Column="1" Width="20" Height="20"
+                                                            Background="{Binding LayerColorBrush}"
+                                                            Cursor="Hand" Click="BtnColor_Click"
+                                                            ToolTip="Kích để chọn lại màu Layer"
+                                                            BorderThickness="1" BorderBrush="Gray" Padding="0"/>
+                                                </Grid>
+                                            </DataTemplate>
+                                        </ListBox.ItemTemplate>
+                                    </ListBox>
+
+                                    <TextBox x:Name="TxtCustomSize" Height="30" FontSize="13" Padding="4"
+                                             ToolTip="Nhập kích thước rồi nhấn Enter"
+                                             KeyDown="TxtCustomSize_KeyDown"/>
+
+                                    <Grid Margin="0,10,0,0">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="8"/>
+                                            <ColumnDefinition Width="*"/>
+                                        </Grid.ColumnDefinitions>
+
+                                        <Button x:Name="BtnVeOng"
+                                                Grid.Column="0"
+                                                Content="VẼ ỐNG"
+                                                Height="35"
+                                                FontSize="14"
+                                                FontWeight="Bold"
+                                                Background="#FF0078D7"
+                                                Foreground="White"
+                                                Cursor="Hand"
+                                                Click="BtnVeOng_Click"/>
+
+                                        <Button x:Name="BtnDoiLayer"
+                                                Grid.Column="2"
+                                                Content="ĐỔI LAYER"
+                                                Height="35"
+                                                FontSize="14"
+                                                FontWeight="Bold"
+                                                Background="#FF6F42C1"
+                                                Foreground="White"
+                                                Cursor="Hand"
+                                                Click="BtnDoiLayer_Click"/>
+                                    </Grid>
+
+                                    <Button x:Name="BtnAutoConvertPipe"
+                                            Content="TỰ ĐỘNG VẼ ỐNG"
+                                            Height="35"
+                                            FontSize="14"
+                                            FontWeight="Bold"
+                                            Background="#FFD35400"
+                                            Foreground="White"
+                                            Margin="0,10,0,0"
+                                            Cursor="Hand"
+                                            Click="BtnAutoConvertPipe_Click"/>
+
+                                    <Button x:Name="BtnAutoDrawByTemplate"
+                                            Content="VẼ ỐNG TỰ ĐỘNG THEO MẪU"
+                                            Height="35"
+                                            FontSize="13"
+                                            FontWeight="Bold"
+                                            Background="#FF00875A"
+                                            Foreground="White"
+                                            Margin="0,8,0,0"
+                                            Cursor="Hand"
+                                            Click="BtnAutoDrawByTemplate_Click"/>
                                 </StackPanel>
-                                <ComboBox Name="CmbApSuat" Height="30" FontSize="13" SelectedIndex="0" IsEnabled="{Binding IsChecked, ElementName=ChkApSuat}">
-                                    <ComboBoxItem Content="PN5"/>
-                                    <ComboBoxItem Content="PN6"/>
-                                    <ComboBoxItem Content="PN8"/>
-                                    <ComboBoxItem Content="PN10"/>
-                                    <ComboBoxItem Content="PN12"/>
-                                    <ComboBoxItem Content="PN16"/>
-                                    <ComboBoxItem Content="PN20"/>
-                                </ComboBox>
+                            </Grid>
 
-                                <StackPanel Orientation="Horizontal" Margin="0,15,0,5">
-                                    <TextBlock Text="Nước thải:" FontWeight="Bold" Foreground="#FF333333" VerticalAlignment="Center"/>
-                                    <CheckBox Name="ChkNuocThai" Margin="5,0,0,0" VerticalAlignment="Center" Cursor="Hand"/>
+                            <Grid VerticalAlignment="Top">
+                                <Grid.Style>
+                                    <Style TargetType="Grid">
+                                        <Setter Property="Visibility" Value="Collapsed"/>
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsChecked, ElementName=RbVan}" Value="True">
+                                                <Setter Property="Visibility" Value="Visible"/>
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </Grid.Style>
+
+                                <StackPanel>
+                                    <TextBlock Text="VAN CHỮA CHÁY"
+                                               FontWeight="Bold"
+                                               FontSize="14"
+                                               Foreground="#FF0078D7"
+                                               Margin="0,0,0,10"/>
+                                    <TextBlock Text="Bạn xây dựng nội dung riêng của tab VAN tại đây."
+                                               Foreground="Gray"/>
                                 </StackPanel>
-                                <ComboBox Name="CmbNuocThai" Height="30" FontSize="13" SelectedIndex="0" IsEnabled="{Binding IsChecked, ElementName=ChkNuocThai}">
-                                    <ComboBoxItem Content="Thải phân _ WS"/>
-                                    <ComboBoxItem Content="Thải SH _ WW"/>
-                                    <ComboBoxItem Content="Thông hơi _ VP"/>
-                                </ComboBox>
+                            </Grid>
 
-                            </StackPanel>
+                            <Grid VerticalAlignment="Top">
+                                <Grid.Style>
+                                    <Style TargetType="Grid">
+                                        <Setter Property="Visibility" Value="Collapsed"/>
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsChecked, ElementName=RbThietBi}" Value="True">
+                                                <Setter Property="Visibility" Value="Visible"/>
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </Grid.Style>
+
+                                <StackPanel>
+                                    <TextBlock Text="THIẾT BỊ CHỮA CHÁY"
+                                               FontWeight="Bold"
+                                               FontSize="14"
+                                               Foreground="#FF0078D7"
+                                               Margin="0,0,0,10"/>
+                                    <TextBlock Text="Bạn xây dựng nội dung riêng của tab THIẾT BỊ tại đây."
+                                               Foreground="Gray"/>
+                                </StackPanel>
+                            </Grid>
+
+                            <Grid VerticalAlignment="Top">
+                                <Grid.Style>
+                                    <Style TargetType="Grid">
+                                        <Setter Property="Visibility" Value="Collapsed"/>
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsChecked, ElementName=RbThongKe}" Value="True">
+                                                <Setter Property="Visibility" Value="Visible"/>
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </Grid.Style>
+
+                                <StackPanel>
+                                    <TextBlock Text="THỐNG KÊ CHỮA CHÁY"
+                                               FontWeight="Bold"
+                                               FontSize="14"
+                                               Foreground="#FF0078D7"
+                                               Margin="0,0,0,10"/>
+                                    <TextBlock Text="Bạn xây dựng nội dung riêng của tab THỐNG KÊ tại đây."
+                                               Foreground="Gray"/>
+                                </StackPanel>
+                            </Grid>
                         </Grid>
+                    </Grid>
+                </TabItem>
 
-                        <!-- NÚT VẼ ỐNG VÀ TẠO LAYER -->
-                        <Button Name="BtnVeOng" Content="VẼ ỐNG (POLYLINE)" Height="40" FontSize="15" FontWeight="Bold" Background="#FF0078D7" Foreground="White" Margin="0,15,0,0" Cursor="Hand" Click="BtnVeOng_Click"/>
+                <TabItem Header="2. ACMV">
+                    <Grid Margin="2">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="30"/>
+                            <RowDefinition Height="*"/>
+                        </Grid.RowDefinitions>
 
-                    </StackPanel>
-                </Grid>
-            </TabItem>
+                        <UniformGrid Grid.Row="0" Rows="1" Columns="4">
+                            <RadioButton x:Name="RbAcmvDuongOng" Content="ĐƯỜNG ỐNG" GroupName="TabACMV" IsChecked="True" Style="{StaticResource TabNgangStyle}"/>
+                            <RadioButton x:Name="RbAcmvVan" Content="VAN" GroupName="TabACMV" Style="{StaticResource TabNgangStyle}"/>
+                            <RadioButton x:Name="RbAcmvThietBi" Content="THIẾT BỊ" GroupName="TabACMV" Style="{StaticResource TabNgangStyle}"/>
+                            <RadioButton x:Name="RbAcmvThongKe" Content="THỐNG KÊ" GroupName="TabACMV" Style="{StaticResource TabNgangStyle}"/>
+                        </UniformGrid>
 
-            <!-- TAB 2: THIẾT BỊ -->
-            <TabItem Header="2. THIẾT BỊ">
-                <Grid>
-                    <TextBlock Text="Chức năng vẽ/đếm Thiết bị sẽ cập nhật sau..." HorizontalAlignment="Center" VerticalAlignment="Center" Foreground="Gray" FontStyle="Italic"/>
-                </Grid>
-            </TabItem>
+                        <Grid Grid.Row="1" Margin="2,5,2,2">
+                            <Grid VerticalAlignment="Top">
+                                <Grid.Style>
+                                    <Style TargetType="Grid">
+                                        <Setter Property="Visibility" Value="Collapsed"/>
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsChecked, ElementName=RbAcmvDuongOng}" Value="True">
+                                                <Setter Property="Visibility" Value="Visible"/>
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </Grid.Style>
 
-            <!-- TAB 3: THỐNG KÊ -->
-            <TabItem Header="3. THỐNG KÊ">
-                <Grid Margin="5">
-                    <Grid.RowDefinitions>
-                        <RowDefinition Height="Auto"/>
-                        <RowDefinition Height="Auto"/>
-                        <RowDefinition Height="*"/>
-                    </Grid.RowDefinitions>
-                    <Button Content="1. Quét Bảng Đối Chiếu" Height="35" Click="BtnQuetBang_Click" FontSize="14" FontWeight="Bold" Background="#FF28A745" Foreground="White" Margin="0,0,0,10"/>
-                    <Button Content="2. Quét Khối Lượng" Height="35" Click="BtnQuetMatBang_Click" FontSize="14" FontWeight="Bold" Background="#FF0078D7" Foreground="White" Grid.Row="1" Margin="0,0,0,10"/>
-                    <DataGrid Name="DgvKetQua" Grid.Row="2" AutoGenerateColumns="False" CanUserAddRows="False" HeadersVisibility="Column" GridLinesVisibility="All" AlternatingRowBackground="#FFF0F0F0" SelectionChanged="DgvKetQua_SelectionChanged" SelectionMode="Single">
-                        <DataGrid.Columns>
-                            <DataGridTextColumn Header="Tên Thiết Bị" Width="200" Binding="{Binding TenHienThi}"/>
-                            <DataGridTextColumn Header="SL" Width="50" Binding="{Binding SoLuong}" IsReadOnly="True"/>
-                        </DataGrid.Columns>
-                    </DataGrid>
-                </Grid>
-            </TabItem>
+                                <StackPanel Orientation="Vertical">
+                                    <ComboBox x:Name="CmbHeThongACMV"
+                                              Visibility="Collapsed"
+                                              SelectedIndex="0"
+                                              SelectionChanged="CmbHeThong_SelectionChanged">
+                                        <ComboBoxItem Content="ACMV _ ACMV"/>
+                                    </ComboBox>
 
-            <TabItem Header="4. EXCEL">
-                <Grid>
-                    <TextBlock Text="Chức năng xuất Excel sẽ cập nhật sau..." HorizontalAlignment="Center" VerticalAlignment="Center" Foreground="Gray" FontStyle="Italic"/>
-                </Grid>
-            </TabItem>
+                                    <ComboBox x:Name="CmbVatLieuOngACMV"
+                                              Visibility="Collapsed"/>
 
-            <TabItem Header="5. NÂNG CAO">
-                <Grid>
-                    <TextBlock Text="Các cài đặt hệ thống sẽ nằm ở đây..." HorizontalAlignment="Center" VerticalAlignment="Center" Foreground="Gray" FontStyle="Italic"/>
-                </Grid>
-            </TabItem>
-        </TabControl>
+                                    <TextBlock Text="Chọn đường ống:"
+                                               FontWeight="Bold"
+                                               Margin="0,0,0,5"
+                                               Foreground="#FF333333"/>
+
+                                    <ListBox x:Name="LstVatLieuOngBangACMV"
+                                             MinHeight="66"
+                                             FontSize="11"
+                                             BorderThickness="0"
+                                             SelectedIndex="0"
+                                             ScrollViewer.VerticalScrollBarVisibility="Disabled"
+                                             ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                                             ItemContainerStyle="{StaticResource VatLieuItemStyle}"
+                                             SelectionChanged="LstVatLieuOngBang_SelectionChanged"
+                                             KeyDown="LstVatLieuOngBang_KeyDown">
+                                        <ListBox.ItemsPanel>
+                                            <ItemsPanelTemplate>
+                                                <WrapPanel ItemWidth="84" ItemHeight="32"/>
+                                            </ItemsPanelTemplate>
+                                        </ListBox.ItemsPanel>
+
+                                        <ListBoxItem Content="TRÁNG KẼM"/>
+                                        <ListBoxItem Content="THÉP ĐEN"/>
+                                        <ListBoxItem Content="INOX"/>
+                                        <ListBoxItem Content="UPVC"/>
+                                        <ListBoxItem Content="ỐNG ĐỒNG"/>
+                                    </ListBox>
+
+                                    <TextBox x:Name="TxtVatLieuOngBoSungACMV"
+                                             Height="28"
+                                             FontSize="12"
+                                             Padding="4"
+                                             Margin="0,4,0,10"
+                                             ToolTip="Nhập thêm loại ống rồi nhấn Enter"
+                                             KeyDown="TxtVatLieuOngBoSung_KeyDown"/>
+
+                                    <TextBlock Text="Size ống (Kèm màu Layer):"
+                                               FontWeight="Bold"
+                                               Margin="0,0,0,5"
+                                               Foreground="#FF333333"/>
+
+                                    <ListBox x:Name="LstSizeOngACMV"
+                                             Height="140"
+                                             FontSize="13"
+                                             Margin="0,0,0,5"
+                                             ScrollViewer.VerticalScrollBarVisibility="Auto"
+                                             BorderBrush="#FFCCCCCC"
+                                             KeyDown="LstSizeOng_KeyDown"
+                                             HorizontalContentAlignment="Stretch">
+                                        <ListBox.ItemTemplate>
+                                            <DataTemplate>
+                                                <Grid>
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="*"/>
+                                                        <ColumnDefinition Width="Auto"/>
+                                                    </Grid.ColumnDefinitions>
+
+                                                    <TextBlock Text="{Binding SizeName}"
+                                                               VerticalAlignment="Center"/>
+
+                                                    <Button Grid.Column="1"
+                                                            Width="20"
+                                                            Height="20"
+                                                            Background="{Binding LayerColorBrush}"
+                                                            Cursor="Hand"
+                                                            Click="BtnColor_Click"
+                                                            ToolTip="Kích để chọn lại màu Layer"
+                                                            BorderThickness="1"
+                                                            BorderBrush="Gray"
+                                                            Padding="0"/>
+                                                </Grid>
+                                            </DataTemplate>
+                                        </ListBox.ItemTemplate>
+                                    </ListBox>
+
+                                    <TextBox x:Name="TxtCustomSizeACMV"
+                                             Height="30"
+                                             FontSize="13"
+                                             Padding="4"
+                                             ToolTip="Nhập kích thước rồi nhấn Enter"
+                                             KeyDown="TxtCustomSize_KeyDown"/>
+
+                                    <Grid Margin="0,10,0,0">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="8"/>
+                                            <ColumnDefinition Width="*"/>
+                                        </Grid.ColumnDefinitions>
+
+                                        <Button x:Name="BtnVeOngACMV"
+                                                Grid.Column="0"
+                                                Content="VẼ ỐNG"
+                                                Height="35"
+                                                FontSize="14"
+                                                FontWeight="Bold"
+                                                Background="#FF0078D7"
+                                                Foreground="White"
+                                                Cursor="Hand"
+                                                Click="BtnVeOng_Click"/>
+
+                                        <Button x:Name="BtnDoiLayerACMV"
+                                                Grid.Column="2"
+                                                Content="ĐỔI LAYER"
+                                                Height="35"
+                                                FontSize="14"
+                                                FontWeight="Bold"
+                                                Background="#FF6F42C1"
+                                                Foreground="White"
+                                                Cursor="Hand"
+                                                Click="BtnDoiLayer_Click"/>
+                                    </Grid>
+
+                                    <Button x:Name="BtnAutoConvertPipeACMV"
+                                            Content="TỰ ĐỘNG VẼ ỐNG"
+                                            Height="35"
+                                            FontSize="14"
+                                            FontWeight="Bold"
+                                            Background="#FFD35400"
+                                            Foreground="White"
+                                            Margin="0,10,0,0"
+                                            Cursor="Hand"
+                                            Click="BtnAutoConvertPipe_Click"/>
+
+                                    <Button x:Name="BtnAutoDrawByTemplateACMV"
+                                            Content="VẼ ỐNG TỰ ĐỘNG THEO MẪU"
+                                            Height="35"
+                                            FontSize="13"
+                                            FontWeight="Bold"
+                                            Background="#FF00875A"
+                                            Foreground="White"
+                                            Margin="0,8,0,0"
+                                            Cursor="Hand"
+                                            Click="BtnAutoDrawByTemplate_Click"/>
+                                </StackPanel>
+                            </Grid>
+
+                            <Grid VerticalAlignment="Top">
+                                <Grid.Style>
+                                    <Style TargetType="Grid">
+                                        <Setter Property="Visibility" Value="Collapsed"/>
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsChecked, ElementName=RbAcmvVan}" Value="True">
+                                                <Setter Property="Visibility" Value="Visible"/>
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </Grid.Style>
+
+                                <StackPanel>
+                                    <TextBlock Text="VAN ACMV"
+                                               FontWeight="Bold"
+                                               FontSize="14"
+                                               Foreground="#FF0078D7"
+                                               Margin="0,0,0,10"/>
+                                    <TextBlock Text="Bạn xây dựng nội dung riêng của tab VAN tại đây."
+                                               Foreground="Gray"/>
+                                </StackPanel>
+                            </Grid>
+
+                            <Grid VerticalAlignment="Top">
+                                <Grid.Style>
+                                    <Style TargetType="Grid">
+                                        <Setter Property="Visibility" Value="Collapsed"/>
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsChecked, ElementName=RbAcmvThietBi}" Value="True">
+                                                <Setter Property="Visibility" Value="Visible"/>
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </Grid.Style>
+
+                                <StackPanel>
+                                    <TextBlock Text="THIẾT BỊ ACMV"
+                                               FontWeight="Bold"
+                                               FontSize="14"
+                                               Foreground="#FF0078D7"
+                                               Margin="0,0,0,10"/>
+                                    <TextBlock Text="Bạn xây dựng nội dung riêng của tab THIẾT BỊ tại đây."
+                                               Foreground="Gray"/>
+                                </StackPanel>
+                            </Grid>
+
+                            <Grid VerticalAlignment="Top">
+                                <Grid.Style>
+                                    <Style TargetType="Grid">
+                                        <Setter Property="Visibility" Value="Collapsed"/>
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsChecked, ElementName=RbAcmvThongKe}" Value="True">
+                                                <Setter Property="Visibility" Value="Visible"/>
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </Grid.Style>
+
+                                <StackPanel>
+                                    <TextBlock Text="THỐNG KÊ ACMV"
+                                               FontWeight="Bold"
+                                               FontSize="14"
+                                               Foreground="#FF0078D7"
+                                               Margin="0,0,0,10"/>
+                                    <TextBlock Text="Bạn xây dựng nội dung riêng của tab THỐNG KÊ tại đây."
+                                               Foreground="Gray"/>
+                                </StackPanel>
+                            </Grid>
+                        </Grid>
+                    </Grid>
+                </TabItem>
+
+                <TabItem Header="3. CTN">
+                    <Grid Margin="2">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="30"/>
+                            <RowDefinition Height="*"/>
+                        </Grid.RowDefinitions>
+
+                        <UniformGrid Grid.Row="0" Rows="1" Columns="4">
+                            <RadioButton x:Name="RbCtnDuongOng" Content="ĐƯỜNG ỐNG" GroupName="TabCTN" IsChecked="True" Style="{StaticResource TabNgangStyle}"/>
+                            <RadioButton x:Name="RbCtnVan" Content="VAN" GroupName="TabCTN" Style="{StaticResource TabNgangStyle}"/>
+                            <RadioButton x:Name="RbCtnThietBi" Content="THIẾT BỊ" GroupName="TabCTN" Style="{StaticResource TabNgangStyle}"/>
+                            <RadioButton x:Name="RbCtnThongKe" Content="THỐNG KÊ" GroupName="TabCTN" Style="{StaticResource TabNgangStyle}"/>
+                        </UniformGrid>
+
+                        <Grid Grid.Row="1" Margin="2,5,2,2">
+                            <Grid VerticalAlignment="Top">
+                                <Grid.Style>
+                                    <Style TargetType="Grid">
+                                        <Setter Property="Visibility" Value="Collapsed"/>
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsChecked, ElementName=RbCtnDuongOng}" Value="True">
+                                                <Setter Property="Visibility" Value="Visible"/>
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </Grid.Style>
+
+                                <StackPanel Orientation="Vertical">
+                                    <ComboBox x:Name="CmbHeThongCTN"
+                                              Visibility="Collapsed"
+                                              SelectedIndex="0"
+                                              SelectionChanged="CmbHeThong_SelectionChanged">
+                                        <ComboBoxItem Content="CTN _ CTN"/>
+                                    </ComboBox>
+
+                                    <ComboBox x:Name="CmbVatLieuOngCTN"
+                                              Visibility="Collapsed"/>
+
+                                    <TextBlock Text="Chọn đường ống:"
+                                               FontWeight="Bold"
+                                               Margin="0,0,0,5"
+                                               Foreground="#FF333333"/>
+
+                                    <ListBox x:Name="LstVatLieuOngBangCTN"
+                                             MinHeight="66"
+                                             FontSize="11"
+                                             BorderThickness="0"
+                                             SelectedIndex="0"
+                                             ScrollViewer.VerticalScrollBarVisibility="Disabled"
+                                             ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                                             ItemContainerStyle="{StaticResource VatLieuItemStyle}"
+                                             SelectionChanged="LstVatLieuOngBang_SelectionChanged"
+                                             KeyDown="LstVatLieuOngBang_KeyDown">
+                                        <ListBox.ItemsPanel>
+                                            <ItemsPanelTemplate>
+                                                <WrapPanel ItemWidth="84" ItemHeight="32"/>
+                                            </ItemsPanelTemplate>
+                                        </ListBox.ItemsPanel>
+
+                                        <ListBoxItem Content="TRÁNG KẼM"/>
+                                        <ListBoxItem Content="HDPE"/>
+                                        <ListBoxItem Content="THÉP ĐEN"/>
+                                        <ListBoxItem Content="INOX"/>
+                                        <ListBoxItem Content="NHÚNG NÓNG"/>
+                                    </ListBox>
+
+                                    <TextBox x:Name="TxtVatLieuOngBoSungCTN"
+                                             Height="28"
+                                             FontSize="12"
+                                             Padding="4"
+                                             Margin="0,4,0,10"
+                                             ToolTip="Nhập thêm loại ống rồi nhấn Enter"
+                                             KeyDown="TxtVatLieuOngBoSung_KeyDown"/>
+
+                                    <TextBlock Text="Size ống (Kèm màu Layer):"
+                                               FontWeight="Bold"
+                                               Margin="0,0,0,5"
+                                               Foreground="#FF333333"/>
+
+                                    <ListBox x:Name="LstSizeOngCTN"
+                                             Height="140"
+                                             FontSize="13"
+                                             Margin="0,0,0,5"
+                                             ScrollViewer.VerticalScrollBarVisibility="Auto"
+                                             BorderBrush="#FFCCCCCC"
+                                             KeyDown="LstSizeOng_KeyDown"
+                                             HorizontalContentAlignment="Stretch">
+                                        <ListBox.ItemTemplate>
+                                            <DataTemplate>
+                                                <Grid>
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="*"/>
+                                                        <ColumnDefinition Width="Auto"/>
+                                                    </Grid.ColumnDefinitions>
+
+                                                    <TextBlock Text="{Binding SizeName}"
+                                                               VerticalAlignment="Center"/>
+
+                                                    <Button Grid.Column="1"
+                                                            Width="20"
+                                                            Height="20"
+                                                            Background="{Binding LayerColorBrush}"
+                                                            Cursor="Hand"
+                                                            Click="BtnColor_Click"
+                                                            ToolTip="Kích để chọn lại màu Layer"
+                                                            BorderThickness="1"
+                                                            BorderBrush="Gray"
+                                                            Padding="0"/>
+                                                </Grid>
+                                            </DataTemplate>
+                                        </ListBox.ItemTemplate>
+                                    </ListBox>
+
+                                    <TextBox x:Name="TxtCustomSizeCTN"
+                                             Height="30"
+                                             FontSize="13"
+                                             Padding="4"
+                                             ToolTip="Nhập kích thước rồi nhấn Enter"
+                                             KeyDown="TxtCustomSize_KeyDown"/>
+
+                                    <Grid Margin="0,10,0,0">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="8"/>
+                                            <ColumnDefinition Width="*"/>
+                                        </Grid.ColumnDefinitions>
+
+                                        <Button x:Name="BtnVeOngCTN"
+                                                Grid.Column="0"
+                                                Content="VẼ ỐNG"
+                                                Height="35"
+                                                FontSize="14"
+                                                FontWeight="Bold"
+                                                Background="#FF0078D7"
+                                                Foreground="White"
+                                                Cursor="Hand"
+                                                Click="BtnVeOng_Click"/>
+
+                                        <Button x:Name="BtnDoiLayerCTN"
+                                                Grid.Column="2"
+                                                Content="ĐỔI LAYER"
+                                                Height="35"
+                                                FontSize="14"
+                                                FontWeight="Bold"
+                                                Background="#FF6F42C1"
+                                                Foreground="White"
+                                                Cursor="Hand"
+                                                Click="BtnDoiLayer_Click"/>
+                                    </Grid>
+
+                                    <Button x:Name="BtnAutoConvertPipeCTN"
+                                            Content="TỰ ĐỘNG VẼ ỐNG"
+                                            Height="35"
+                                            FontSize="14"
+                                            FontWeight="Bold"
+                                            Background="#FFD35400"
+                                            Foreground="White"
+                                            Margin="0,10,0,0"
+                                            Cursor="Hand"
+                                            Click="BtnAutoConvertPipe_Click"/>
+
+                                    <Button x:Name="BtnAutoDrawByTemplateCTN"
+                                            Content="VẼ ỐNG TỰ ĐỘNG THEO MẪU"
+                                            Height="35"
+                                            FontSize="13"
+                                            FontWeight="Bold"
+                                            Background="#FF00875A"
+                                            Foreground="White"
+                                            Margin="0,8,0,0"
+                                            Cursor="Hand"
+                                            Click="BtnAutoDrawByTemplate_Click"/>
+                                </StackPanel>
+                            </Grid>
+
+                            <Grid VerticalAlignment="Top">
+                                <Grid.Style>
+                                    <Style TargetType="Grid">
+                                        <Setter Property="Visibility" Value="Collapsed"/>
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsChecked, ElementName=RbCtnVan}" Value="True">
+                                                <Setter Property="Visibility" Value="Visible"/>
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </Grid.Style>
+
+                                <StackPanel>
+                                    <TextBlock Text="VAN CTN"
+                                               FontWeight="Bold"
+                                               FontSize="14"
+                                               Foreground="#FF0078D7"
+                                               Margin="0,0,0,10"/>
+                                    <TextBlock Text="Bạn xây dựng nội dung riêng của tab VAN tại đây."
+                                               Foreground="Gray"/>
+                                </StackPanel>
+                            </Grid>
+
+                            <Grid VerticalAlignment="Top">
+                                <Grid.Style>
+                                    <Style TargetType="Grid">
+                                        <Setter Property="Visibility" Value="Collapsed"/>
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsChecked, ElementName=RbCtnThietBi}" Value="True">
+                                                <Setter Property="Visibility" Value="Visible"/>
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </Grid.Style>
+
+                                <StackPanel>
+                                    <TextBlock Text="THIẾT BỊ CTN"
+                                               FontWeight="Bold"
+                                               FontSize="14"
+                                               Foreground="#FF0078D7"
+                                               Margin="0,0,0,10"/>
+                                    <TextBlock Text="Bạn xây dựng nội dung riêng của tab THIẾT BỊ tại đây."
+                                               Foreground="Gray"/>
+                                </StackPanel>
+                            </Grid>
+
+                            <Grid VerticalAlignment="Top">
+                                <Grid.Style>
+                                    <Style TargetType="Grid">
+                                        <Setter Property="Visibility" Value="Collapsed"/>
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsChecked, ElementName=RbCtnThongKe}" Value="True">
+                                                <Setter Property="Visibility" Value="Visible"/>
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </Grid.Style>
+
+                                <StackPanel>
+                                    <TextBlock Text="THỐNG KÊ CTN"
+                                               FontWeight="Bold"
+                                               FontSize="14"
+                                               Foreground="#FF0078D7"
+                                               Margin="0,0,0,10"/>
+                                    <TextBlock Text="Bạn xây dựng nội dung riêng của tab THỐNG KÊ tại đây."
+                                               Foreground="Gray"/>
+                                </StackPanel>
+                            </Grid>
+                        </Grid>
+                    </Grid>
+                </TabItem>
+
+                <TabItem Header="4. ĐIỆN">
+                    <Grid>
+                        <TextBlock Text="Nội dung điện sẽ cập nhật sau..."
+                                   HorizontalAlignment="Center"
+                                   VerticalAlignment="Center"
+                                   Foreground="Gray"
+                                   FontStyle="Italic"/>
+                    </Grid>
+                </TabItem>
+
+                <TabItem Header="5. ĐIỆN NHẸ">
+                    <Grid>
+                        <TextBlock Text="Nội dung điện nhẹ sẽ cập nhật sau..."
+                                   HorizontalAlignment="Center"
+                                   VerticalAlignment="Center"
+                                   Foreground="Gray"
+                                   FontStyle="Italic"/>
+                    </Grid>
+                </TabItem>
+
+                <TabItem Header="6. PHỤ TRỢ">
+                    <Grid>
+                        <TextBlock Text="Chức năng phụ trợ sẽ cập nhật sau..."
+                                   HorizontalAlignment="Center"
+                                   VerticalAlignment="Center"
+                                   Foreground="Gray"
+                                   FontStyle="Italic"/>
+                    </Grid>
+                </TabItem>
+
+                <TabItem Header="7. EXCEL">
+                    <Grid>
+                        <TextBlock Text="Chức năng Excel sẽ cập nhật sau..."
+                                   HorizontalAlignment="Center"
+                                   VerticalAlignment="Center"
+                                   Foreground="Gray"
+                                   FontStyle="Italic"/>
+                    </Grid>
+                </TabItem>
+
+                <TabItem Header="8. AI">
+                    <Grid>
+                        <TextBlock Text="Chức năng AI sẽ cập nhật sau..."
+                                   HorizontalAlignment="Center"
+                                   VerticalAlignment="Center"
+                                   Foreground="Gray"
+                                   FontStyle="Italic"/>
+                    </Grid>
+                </TabItem>
+            </TabControl>
+        </Grid>
     </Grid>
 </UserControl>
