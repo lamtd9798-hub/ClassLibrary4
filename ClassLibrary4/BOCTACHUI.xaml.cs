@@ -44,7 +44,7 @@ namespace ClassLibrary4
         private const double MinimumLabelTextHeight = 67.0;
         private const double LabelTextHeightToWidthRatio = 2.0 / 9.0;
         private const double AutomaticLabelScale = 2.2;
-        private const string LayerChangeBuild = "DL-20260807-11";
+        private const string LayerChangeBuild = "DL-20260808-12";
         private const string AutoConvertBuild = "AUTO-20260807-10";
         private const string TemplateAutoDrawBuild = "MAU-20260807-02";
         private const double SprinklerCenterSearchDistance = 500.0;
@@ -1207,6 +1207,77 @@ namespace ClassLibrary4
                 false);
         }
 
+        private Polyline ConvertCurveToWidePolyline(
+            Curve curve,
+            string layerName,
+            double width)
+        {
+            if (curve == null)
+                return null;
+
+            Polyline pline = new Polyline();
+            pline.SetDatabaseDefaults();
+            pline.Layer = layerName;
+            pline.Color =
+                Autodesk.AutoCAD.Colors.Color.FromColorIndex(
+                    ColorMethod.ByLayer,
+                    256);
+            pline.Linetype = "ByLayer";
+            pline.LineWeight = LineWeight.ByLayer;
+
+            if (curve is Line line)
+            {
+                pline.AddVertexAt(
+                    0,
+                    new Point2d(line.StartPoint.X, line.StartPoint.Y),
+                    0, width, width);
+                pline.AddVertexAt(
+                    1,
+                    new Point2d(line.EndPoint.X, line.EndPoint.Y),
+                    0, width, width);
+            }
+            else if (curve is Polyline sourcePline &&
+                     sourcePline.NumberOfVertices >= 2)
+            {
+                for (int i = 0; i < sourcePline.NumberOfVertices; i++)
+                {
+                    Point2d pt = sourcePline.GetPoint2dAt(i);
+                    double bulge = sourcePline.GetBulgeAt(i);
+                    pline.AddVertexAt(i, pt, bulge, width, width);
+                }
+
+                pline.Closed = sourcePline.Closed;
+            }
+            else
+            {
+                // Fallback: lấy 2 điểm đầu-cuối
+                try
+                {
+                    Point3d sp = curve.StartPoint;
+                    Point3d ep = curve.EndPoint;
+
+                    if (sp.DistanceTo(ep) < 0.001)
+                        return null;
+
+                    pline.AddVertexAt(
+                        0,
+                        new Point2d(sp.X, sp.Y),
+                        0, width, width);
+                    pline.AddVertexAt(
+                        1,
+                        new Point2d(ep.X, ep.Y),
+                        0, width, width);
+                }
+                catch
+                {
+                    return null;
+                }
+            }
+
+            pline.ConstantWidth = width;
+            return pline;
+        }
+
         private void BtnDoiLayer_Click(
             object sender,
             RoutedEventArgs e)
@@ -1289,9 +1360,14 @@ namespace ClassLibrary4
                     HashSet<ObjectId> textIdsToUpdate =
                         new HashSet<ObjectId>();
 
-                    List<Polyline> selectedPolylines =
+                    // Danh sách polyline kết quả (sau convert) để tạo chữ
+                    List<Polyline> resultPolylines =
                         new List<Polyline>();
 
+                    int convertedLineCount = 0;
+                    int updatedPlineCount = 0;
+
+                    // --- Bước 1: phân loại + tìm chữ đi kèm ---
                     foreach (ObjectId id in selectedIds)
                     {
                         Entity selectedEntity =
@@ -1305,9 +1381,6 @@ namespace ClassLibrary4
                             selectedCurveLayers[id] =
                                 selectedEntity.Layer;
                         }
-
-                        if (selectedEntity is Polyline pl)
-                            selectedPolylines.Add(pl);
 
                         if (selectedEntity is DBText ||
                             selectedEntity is MText)
@@ -1324,7 +1397,7 @@ namespace ClassLibrary4
                         textIdsToUpdate.Add(textId);
                     }
 
-                    // 1. Đổi layer + độ dày cho đối tượng đã chọn
+                    // --- Bước 2: xử lý từng đối tượng đã chọn ---
                     foreach (ObjectId id in selectedIds)
                     {
                         Entity ent =
@@ -1333,7 +1406,63 @@ namespace ClassLibrary4
                                 OpenMode.ForWrite,
                                 false) as Entity;
 
-                        if (ent != null)
+                        if (ent == null)
+                            continue;
+
+                        // Text đã chọn → chỉ đổi layer + nội dung
+                        if (ent is DBText || ent is MText)
+                        {
+                            ApplyLayerAndLabel(
+                                ent,
+                                layerName,
+                                plineWidth,
+                                shortSizeLabel);
+                            continue;
+                        }
+
+                        // Polyline có sẵn → set layer + độ dày
+                        if (ent is Polyline existingPline)
+                        {
+                            ApplyLayerAndLabel(
+                                existingPline,
+                                layerName,
+                                plineWidth,
+                                shortSizeLabel);
+
+                            resultPolylines.Add(existingPline);
+                            updatedPlineCount++;
+                            continue;
+                        }
+
+                        // Line / Curve khác → chuyển thành Polyline có độ dày
+                        if (ent is Curve curve)
+                        {
+                            Polyline newPline =
+                                ConvertCurveToWidePolyline(
+                                    curve,
+                                    layerName,
+                                    plineWidth);
+
+                            if (newPline == null)
+                            {
+                                // Không convert được → chỉ đổi layer
+                                ApplyLayerAndLabel(
+                                    ent,
+                                    layerName,
+                                    plineWidth,
+                                    shortSizeLabel);
+                                continue;
+                            }
+
+                            btr.AppendEntity(newPline);
+                            tr.AddNewlyCreatedDBObject(newPline, true);
+                            resultPolylines.Add(newPline);
+
+                            // Xóa Line/Curve cũ
+                            ent.Erase();
+                            convertedLineCount++;
+                        }
+                        else
                         {
                             ApplyLayerAndLabel(
                                 ent,
@@ -1343,7 +1472,7 @@ namespace ClassLibrary4
                         }
                     }
 
-                    // 2. Cập nhật chữ đi kèm (nếu có)
+                    // --- Bước 3: cập nhật chữ đi kèm (nếu có) ---
                     foreach (ObjectId textId in textIdsToUpdate)
                     {
                         if (selectedIds.Contains(textId))
@@ -1365,30 +1494,27 @@ namespace ClassLibrary4
                         }
                     }
 
-                    // 3. Nếu không tìm thấy chữ đi kèm → tạo chữ mới
-                    //    trên từng polyline đã chọn (đảm bảo luôn có DN).
+                    // --- Bước 4: luôn tạo chữ DN nếu chưa có chữ đi kèm ---
                     int createdLabelCount = 0;
 
-                    if (textIdsToUpdate.Count == 0 &&
-                        selectedPolylines.Count > 0)
-                    {
-                        foreach (Polyline pline in selectedPolylines)
-                        {
-                            // pline đã được mở ForWrite ở bước trên
-                            // qua ObjectId, nhưng để an toàn lấy lại.
-                            Polyline writable =
-                                tr.GetObject(
-                                    pline.ObjectId,
-                                    OpenMode.ForWrite,
-                                    false) as Polyline;
+                    bool hasExistingLabels =
+                        textIdsToUpdate.Count > 0;
 
-                            if (writable == null)
+                    if (!hasExistingLabels)
+                    {
+                        foreach (Polyline pline in resultPolylines)
+                        {
+                            if (pline == null ||
+                                pline.IsErased ||
+                                !pline.ObjectId.IsValid)
+                            {
                                 continue;
+                            }
 
                             DBText newLabel =
                                 CreateAutomaticSizeLabel(
                                     db,
-                                    writable,
+                                    pline,
                                     layerName,
                                     shortSizeLabel,
                                     plineWidth);
@@ -1410,10 +1536,12 @@ namespace ClassLibrary4
 
                     ed.WriteMessage(
                         $"\n[{LayerChangeBuild}] Đã chuyển " +
-                        $"{selectedIds.Count} đối tượng, " +
+                        $"{selectedIds.Count} đối tượng " +
+                        $"(pline: {updatedPlineCount}, " +
+                        $"line→pline: {convertedLineCount}), " +
                         $"cập nhật {textIdsToUpdate.Count} chữ, " +
                         $"tạo mới {createdLabelCount} chữ " +
-                        $"sang Layer: {layerName}");
+                        $"→ Layer: {layerName}, Width: {plineWidth}");
                 }
 
                 ed.Regen();
