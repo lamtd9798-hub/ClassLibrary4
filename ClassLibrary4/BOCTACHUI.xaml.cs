@@ -2334,6 +2334,8 @@ namespace ClassLibrary4
                    m.Contains("OG LANH") ||
                    m.Contains("OG CẤP") ||
                    m.Contains("OG CAP") ||
+                   m.Contains("OG HỒI") ||
+                   m.Contains("OG HOI") ||
                    m.Contains("SEAF") ||
                    m.Contains("FAF") ||
                    m.Contains("EAF") ||
@@ -2438,7 +2440,8 @@ namespace ClassLibrary4
             var panelGio =
                 FindName("PanelSizeOngGioACMV") as System.Windows.UIElement;
 
-            if (panelThuong == null || panelGio == null)
+            // Nếu thiếu panel ống gió trong XAML → vẫn cho vẽ bằng list size thường
+            if (panelThuong == null && panelGio == null)
                 return;
 
             string material = GetSelectedPipeMaterialName(ctx);
@@ -2453,51 +2456,68 @@ namespace ClassLibrary4
                     isOngGio = chkGio.IsChecked == true;
             }
 
-            panelThuong.Visibility = isOngGio
-                ? System.Windows.Visibility.Collapsed
-                : System.Windows.Visibility.Visible;
+            if (panelThuong != null)
+            {
+                // Không có panel gió riêng → luôn hiện panel thường (chứa size WxH)
+                if (panelGio == null)
+                    panelThuong.Visibility = System.Windows.Visibility.Visible;
+                else
+                    panelThuong.Visibility = isOngGio
+                        ? System.Windows.Visibility.Collapsed
+                        : System.Windows.Visibility.Visible;
+            }
 
-            panelGio.Visibility = isOngGio
-                ? System.Windows.Visibility.Visible
-                : System.Windows.Visibility.Collapsed;
+            if (panelGio != null)
+            {
+                panelGio.Visibility = isOngGio
+                    ? System.Windows.Visibility.Visible
+                    : System.Windows.Visibility.Collapsed;
+            }
 
-            // Đồng bộ list size ống gió từ ctx.Sizes
+            // Đồng bộ list size ống gió từ ctx.Sizes (có màu Layer)
             if (isOngGio)
             {
-                var lstGio = TimListBox("LstSizeOngGioACMV");
-                if (lstGio != null)
+                try
                 {
-                    string selected =
-                        LayNoiDungItem(lstGio.SelectedItem);
-
-                    lstGio.Items.Clear();
-
-                    foreach (var item in ctx.Sizes)
+                    var lstGio = TimListBox("LstSizeOngGioACMV");
+                    if (lstGio != null && ctx.Sizes != null)
                     {
-                        lstGio.Items.Add(
-                            new WpfListBoxItem
-                            {
-                                Content = item.SizeName
-                            });
-                    }
+                        string selectedName = null;
+                        if (lstGio.SelectedItem is PipeSizeItem selItem)
+                            selectedName = selItem.SizeName;
+                        else
+                            selectedName = LayNoiDungItem(lstGio.SelectedItem);
 
-                    if (lstGio.Items.Count > 0)
-                    {
-                        int idx = 0;
+                        // Chỉ gán ItemsSource — không Clear Items (tránh crash)
+                        lstGio.ItemsSource = ctx.Sizes;
 
-                        for (int i = 0; i < lstGio.Items.Count; i++)
+                        if (ctx.Sizes.Count > 0)
                         {
-                            if (LayNoiDungItem(lstGio.Items[i]).Equals(
-                                selected,
-                                StringComparison.OrdinalIgnoreCase))
+                            PipeSizeItem target = null;
+                            if (!string.IsNullOrWhiteSpace(selectedName))
                             {
-                                idx = i;
-                                break;
+                                foreach (var s in ctx.Sizes)
+                                {
+                                    if (string.Equals(s.SizeName, selectedName,
+                                        StringComparison.OrdinalIgnoreCase))
+                                    {
+                                        target = s;
+                                        break;
+                                    }
+                                }
                             }
+                            object want = target ?? ctx.Sizes[0];
+                            if (!ReferenceEquals(lstGio.SelectedItem, want))
+                                lstGio.SelectedItem = want;
                         }
-
-                        lstGio.SelectedIndex = idx;
                     }
+
+                    CapNhatDanhSachCnEiOngGio(ctx);
+                }
+                catch (System.Exception ex)
+                {
+                    System.Diagnostics.Debug.WriteLine(
+                        "CapNhatHienThiPanelOngGioACMV: " + ex.Message);
                 }
             }
         }
@@ -2517,12 +2537,13 @@ namespace ClassLibrary4
             string material = GetSelectedPipeMaterialName(ctx);
             bool isHutKhoi = LaOngGioHutKhoi(material);
 
+            // Hút khói → EI ; các loại ống gió còn lại → CN
             string[] items = isHutKhoi
-                ? new[] { "EI30", "EI45", "EI60", "EI90", "EI120" }
+                ? new[] { "EI30", "EI45", "EI60", "EI90", "EI120", "EI160" }
                 : new[]
                 {
                     "CN10", "CN13", "CN15", "CN20",
-                    "CN25", "CN32", "CN50"
+                    "CN25", "CN30", "CN35"
                 };
 
             if (txtTitle != null)
@@ -2570,8 +2591,23 @@ namespace ClassLibrary4
 
         private string GetSelectedOngGioSize()
         {
-            var lst = TimListBox("LstSizeOngGioACMV");
-            return LayNoiDungItem(lst?.SelectedItem);
+            var lstGio = TimListBox("LstSizeOngGioACMV");
+            if (lstGio?.SelectedItem is PipeSizeItem psi &&
+                !string.IsNullOrWhiteSpace(psi.SizeName))
+                return psi.SizeName;
+
+            string size = LayNoiDungItem(lstGio?.SelectedItem);
+            if (!string.IsNullOrWhiteSpace(size))
+                return size;
+
+            // Fallback list thường
+            if (_ctxACMV?.LstSize?.SelectedItem is PipeSizeItem item &&
+                !string.IsNullOrWhiteSpace(item.SizeName))
+                return item.SizeName;
+
+            var lstThuong = TimListBox("LstSizeOngACMV");
+            size = LayNoiDungItem(lstThuong?.SelectedItem);
+            return size ?? "";
         }
 
         private string GetSelectedCnEi()
@@ -7996,6 +8032,481 @@ namespace ClassLibrary4
             }
         }
 
+
+        private const string TempFindLayerName = "_TIM_DOI_TUONG_TEMP";
+
+        private void BtnTimDoiTuongThongKe_Click(
+            object sender,
+            RoutedEventArgs e)
+        {
+            var doc =
+                Autodesk.AutoCAD.ApplicationServices.Core.Application
+                    .DocumentManager
+                    .MdiActiveDocument;
+
+            if (doc == null)
+                return;
+
+            var db = doc.Database;
+            var ed = doc.Editor;
+
+            Autodesk.AutoCAD.Internal.Utils.SetFocusToDwgView();
+
+            List<ObjectId> tempLineIds = new List<ObjectId>();
+
+            try
+            {
+                while (true)
+                {
+                    ed.WriteMessage(
+                        "\n[TÌM ĐỐI TƯỢNG] Click vào TÊN LAYER trên bảng (ESC thoát): ");
+
+                    // Không dùng GetEntity (dễ "Nothing Selected") — lấy điểm click
+                    PromptPointOptions ppo =
+                        new PromptPointOptions(
+                            "\nClick vào ô Tên Layer trên bảng thống kê: ")
+                        {
+                            AllowNone = true
+                        };
+
+                    PromptPointResult ppr = ed.GetPoint(ppo);
+
+                    if (ppr.Status == PromptStatus.None ||
+                        ppr.Status == PromptStatus.Cancel)
+                    {
+                        ed.WriteMessage("\n[TÌM ĐỐI TƯỢNG] Đã thoát.");
+                        break;
+                    }
+
+                    if (ppr.Status != PromptStatus.OK)
+                        continue;
+
+                    // Có click mới → xóa đường chỉ lần trước (giữ đường đến lúc này)
+                    XoaDuongChiTam(doc, db, tempLineIds);
+                    tempLineIds.Clear();
+                    ed.Regen();
+
+                    Point3d pick = ppr.Value;
+                    string layerName = "";
+                    Point3d fromPt = pick;
+
+                    using (doc.LockDocument())
+                    using (Transaction tr =
+                        db.TransactionManager.StartTransaction())
+                    {
+                        layerName = TimTenLayerTaiDiem(
+                            tr, db, ed, pick, out fromPt);
+                        tr.Commit();
+                    }
+
+                    layerName = (layerName ?? "").Trim();
+
+                    if (string.IsNullOrWhiteSpace(layerName) ||
+                        layerName.Equals("TÊN LAYER", StringComparison.OrdinalIgnoreCase) ||
+                        layerName.Equals("STT", StringComparison.OrdinalIgnoreCase) ||
+                        layerName.StartsWith("BẢNG THỐNG KÊ", StringComparison.OrdinalIgnoreCase) ||
+                        layerName.StartsWith("SỐ LƯỢNG", StringComparison.OrdinalIgnoreCase))
+                    {
+                        MessageBox.Show(
+                            "Không đọc được Tên Layer tại vị trí click.\nHãy click vào chữ tên Layer trong bảng thống kê.",
+                            "Cảnh báo");
+                        continue;
+                    }
+
+                    List<Point3d> targets = new List<Point3d>();
+
+                    using (doc.LockDocument())
+                    using (Transaction tr =
+                        db.TransactionManager.StartTransaction())
+                    {
+                        BlockTableRecord btr =
+                            (BlockTableRecord)tr.GetObject(
+                                db.CurrentSpaceId, OpenMode.ForRead);
+
+                        List<Polyline> plines = new List<Polyline>();
+                        List<Entity> texts = new List<Entity>();
+
+                        foreach (ObjectId id in btr)
+                        {
+                            Entity o =
+                                tr.GetObject(id, OpenMode.ForRead)
+                                    as Entity;
+                            if (o == null)
+                                continue;
+
+                            if (!string.Equals(
+                                    o.Layer,
+                                    layerName,
+                                    StringComparison.OrdinalIgnoreCase))
+                                continue;
+
+                            if (o is Table)
+                                continue;
+
+                            if (o is Polyline pl)
+                                plines.Add(pl);
+                            else if (o is DBText || o is MText)
+                                texts.Add(o);
+                        }
+
+                        if (plines.Count > 0)
+                        {
+                            foreach (Polyline pl in plines)
+                                targets.Add(LayDiemGiuaPolyline(pl));
+                        }
+                        else
+                        {
+                            foreach (Entity t in texts)
+                                targets.Add(LayDiemDaiDien(t));
+                        }
+
+                        tr.Commit();
+                    }
+
+                    if (targets.Count == 0)
+                    {
+                        MessageBox.Show(
+                            $"Không tìm thấy đối tượng nào trên layer:\n{layerName}",
+                            "Thông báo");
+                        continue;
+                    }
+
+                    using (doc.LockDocument())
+                    using (Transaction tr =
+                        db.TransactionManager.StartTransaction())
+                    {
+                        EnsureTempFindLayer(tr, db);
+
+                        BlockTableRecord btr =
+                            (BlockTableRecord)tr.GetObject(
+                                db.CurrentSpaceId, OpenMode.ForWrite);
+
+                        foreach (Point3d toPt in targets)
+                        {
+                            Line line = new Line(fromPt, toPt);
+                            line.SetDatabaseDefaults(db);
+                            line.Layer = TempFindLayerName;
+                            line.Color =
+                                Autodesk.AutoCAD.Colors.Color.FromColorIndex(
+                                    ColorMethod.ByAci, 1);
+                            btr.AppendEntity(line);
+                            tr.AddNewlyCreatedDBObject(line, true);
+                            tempLineIds.Add(line.ObjectId);
+                        }
+
+                        tr.Commit();
+                    }
+
+                    ed.Regen();
+                    ed.WriteMessage(
+                        $"\n[TÌM ĐỐI TƯỢNG] {layerName} → {targets.Count} đường chỉ. " +
+                        "Click layer khác để tìm tiếp, ESC để thoát.");
+                }
+            }
+            catch (System.Exception ex)
+            {
+                try { XoaDuongChiTam(doc, db, tempLineIds); } catch { }
+                MessageBox.Show(
+                    "Lỗi tìm đối tượng:\n" + ex.Message,
+                    "Lỗi");
+            }
+            finally
+            {
+                XoaDuongChiTam(doc, db, tempLineIds);
+                try { ed.Regen(); } catch { }
+            }
+        }
+
+        /// <summary>
+        /// Tìm bảng gần điểm click và lấy text cột Tên Layer.
+        /// </summary>
+        private static string TimTenLayerTaiDiem(
+            Transaction tr,
+            Database db,
+            Editor ed,
+            Point3d pick,
+            out Point3d fromPt)
+        {
+            fromPt = pick;
+
+            BlockTableRecord btr =
+                (BlockTableRecord)tr.GetObject(
+                    db.CurrentSpaceId, OpenMode.ForRead);
+
+            Table bestTable = null;
+            double bestTableDist = double.MaxValue;
+
+            foreach (ObjectId id in btr)
+            {
+                Table tb = tr.GetObject(id, OpenMode.ForRead) as Table;
+                if (tb == null)
+                    continue;
+
+                try
+                {
+                    Extents3d ext = tb.GeometricExtents;
+                    // Mở rộng một chút vùng bao
+                    double pad = Math.Max(
+                        ext.MaxPoint.X - ext.MinPoint.X,
+                        ext.MaxPoint.Y - ext.MinPoint.Y) * 0.05;
+
+                    if (pick.X < ext.MinPoint.X - pad ||
+                        pick.X > ext.MaxPoint.X + pad ||
+                        pick.Y < ext.MinPoint.Y - pad ||
+                        pick.Y > ext.MaxPoint.Y + pad)
+                        continue;
+
+                    Point3d mid = new Point3d(
+                        (ext.MinPoint.X + ext.MaxPoint.X) / 2.0,
+                        (ext.MinPoint.Y + ext.MaxPoint.Y) / 2.0,
+                        0);
+                    double d = pick.DistanceTo(mid);
+                    if (d < bestTableDist)
+                    {
+                        bestTableDist = d;
+                        bestTable = tb;
+                    }
+                }
+                catch { }
+            }
+
+            if (bestTable == null)
+                return "";
+
+            // 1) HitTest
+            string name = LayTenLayerTuBang(
+                bestTable, pick, ed, out fromPt);
+            if (!string.IsNullOrWhiteSpace(name))
+                return name;
+
+            // 2) Fallback khoảng cách ô
+            return LayTenLayerBangBangKhoangCach(
+                bestTable, pick, out fromPt);
+        }
+
+        private static Point3d LayDiemGiuaPolyline(Polyline pl)
+        {
+            try
+            {
+                if (pl == null || pl.NumberOfVertices < 1)
+                    return Point3d.Origin;
+
+                double len = pl.Length;
+                if (len > 1e-9)
+                    return pl.GetPointAtDist(len / 2.0);
+
+                return pl.GetPoint3dAt(0);
+            }
+            catch
+            {
+                try { return pl.GetPoint3dAt(0); }
+                catch { return Point3d.Origin; }
+            }
+        }
+
+        private static Point3d LayDiemDaiDien(Entity o)
+        {
+            try
+            {
+                if (o is Polyline pl && pl.NumberOfVertices > 0)
+                    return pl.GetPoint3dAt(0);
+
+                if (o is Curve cv)
+                    return cv.StartPoint;
+
+                if (o is DBText t)
+                    return t.Position;
+
+                if (o is MText mt)
+                    return mt.Location;
+
+                if (o is BlockReference br)
+                    return br.Position;
+
+                Extents3d ext = o.GeometricExtents;
+                return new Point3d(
+                    (ext.MinPoint.X + ext.MaxPoint.X) / 2.0,
+                    (ext.MinPoint.Y + ext.MaxPoint.Y) / 2.0,
+                    (ext.MinPoint.Z + ext.MaxPoint.Z) / 2.0);
+            }
+            catch
+            {
+                return Point3d.Origin;
+            }
+        }
+
+        private static string LayTenLayerTuBang(
+            Table table,
+            Point3d pick,
+            Editor ed,
+            out Point3d cellCenter)
+        {
+            cellCenter = pick;
+
+            try
+            {
+                Vector3d viewDir = Vector3d.ZAxis;
+                try
+                {
+                    using (ViewTableRecord view = ed.GetCurrentView())
+                    {
+                        viewDir = view.ViewDirection;
+                        if (viewDir.Length < 1e-9)
+                            viewDir = Vector3d.ZAxis;
+                    }
+                }
+                catch { }
+
+                TableHitTestInfo hit = table.HitTest(pick, viewDir);
+
+                if (hit.Type != TableHitTestType.Cell)
+                    hit = table.HitTest(pick, Vector3d.ZAxis);
+
+                if (hit.Type != TableHitTestType.Cell)
+                    hit = table.HitTest(pick, new Vector3d(0, 0, 1));
+
+                // Fallback: duyệt từng ô, chọn ô gần điểm pick nhất (cột tên layer = 1)
+                if (hit.Type != TableHitTestType.Cell)
+                {
+                    return LayTenLayerBangBangKhoangCach(
+                        table, pick, out cellCenter);
+                }
+
+                int row = hit.Row;
+                int col = hit.Column;
+
+                string text = (table.Cells[row, col].TextString ?? "").Trim();
+
+                if (col != 1 && table.Columns.Count > 1 && row >= 2)
+                {
+                    string col1 = (table.Cells[row, 1].TextString ?? "").Trim();
+                    if (!string.IsNullOrWhiteSpace(col1))
+                        text = col1;
+                }
+
+                cellCenter = pick;
+                return text;
+            }
+            catch
+            {
+                return LayTenLayerBangBangKhoangCach(
+                    table, pick, out cellCenter);
+            }
+        }
+
+        private static string LayTenLayerBangBangKhoangCach(
+            Table table,
+            Point3d pick,
+            out Point3d cellCenter)
+        {
+            cellCenter = pick;
+            string best = "";
+            double bestDist = double.MaxValue;
+
+            try
+            {
+                int rows = table.Rows.Count;
+                int cols = table.Columns.Count;
+                if (cols < 2)
+                    return "";
+
+                // Chỉ xét cột 1 (Tên Layer), bỏ hàng 0-1 (tiêu đề)
+                for (int r = 2; r < rows; r++)
+                {
+                    try
+                    {
+                        Cell cell = table.Cells[r, 1];
+                        string text = (cell.TextString ?? "").Trim();
+                        if (string.IsNullOrWhiteSpace(text))
+                            continue;
+
+                        // Ước lượng tâm ô theo vị trí bảng + cộng dồn width/height
+                        double x = table.Position.X;
+                        double y = table.Position.Y;
+
+                        for (int c = 0; c < 1; c++)
+                            x += table.Columns[c].Width;
+                        x += table.Columns[1].Width / 2.0;
+
+                        for (int rr = 0; rr < r; rr++)
+                            y -= table.Rows[rr].Height;
+                        y -= table.Rows[r].Height / 2.0;
+
+                        Point3d center = new Point3d(x, y, table.Position.Z);
+                        double d = pick.DistanceTo(center);
+
+                        if (d < bestDist)
+                        {
+                            bestDist = d;
+                            best = text;
+                            cellCenter = center;
+                        }
+                    }
+                    catch { }
+                }
+            }
+            catch { }
+
+            return best;
+        }
+
+        private static void EnsureTempFindLayer(
+            Transaction tr,
+            Database db)
+        {
+            LayerTable lt =
+                (LayerTable)tr.GetObject(
+                    db.LayerTableId, OpenMode.ForRead);
+
+            if (lt.Has(TempFindLayerName))
+                return;
+
+            lt.UpgradeOpen();
+            LayerTableRecord ltr = new LayerTableRecord();
+            ltr.Name = TempFindLayerName;
+            ltr.Color = Autodesk.AutoCAD.Colors.Color.FromColorIndex(
+                ColorMethod.ByAci, 1);
+            ltr.IsOff = false;
+            lt.Add(ltr);
+            tr.AddNewlyCreatedDBObject(ltr, true);
+        }
+
+        private static void XoaDuongChiTam(
+            Document doc,
+            Database db,
+            List<ObjectId> ids)
+        {
+            if (ids == null || ids.Count == 0)
+                return;
+
+            try
+            {
+                using (doc.LockDocument())
+                using (Transaction tr =
+                    db.TransactionManager.StartTransaction())
+                {
+                    foreach (ObjectId id in ids)
+                    {
+                        if (id.IsNull || id.IsErased)
+                            continue;
+
+                        try
+                        {
+                            Entity ent =
+                                tr.GetObject(id, OpenMode.ForWrite)
+                                    as Entity;
+                            if (ent != null)
+                                ent.Erase();
+                        }
+                        catch { }
+                    }
+
+                    tr.Commit();
+                }
+            }
+            catch { }
+        }
+
         private void XuatBangRaCad(
             List<ThongKeOng> data,
             string tieuDe = "BẢNG THỐNG KÊ KHỐI LƯỢNG ỐNG",
@@ -8044,32 +8555,43 @@ namespace ClassLibrary4
                 tb.SetSize(data.Count + 2, 3);
                 tb.Position = ppr.Value;
 
-                // Phóng to x3 so với bản hiện tại (sf=6 → sf=18)
-                double sf = 18.0;
+                // Cỡ bảng lớn, tỷ lệ cột cân với chiều cao chữ
+                double sf = 12.0;
+                double textH = 140.0 * sf;   // ~1680
 
                 for (int r = 0;
                     r < tb.Rows.Count;
                     r++)
                 {
-                    tb.Rows[r].Height = 350 * sf;
+                    // Hàng tiêu đề cao hơn một chút
+                    tb.Rows[r].Height = (r == 0 ? 420.0 : 320.0) * sf;
 
                     for (int c = 0;
                         c < tb.Columns.Count;
                         c++)
                     {
-                        // Cùng 1 TextStyle + cùng chiều cao → nét chữ đều
                         tb.Cells[r, c].TextStyleId = db.Textstyle;
-                        tb.Cells[r, c].TextHeight = 150 * sf;
+                        tb.Cells[r, c].TextHeight = textH;
                     }
                 }
 
-                tb.Columns[0].Width = 500 * sf;              // STT
-                // Cột layer: bản trước 20000 + thêm 4cm (~4000)
-                tb.Columns[1].Width = 20000 + 4000;          // = 24000
-                tb.Columns[2].Width = 4000 * 2 * 1.5;        // số lượng
+                // STT | LAYER (giảm còn ~2/3 bề rộng trước) | Số lượng
+                tb.Columns[0].Width = 900.0 * sf;     // STT
+                tb.Columns[1].Width = 4800.0 * sf;    // LAYER = 2/3 của 7200
+                tb.Columns[2].Width = 2200.0 * sf;    // Số lượng
+
+                // Gộp hàng tiêu đề 3 cột
+                try
+                {
+                    tb.MergeCells(
+                        CellRange.Create(tb, 0, 0, 0, 2));
+                }
+                catch
+                {
+                    // một số version TableStyle không merge được — bỏ qua
+                }
 
                 tb.Cells[0, 0].TextString = tieuDe;
-
                 tb.Cells[0, 0].Alignment =
                     CellAlignment.MiddleCenter;
 
