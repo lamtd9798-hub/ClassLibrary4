@@ -8494,6 +8494,24 @@ namespace ClassLibrary4
                 CleanupEvents(_plineWatcherDocument);
         }
 
+        /// <summary>
+        /// Tự động thu nhỏ / phóng to toàn bộ giao diện theo chiều rộng palette.
+        /// Trên laptop hẹp sẽ scale nhỏ lại (tối thiểu 0.72), trên máy to vẫn gần 1.0.
+        /// </summary>
+        private void UserControl_SizeChanged(object sender, SizeChangedEventArgs e)
+        {
+            if (UiScale == null) return;
+
+            // Chiều rộng thiết kế gốc của palette
+            const double baseWidth = 360.0;
+
+            // Giới hạn scale để không quá nhỏ hoặc quá to
+            double scale = Math.Max(0.72, Math.Min(1.05, ActualWidth / baseWidth));
+
+            UiScale.ScaleX = scale;
+            UiScale.ScaleY = scale;
+        }
+
         // ==================== VAN ====================
 
         private void LstLoaiVan_SelectionChanged(
