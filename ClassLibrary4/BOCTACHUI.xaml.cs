@@ -2699,7 +2699,52 @@ namespace ClassLibrary4
                 }
             }
 
+            // CTN: size DN + PN (nếu tích)
+            if (ctx.Suffix == "CTN")
+            {
+                string pn = GetSelectedPnCtn();
+                if (!string.IsNullOrWhiteSpace(baseSize) &&
+                    !string.IsNullOrWhiteSpace(pn))
+                {
+                    return $"{baseSize}_{pn}";
+                }
+            }
+
             return baseSize;
+        }
+
+        private string GetSelectedPnCtn()
+        {
+            var chk =
+                FindName("ChkDungPnCTN") as System.Windows.Controls.CheckBox;
+
+            if (chk != null && chk.IsChecked != true)
+                return "";
+
+            var lst = TimListBox("LstPnCTN");
+            return LayNoiDungItem(lst?.SelectedItem);
+        }
+
+        private void ChkDungPnCtn_Changed(
+            object sender,
+            RoutedEventArgs e)
+        {
+            CapNhatTrangThaiPnCtn();
+        }
+
+        private void CapNhatTrangThaiPnCtn()
+        {
+            var chk =
+                FindName("ChkDungPnCTN") as System.Windows.Controls.CheckBox;
+            var lst = TimListBox("LstPnCTN");
+
+            bool enabled = chk == null || chk.IsChecked == true;
+
+            if (lst != null)
+            {
+                lst.IsEnabled = enabled;
+                lst.Opacity = enabled ? 1.0 : 0.45;
+            }
         }
 
         private string GetSelectedCnOngAcmv()
@@ -7678,52 +7723,83 @@ namespace ClassLibrary4
         /// <summary>
         /// Phân biệt layer ống (vật liệu + DN) với layer van / thiết bị.
         /// </summary>
+        private static string BoDauTiengViet(string s)
+        {
+            if (string.IsNullOrEmpty(s))
+                return "";
+
+            string u = s.ToUpperInvariant();
+            // A
+            u = u.Replace("Á", "A").Replace("À", "A").Replace("Ả", "A")
+                 .Replace("Ã", "A").Replace("Ạ", "A")
+                 .Replace("Ă", "A").Replace("Ắ", "A").Replace("Ằ", "A")
+                 .Replace("Ẳ", "A").Replace("Ẵ", "A").Replace("Ặ", "A")
+                 .Replace("Â", "A").Replace("Ấ", "A").Replace("Ầ", "A")
+                 .Replace("Ẩ", "A").Replace("Ẫ", "A").Replace("Ậ", "A");
+            // E
+            u = u.Replace("É", "E").Replace("È", "E").Replace("Ẻ", "E")
+                 .Replace("Ẽ", "E").Replace("Ẹ", "E")
+                 .Replace("Ê", "E").Replace("Ế", "E").Replace("Ề", "E")
+                 .Replace("Ể", "E").Replace("Ễ", "E").Replace("Ệ", "E");
+            // O
+            u = u.Replace("Ó", "O").Replace("Ò", "O").Replace("Ỏ", "O")
+                 .Replace("Õ", "O").Replace("Ọ", "O")
+                 .Replace("Ô", "O").Replace("Ố", "O").Replace("Ồ", "O")
+                 .Replace("Ổ", "O").Replace("Ỗ", "O").Replace("Ộ", "O")
+                 .Replace("Ơ", "O").Replace("Ớ", "O").Replace("Ờ", "O")
+                 .Replace("Ở", "O").Replace("Ỡ", "O").Replace("Ợ", "O");
+            // U
+            u = u.Replace("Ú", "U").Replace("Ù", "U").Replace("Ủ", "U")
+                 .Replace("Ũ", "U").Replace("Ụ", "U")
+                 .Replace("Ư", "U").Replace("Ứ", "U").Replace("Ừ", "U")
+                 .Replace("Ử", "U").Replace("Ữ", "U").Replace("Ự", "U");
+            // I Y D
+            u = u.Replace("Í", "I").Replace("Ì", "I").Replace("Ỉ", "I")
+                 .Replace("Ĩ", "I").Replace("Ị", "I")
+                 .Replace("Ý", "Y").Replace("Ỳ", "Y").Replace("Ỷ", "Y")
+                 .Replace("Ỹ", "Y").Replace("Ỵ", "Y")
+                 .Replace("Đ", "D");
+            return u;
+        }
+
         private static bool LaLayerOng(string layerName)
         {
             if (string.IsNullOrWhiteSpace(layerName))
                 return false;
 
-            string u = layerName.Trim().ToUpperInvariant()
-                .Replace("Á", "A").Replace("À", "A").Replace("Ả", "A")
-                .Replace("Ã", "A").Replace("Ạ", "A")
-                .Replace("É", "E").Replace("È", "E").Replace("Ẻ", "E")
-                .Replace("Ẽ", "E").Replace("Ẹ", "E")
-                .Replace("Ó", "O").Replace("Ò", "O").Replace("Ỏ", "O")
-                .Replace("Õ", "O").Replace("Ọ", "O")
-                .Replace("Ú", "U").Replace("Ù", "U").Replace("Ủ", "U")
-                .Replace("Ũ", "U").Replace("Ụ", "U")
-                .Replace("Í", "I").Replace("Ì", "I").Replace("Ỉ", "I")
-                .Replace("Ĩ", "I").Replace("Ị", "I")
-                .Replace("Ý", "Y").Replace("Ỳ", "Y").Replace("Ỷ", "Y")
-                .Replace("Ỹ", "Y").Replace("Ỵ", "Y")
-                .Replace("Đ", "D");
+            // Nếu đã nhận là van/thiết bị → không coi là ống
+            if (LaLayerThietBiHoacVan(layerName))
+                return false;
 
-            // Từ khóa vật liệu ống
+            string u = BoDauTiengViet(layerName.Trim());
+
             string[] vatLieuOng =
             {
                 "TRANG KEM", "TRANGKEM", "HDPE", "THEP DEN", "THEPDEN",
                 "INOX", "NHUNG NONG", "NHUNGNONG", "UPVC", "ONG DONG",
                 "ONGDONG", "OG THAI", "OG HUT", "OG LANH", "OG CAP",
-                "PPR", "PVC", "PEHD", "THEP"
+                "OG HOI", "PPR", "PVC", "PEHD", "THEP"
             };
 
-            bool coVatLieu = false;
             foreach (var vl in vatLieuOng)
             {
                 if (u.Contains(vl))
-                {
-                    coVatLieu = true;
-                    break;
-                }
+                    return true;
             }
 
-            // Có DN / size ống điển hình
-            bool coSizeOng =
-                Regex.IsMatch(u, @"DN\s*\d+") ||
-                Regex.IsMatch(u, @"D\d{2,}") ||
-                Regex.IsMatch(u, @"\d+\s*X\s*\d+"); // ống gió WxH
+            // Size ống gió WxH trên layer OG
+            if (Regex.IsMatch(u, @"\d+\s*X\s*\d+") &&
+                (u.Contains("OG ") || u.Contains("OG_") || u.Contains("_OG")))
+                return true;
 
-            return coVatLieu || (coSizeOng && !LaLayerThietBiHoacVan(layerName));
+            // DN + vật liệu ống (không phải van)
+            if (Regex.IsMatch(u, @"DN\s*\d+") &&
+                (u.Contains("TRANG") || u.Contains("HDPE") ||
+                 u.Contains("THEP") || u.Contains("INOX") ||
+                 u.Contains("UPVC") || u.Contains("DONG")))
+                return true;
+
+            return false;
         }
 
         private static bool LaLayerThietBiHoacVan(string layerName)
@@ -7731,30 +7807,22 @@ namespace ClassLibrary4
             if (string.IsNullOrWhiteSpace(layerName))
                 return false;
 
-            string u = layerName.Trim().ToUpperInvariant()
-                .Replace("Á", "A").Replace("À", "A").Replace("Ả", "A")
-                .Replace("Ã", "A").Replace("Ạ", "A")
-                .Replace("É", "E").Replace("È", "E").Replace("Ẻ", "E")
-                .Replace("Ẽ", "E").Replace("Ẹ", "E")
-                .Replace("Ó", "O").Replace("Ò", "O").Replace("Ỏ", "O")
-                .Replace("Õ", "O").Replace("Ọ", "O")
-                .Replace("Ú", "U").Replace("Ù", "U").Replace("Ủ", "U")
-                .Replace("Ũ", "U").Replace("Ụ", "U")
-                .Replace("Í", "I").Replace("Ì", "I").Replace("Ỉ", "I")
-                .Replace("Ĩ", "I").Replace("Ị", "I")
-                .Replace("Đ", "D");
+            string u = BoDauTiengViet(layerName.Trim());
 
             string[] keywords =
             {
-                // Van
-                "VAN", "V.CONG", "VCONG", "Y LOC", "YLOC", "KNM",
-                "VCD", "MFD", "PRD", "LOUVER", "DAMPER", "MG CAP", "MG THAI",
-                // Thiết bị
+                // Van (kể cả V.CỔNG sau khi bỏ dấu → V.CONG)
+                "VAN", "V.CONG", "VCONG", "V. CONG", "CONG TN", "CONG TC",
+                "CONG DIEN", "Y LOC", "YLOC", "KNM",
+                "VCD", "MFD", "PRD", "LOUVER", "DAMPER",
+                "MG CAP", "MG THAI", "VAN 1C", "VAN1C",
+                // Thiết bị FF / ACMV / CTN
                 "BINH", "DAU PHUN", "DAUPHUN", "PHUN",
                 "MAY LANH", "MAYLANH", "QUAT", "BOM",
-                "DONG HO", "DONGHO", "BON",
+                "DONG HO", "DONGHO", "BON NUOC", "BON ",
                 "CASSETTE", "GAN TUONG", "AM TRAN", "AP TRAN", "DAN NONG",
-                "HL-", "HX-", "HN-", " HL ", " HX ", " HN "
+                "HL-", "HX-", "HN-", " HL ", " HX ", " HN ",
+                "BE NUOC", "BE GOI", "THIET BI"
             };
 
             foreach (var k in keywords)
@@ -7960,12 +8028,13 @@ namespace ClassLibrary4
 
                         string layer = ent.Layer ?? "";
 
-                        // Chỉ text trên layer do tool tạo VÀ là van / thiết bị
-                        // (bỏ chữ size ống trên layer TRÁNG KẼM_DN..., HDPE_DN...)
+                        // 1) Phải là layer tool FF_ / ACMV_ / CTN_
                         if (!LaLayerCuaTool(layer))
                             continue;
-                        if (!LaLayerThietBiHoacVan(layer))
+                        // 2) Bỏ layer ống (vật liệu + DN / ống gió)
+                        if (LaLayerOng(layer))
                             continue;
+                        // 3) Còn lại: van + thiết bị (kể cả CTN)
 
                         if (!dictSoLuong.ContainsKey(layer))
                             dictSoLuong[layer] = 0;
@@ -8035,6 +8104,12 @@ namespace ClassLibrary4
 
         private const string TempFindLayerName = "_TIM_DOI_TUONG_TEMP";
 
+        private class EntityColorBackup
+        {
+            public ObjectId Id;
+            public Autodesk.AutoCAD.Colors.Color Color;
+        }
+
         private void BtnTimDoiTuongThongKe_Click(
             object sender,
             RoutedEventArgs e)
@@ -8053,6 +8128,7 @@ namespace ClassLibrary4
             Autodesk.AutoCAD.Internal.Utils.SetFocusToDwgView();
 
             List<ObjectId> tempLineIds = new List<ObjectId>();
+            List<EntityColorBackup> colorBackups = new List<EntityColorBackup>();
 
             try
             {
@@ -8061,7 +8137,6 @@ namespace ClassLibrary4
                     ed.WriteMessage(
                         "\n[TÌM ĐỐI TƯỢNG] Click vào TÊN LAYER trên bảng (ESC thoát): ");
 
-                    // Không dùng GetEntity (dễ "Nothing Selected") — lấy điểm click
                     PromptPointOptions ppo =
                         new PromptPointOptions(
                             "\nClick vào ô Tên Layer trên bảng thống kê: ")
@@ -8081,10 +8156,10 @@ namespace ClassLibrary4
                     if (ppr.Status != PromptStatus.OK)
                         continue;
 
-                    // Có click mới → xóa đường chỉ lần trước (giữ đường đến lúc này)
-                    XoaDuongChiTam(doc, db, tempLineIds);
+                    // Xóa đường + khôi phục màu lần trước
+                    KhoiPhucMauVaXoaDuong(doc, db, tempLineIds, colorBackups);
                     tempLineIds.Clear();
-                    ed.Regen();
+                    colorBackups.Clear();
 
                     Point3d pick = ppr.Value;
                     string layerName = "";
@@ -8114,6 +8189,7 @@ namespace ClassLibrary4
                     }
 
                     List<Point3d> targets = new List<Point3d>();
+                    HashSet<ObjectId> targetIds = new HashSet<ObjectId>();
 
                     using (doc.LockDocument())
                     using (Transaction tr =
@@ -8152,12 +8228,18 @@ namespace ClassLibrary4
                         if (plines.Count > 0)
                         {
                             foreach (Polyline pl in plines)
+                            {
                                 targets.Add(LayDiemGiuaPolyline(pl));
+                                targetIds.Add(pl.ObjectId);
+                            }
                         }
                         else
                         {
                             foreach (Entity t in texts)
+                            {
                                 targets.Add(LayDiemDaiDien(t));
+                                targetIds.Add(t.ObjectId);
+                            }
                         }
 
                         tr.Commit();
@@ -8171,6 +8253,7 @@ namespace ClassLibrary4
                         continue;
                     }
 
+                    // Đổi màu: target = vàng (2), còn lại = xám (8)
                     using (doc.LockDocument())
                     using (Transaction tr =
                         db.TransactionManager.StartTransaction())
@@ -8180,6 +8263,46 @@ namespace ClassLibrary4
                         BlockTableRecord btr =
                             (BlockTableRecord)tr.GetObject(
                                 db.CurrentSpaceId, OpenMode.ForWrite);
+
+                        Autodesk.AutoCAD.Colors.Color colYellow =
+                            Autodesk.AutoCAD.Colors.Color.FromColorIndex(
+                                ColorMethod.ByAci, 2);
+                        Autodesk.AutoCAD.Colors.Color colGray =
+                            Autodesk.AutoCAD.Colors.Color.FromColorIndex(
+                                ColorMethod.ByAci, 8);
+
+                        foreach (ObjectId id in btr)
+                        {
+                            Entity o =
+                                tr.GetObject(id, OpenMode.ForWrite)
+                                    as Entity;
+                            if (o == null || o.IsErased)
+                                continue;
+
+                            // Giữ nguyên bảng thống kê + đường chỉ tạm
+                            if (o is Table)
+                                continue;
+                            if (string.Equals(
+                                    o.Layer,
+                                    TempFindLayerName,
+                                    StringComparison.OrdinalIgnoreCase))
+                                continue;
+
+                            try
+                            {
+                                colorBackups.Add(new EntityColorBackup
+                                {
+                                    Id = id,
+                                    Color = o.Color
+                                });
+
+                                if (targetIds.Contains(id))
+                                    o.Color = colYellow;
+                                else
+                                    o.Color = colGray;
+                            }
+                            catch { }
+                        }
 
                         foreach (Point3d toPt in targets)
                         {
@@ -8199,22 +8322,81 @@ namespace ClassLibrary4
 
                     ed.Regen();
                     ed.WriteMessage(
-                        $"\n[TÌM ĐỐI TƯỢNG] {layerName} → {targets.Count} đường chỉ. " +
-                        "Click layer khác để tìm tiếp, ESC để thoát.");
+                        $"\n[TÌM ĐỐI TƯỢNG] {layerName} → {targets.Count} đối tượng (vàng). " +
+                        "Click layer khác để tìm tiếp, ESC để khôi phục màu & thoát.");
                 }
             }
             catch (System.Exception ex)
             {
-                try { XoaDuongChiTam(doc, db, tempLineIds); } catch { }
+                try
+                {
+                    KhoiPhucMauVaXoaDuong(
+                        doc, db, tempLineIds, colorBackups);
+                }
+                catch { }
                 MessageBox.Show(
                     "Lỗi tìm đối tượng:\n" + ex.Message,
                     "Lỗi");
             }
             finally
             {
-                XoaDuongChiTam(doc, db, tempLineIds);
+                KhoiPhucMauVaXoaDuong(doc, db, tempLineIds, colorBackups);
                 try { ed.Regen(); } catch { }
             }
+        }
+
+        private static void KhoiPhucMauVaXoaDuong(
+            Document doc,
+            Database db,
+            List<ObjectId> tempLineIds,
+            List<EntityColorBackup> colorBackups)
+        {
+            try
+            {
+                using (doc.LockDocument())
+                using (Transaction tr =
+                    db.TransactionManager.StartTransaction())
+                {
+                    if (colorBackups != null)
+                    {
+                        foreach (var bak in colorBackups)
+                        {
+                            if (bak.Id.IsNull || bak.Id.IsErased)
+                                continue;
+                            try
+                            {
+                                Entity o =
+                                    tr.GetObject(bak.Id, OpenMode.ForWrite)
+                                        as Entity;
+                                if (o != null && bak.Color != null)
+                                    o.Color = bak.Color;
+                            }
+                            catch { }
+                        }
+                    }
+
+                    if (tempLineIds != null)
+                    {
+                        foreach (ObjectId id in tempLineIds)
+                        {
+                            if (id.IsNull || id.IsErased)
+                                continue;
+                            try
+                            {
+                                Entity ent =
+                                    tr.GetObject(id, OpenMode.ForWrite)
+                                        as Entity;
+                                if (ent != null)
+                                    ent.Erase();
+                            }
+                            catch { }
+                        }
+                    }
+
+                    tr.Commit();
+                }
+            }
+            catch { }
         }
 
         /// <summary>

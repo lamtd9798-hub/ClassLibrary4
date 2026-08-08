@@ -1107,25 +1107,59 @@
                                         <TextBox x:Name="TxtVatLieuOngBoSungCTN" Height="26" FontSize="11" Padding="4" Margin="0,3,0,8"
                                                  ToolTip="Nhập thêm loại ống rồi nhấn Enter" KeyDown="TxtVatLieuOngBoSung_KeyDown"/>
 
-                                        <TextBlock Text="Size ống (Kèm màu Layer):" FontWeight="Bold" Margin="0,0,0,4" Foreground="#FF333333"/>
-                                        <ListBox x:Name="LstSizeOngCTN" MinHeight="80" MaxHeight="150" FontSize="12" Margin="0,0,0,4"
-                                                 ScrollViewer.VerticalScrollBarVisibility="Auto" BorderBrush="#FFCCCCCC"
-                                                 KeyDown="LstSizeOng_KeyDown" HorizontalContentAlignment="Stretch">
-                                            <ListBox.ItemTemplate>
-                                                <DataTemplate>
-                                                    <Grid>
-                                                        <Grid.ColumnDefinitions>
-                                                            <ColumnDefinition Width="*"/>
-                                                            <ColumnDefinition Width="Auto"/>
-                                                        </Grid.ColumnDefinitions>
-                                                        <TextBlock Text="{Binding SizeName}" VerticalAlignment="Center"/>
-                                                        <Button Grid.Column="1" Width="18" Height="18" Background="{Binding LayerColorBrush}"
-                                                                Cursor="Hand" Click="BtnColor_Click" ToolTip="Kích để chọn lại màu Layer"
-                                                                BorderThickness="1" BorderBrush="Gray" Padding="0"/>
-                                                    </Grid>
-                                                </DataTemplate>
-                                            </ListBox.ItemTemplate>
-                                        </ListBox>
+                                        <TextBlock Text="Size ống (Kèm màu Layer) + PN:" FontWeight="Bold" Margin="0,0,0,4" Foreground="#FF333333"/>
+                                        <Grid Margin="0,0,0,4">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="2*"/>
+                                                <ColumnDefinition Width="6"/>
+                                                <ColumnDefinition Width="*"/>
+                                            </Grid.ColumnDefinitions>
+
+                                            <!-- Size DN -->
+                                            <ListBox x:Name="LstSizeOngCTN" Grid.Column="0"
+                                                     MinHeight="100" MaxHeight="160" FontSize="12"
+                                                     ScrollViewer.VerticalScrollBarVisibility="Auto" BorderBrush="#FFCCCCCC"
+                                                     KeyDown="LstSizeOng_KeyDown" HorizontalContentAlignment="Stretch">
+                                                <ListBox.ItemTemplate>
+                                                    <DataTemplate>
+                                                        <Grid>
+                                                            <Grid.ColumnDefinitions>
+                                                                <ColumnDefinition Width="*"/>
+                                                                <ColumnDefinition Width="Auto"/>
+                                                            </Grid.ColumnDefinitions>
+                                                            <TextBlock Text="{Binding SizeName}" VerticalAlignment="Center"/>
+                                                            <Button Grid.Column="1" Width="18" Height="18" Background="{Binding LayerColorBrush}"
+                                                                    Cursor="Hand" Click="BtnColor_Click" ToolTip="Kích để chọn lại màu Layer"
+                                                                    BorderThickness="1" BorderBrush="Gray" Padding="0"/>
+                                                        </Grid>
+                                                    </DataTemplate>
+                                                </ListBox.ItemTemplate>
+                                            </ListBox>
+
+                                            <!-- Cột PN (~1/3) -->
+                                            <StackPanel Grid.Column="2">
+                                                <StackPanel Orientation="Horizontal" Margin="0,0,0,3">
+                                                    <CheckBox x:Name="ChkDungPnCTN" IsChecked="True"
+                                                              VerticalAlignment="Center" Margin="0,0,4,0"
+                                                              Checked="ChkDungPnCtn_Changed" Unchecked="ChkDungPnCtn_Changed"/>
+                                                    <TextBlock Text="PN" FontSize="11" FontWeight="Bold" VerticalAlignment="Center"/>
+                                                </StackPanel>
+                                                <ListBox x:Name="LstPnCTN"
+                                                         MinHeight="100" MaxHeight="140" FontSize="11"
+                                                         BorderBrush="#FFCCCCCC"
+                                                         ScrollViewer.VerticalScrollBarVisibility="Auto"
+                                                         SelectedIndex="3">
+                                                    <ListBoxItem Content="PN6"/>
+                                                    <ListBoxItem Content="PN8"/>
+                                                    <ListBoxItem Content="PN9"/>
+                                                    <ListBoxItem Content="PN10"/>
+                                                    <ListBoxItem Content="PN12.5"/>
+                                                    <ListBoxItem Content="PN16"/>
+                                                    <ListBoxItem Content="PN20"/>
+                                                    <ListBoxItem Content="PN25"/>
+                                                </ListBox>
+                                            </StackPanel>
+                                        </Grid>
                                         <TextBox x:Name="TxtCustomSizeCTN" Height="28" FontSize="12" Padding="4"
                                                  ToolTip="Nhập kích thước rồi nhấn Enter" KeyDown="TxtCustomSize_KeyDown"/>
 
