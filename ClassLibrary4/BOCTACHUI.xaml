@@ -116,18 +116,38 @@
                 <TabItem Header="1. CHỮA CHÁY">
                     <Grid Margin="2">
                         <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
                             <RowDefinition Height="30"/>
                             <RowDefinition Height="*"/>
                         </Grid.RowDefinitions>
 
-                        <UniformGrid Grid.Row="0" Rows="1" Columns="4">
+                        <Grid Grid.Row="0" Margin="2,2,2,6">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Grid.Column="0"
+                                       Text="Vị trí:"
+                                       FontWeight="Bold"
+                                       VerticalAlignment="Center"
+                                       Margin="0,0,8,0"
+                                       Foreground="#FF333333"/>
+                            <TextBox x:Name="TxtViTriFF"
+                                     Grid.Column="1"
+                                     Height="28"
+                                     FontSize="13"
+                                     Padding="4"
+                                     ToolTip="Nhập vị trí (vd: Tầng 1, Hầm P1…) — sẽ gắn vào tên Layer sau mã hệ thống"/>
+                        </Grid>
+
+                        <UniformGrid Grid.Row="1" Rows="1" Columns="4">
                             <RadioButton x:Name="RbDuongOng" Content="ĐƯỜNG ỐNG" GroupName="TabChuaChay" IsChecked="True" Style="{StaticResource TabNgangStyle}"/>
                             <RadioButton x:Name="RbVan" Content="VAN" GroupName="TabChuaChay" Style="{StaticResource TabNgangStyle}"/>
                             <RadioButton x:Name="RbThietBi" Content="THIẾT BỊ" GroupName="TabChuaChay" Style="{StaticResource TabNgangStyle}"/>
                             <RadioButton x:Name="RbThongKe" Content="THỐNG KÊ" GroupName="TabChuaChay" Style="{StaticResource TabNgangStyle}"/>
                         </UniformGrid>
 
-                        <Grid Grid.Row="1" Margin="2,5,2,2">
+                        <Grid Grid.Row="2" Margin="2,5,2,2">
                             <Grid VerticalAlignment="Top">
                                 <Grid.Style>
                                     <Style TargetType="Grid">
@@ -211,14 +231,23 @@
 
                                         <Button x:Name="BtnVeOng"
                                                 Grid.Column="0"
-                                                Content="VẼ ỐNG"
+                                                Content="VẼ ỐNG 1"
                                                 Height="35"
                                                 FontSize="14"
                                                 FontWeight="Bold"
                                                 Background="#FF0078D7"
                                                 Foreground="White"
                                                 Cursor="Hand"
-                                                Click="BtnVeOng_Click"/>
+                                                ToolTipService.InitialShowDelay="3000"
+                                                ToolTipService.ShowDuration="20000"
+                                                Click="BtnVeOng_Click">
+                                            <Button.ToolTip>
+                                                <ToolTip>
+                                                    <TextBlock MaxWidth="240" TextWrapping="Wrap"
+                                                               Text="VẼ ỐNG 1: Chọn vật liệu + size trên bảng, bấm nút rồi vẽ PLINE trên bản vẽ. Layer và chữ size tự tạo theo lựa chọn (Vị trí / vật liệu / size / CN nếu có)."/>
+                                                </ToolTip>
+                                            </Button.ToolTip>
+                                        </Button>
 
                                         <Button x:Name="BtnDoiLayer"
                                                 Grid.Column="2"
@@ -229,8 +258,37 @@
                                                 Background="#FF6F42C1"
                                                 Foreground="White"
                                                 Cursor="Hand"
-                                                Click="BtnDoiLayer_Click"/>
+                                                ToolTipService.InitialShowDelay="3000"
+                                                ToolTipService.ShowDuration="20000"
+                                                Click="BtnDoiLayer_Click">
+                                            <Button.ToolTip>
+                                                <ToolTip>
+                                                    <TextBlock MaxWidth="240" TextWrapping="Wrap"
+                                                               Text="ĐỔI LAYER: Chọn vật liệu + size trên bảng, bấm nút rồi quét chọn đối tượng trên bản vẽ. Đối tượng được chuyển sang layer mới, đổi độ dày nét và cập nhật chữ size."/>
+                                                </ToolTip>
+                                            </Button.ToolTip>
+                                        </Button>
                                     </Grid>
+
+                                    <Button x:Name="BtnVeOng2"
+                                            Content="VẼ ỐNG 2"
+                                            Height="35"
+                                            FontSize="14"
+                                            FontWeight="Bold"
+                                            Background="#FF17A2B8"
+                                            Foreground="White"
+                                            Margin="0,10,0,0"
+                                            Cursor="Hand"
+                                            ToolTipService.InitialShowDelay="3000"
+                                            ToolTipService.ShowDuration="20000"
+                                            Click="BtnVeOng2_Click">
+                                        <Button.ToolTip>
+                                            <ToolTip>
+                                                <TextBlock MaxWidth="240" TextWrapping="Wrap"
+                                                           Text="VẼ ỐNG 2: Chọn vật liệu trên bảng (có thể tích CN), bấm nút rồi click text size trên bản vẽ (vd: PPR DN20). Tool lấy size từ text, tạo layer rồi vẽ PLINE liên tục."/>
+                                            </ToolTip>
+                                        </Button.ToolTip>
+                                    </Button>
 
                                     <Button x:Name="BtnAutoConvertPipe"
                                             Content="TỰ ĐỘNG VẼ ỐNG"
@@ -241,7 +299,16 @@
                                             Foreground="White"
                                             Margin="0,10,0,0"
                                             Cursor="Hand"
-                                            Click="BtnAutoConvertPipe_Click"/>
+                                            ToolTipService.InitialShowDelay="3000"
+                                            ToolTipService.ShowDuration="20000"
+                                            Click="BtnAutoConvertPipe_Click">
+                                        <Button.ToolTip>
+                                            <ToolTip>
+                                                <TextBlock MaxWidth="240" TextWrapping="Wrap"
+                                                           Text="TỰ ĐỘNG VẼ ỐNG: Quét chọn đường ống + text size trên bản vẽ. Tool nhận diện size (chữ song song ống), tách đoạn, gán layer và tạo chữ tự động."/>
+                                            </ToolTip>
+                                        </Button.ToolTip>
+                                    </Button>
 
                                     <Button x:Name="BtnAutoDrawByTemplate"
                                             Content="VẼ ỐNG TỰ ĐỘNG THEO MẪU"
@@ -252,7 +319,16 @@
                                             Foreground="White"
                                             Margin="0,8,0,0"
                                             Cursor="Hand"
-                                            Click="BtnAutoDrawByTemplate_Click"/>
+                                            ToolTipService.InitialShowDelay="3000"
+                                            ToolTipService.ShowDuration="20000"
+                                            Click="BtnAutoDrawByTemplate_Click">
+                                        <Button.ToolTip>
+                                            <ToolTip>
+                                                <TextBlock MaxWidth="240" TextWrapping="Wrap"
+                                                           Text="VẼ ỐNG TỰ ĐỘNG THEO MẪU: Chọn đoạn ống mẫu đã có layer/size, tool tìm các đoạn tương tự trên bản vẽ và áp dụng cùng layer, độ dày, chữ size."/>
+                                            </ToolTip>
+                                        </Button.ToolTip>
+                                    </Button>
                                 </StackPanel>
                             </Grid>
 
@@ -596,18 +672,38 @@
                 <TabItem Header="2. ACMV">
                     <Grid Margin="2">
                         <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
                             <RowDefinition Height="30"/>
                             <RowDefinition Height="*"/>
                         </Grid.RowDefinitions>
 
-                        <UniformGrid Grid.Row="0" Rows="1" Columns="4">
+                        <Grid Grid.Row="0" Margin="2,2,2,6">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Grid.Column="0"
+                                       Text="Vị trí:"
+                                       FontWeight="Bold"
+                                       VerticalAlignment="Center"
+                                       Margin="0,0,8,0"
+                                       Foreground="#FF333333"/>
+                            <TextBox x:Name="TxtViTriACMV"
+                                     Grid.Column="1"
+                                     Height="28"
+                                     FontSize="13"
+                                     Padding="4"
+                                     ToolTip="Nhập vị trí (vd: Tầng 1, Hầm P1…) — sẽ gắn vào tên Layer sau mã hệ thống"/>
+                        </Grid>
+
+                        <UniformGrid Grid.Row="1" Rows="1" Columns="4">
                             <RadioButton x:Name="RbAcmvDuongOng" Content="ĐƯỜNG ỐNG" GroupName="TabACMV" IsChecked="True" Style="{StaticResource TabNgangStyle}"/>
                             <RadioButton x:Name="RbAcmvVan" Content="VAN" GroupName="TabACMV" Style="{StaticResource TabNgangStyle}"/>
                             <RadioButton x:Name="RbAcmvThietBi" Content="THIẾT BỊ" GroupName="TabACMV" Style="{StaticResource TabNgangStyle}"/>
                             <RadioButton x:Name="RbAcmvThongKe" Content="THỐNG KÊ" GroupName="TabACMV" Style="{StaticResource TabNgangStyle}"/>
                         </UniformGrid>
 
-                        <Grid Grid.Row="1" Margin="2,5,2,2">
+                        <Grid Grid.Row="2" Margin="2,5,2,2">
                             <Grid VerticalAlignment="Top">
                                 <Grid.Style>
                                     <Style TargetType="Grid">
@@ -631,13 +727,23 @@
                                     <ComboBox x:Name="CmbVatLieuOngACMV"
                                               Visibility="Collapsed"/>
 
-                                    <TextBlock Text="Chọn đường ống:"
-                                               FontWeight="Bold"
-                                               Margin="0,0,0,5"
-                                               Foreground="#FF333333"/>
+                                    <!-- Nhóm ỐNG -->
+                                    <StackPanel Orientation="Horizontal" Margin="0,0,0,4">
+                                        <CheckBox x:Name="ChkNhomOngACMV"
+                                                  IsChecked="True"
+                                                  VerticalAlignment="Center"
+                                                  Margin="0,0,6,0"
+                                                  Checked="ChkNhomOngAcmv_Changed"
+                                                  Unchecked="ChkNhomOngAcmv_Changed"/>
+                                        <TextBlock Text="Ống"
+                                                   FontWeight="Bold"
+                                                   FontSize="13"
+                                                   VerticalAlignment="Center"
+                                                   Foreground="#FF333333"/>
+                                    </StackPanel>
 
                                     <ListBox x:Name="LstVatLieuOngBangACMV"
-                                             MinHeight="66"
+                                             MinHeight="36"
                                              FontSize="11"
                                              BorderThickness="0"
                                              SelectedIndex="0"
@@ -651,73 +757,173 @@
                                                 <WrapPanel ItemWidth="84" ItemHeight="32"/>
                                             </ItemsPanelTemplate>
                                         </ListBox.ItemsPanel>
-
                                         <ListBoxItem Content="TRÁNG KẼM"/>
                                         <ListBoxItem Content="THÉP ĐEN"/>
                                         <ListBoxItem Content="INOX"/>
                                         <ListBoxItem Content="UPVC"/>
                                         <ListBoxItem Content="ỐNG ĐỒNG"/>
-                                        <ListBoxItem Content="OG THẢI"/>
-                                        <ListBoxItem Content="OG HÚT KHÓI"/>
-                                        <ListBoxItem Content="OG LẠNH"/>
-                                        <ListBoxItem Content="OG CẤP"/>
                                     </ListBox>
 
                                     <TextBox x:Name="TxtVatLieuOngBoSungACMV"
                                              Height="28"
                                              FontSize="12"
                                              Padding="4"
-                                             Margin="0,4,0,10"
+                                             Margin="0,4,0,12"
                                              ToolTip="Nhập thêm loại ống rồi nhấn Enter"
                                              KeyDown="TxtVatLieuOngBoSung_KeyDown"/>
 
-                                    <!-- Size ống thường (DN / Đồng) -->
+                                    <!-- Nhóm ỐNG GIÓ -->
+                                    <StackPanel Orientation="Horizontal" Margin="0,0,0,4">
+                                        <CheckBox x:Name="ChkNhomOngGioACMV"
+                                                  IsChecked="False"
+                                                  VerticalAlignment="Center"
+                                                  Margin="0,0,6,0"
+                                                  Checked="ChkNhomOngAcmv_Changed"
+                                                  Unchecked="ChkNhomOngAcmv_Changed"/>
+                                        <TextBlock Text="Ống gió"
+                                                   FontWeight="Bold"
+                                                   FontSize="13"
+                                                   VerticalAlignment="Center"
+                                                   Foreground="#FF333333"/>
+                                    </StackPanel>
+
+                                    <ListBox x:Name="LstVatLieuOngGioACMV"
+                                             MinHeight="36"
+                                             FontSize="11"
+                                             BorderThickness="0"
+                                             SelectedIndex="0"
+                                             IsEnabled="False"
+                                             Opacity="0.45"
+                                             ScrollViewer.VerticalScrollBarVisibility="Disabled"
+                                             ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                                             ItemContainerStyle="{StaticResource VatLieuItemStyle}"
+                                             SelectionChanged="LstVatLieuOngBang_SelectionChanged"
+                                             KeyDown="LstVatLieuOngBang_KeyDown">
+                                        <ListBox.ItemsPanel>
+                                            <ItemsPanelTemplate>
+                                                <WrapPanel ItemWidth="84" ItemHeight="32"/>
+                                            </ItemsPanelTemplate>
+                                        </ListBox.ItemsPanel>
+                                        <ListBoxItem Content="OG THẢI"/>
+                                        <ListBoxItem Content="OG HÚT KHÓI"/>
+                                        <ListBoxItem Content="OG LẠNH"/>
+                                        <ListBoxItem Content="OG CẤP"/>
+                                    </ListBox>
+
+                                    <TextBox x:Name="TxtVatLieuOngGioBoSungACMV"
+                                             Height="28"
+                                             FontSize="12"
+                                             Padding="4"
+                                             Margin="0,4,0,10"
+                                             IsEnabled="False"
+                                             Opacity="0.45"
+                                             ToolTip="Nhập thêm loại ống gió rồi nhấn Enter"
+                                             KeyDown="TxtVatLieuOngGioBoSung_KeyDown"/>
+
+                                    <!-- Size ống thường (DN / Đồng) + CN tùy chọn -->
                                     <StackPanel x:Name="PanelSizeOngThuongACMV">
                                         <TextBlock Text="Size ống (Kèm màu Layer):"
                                                    FontWeight="Bold"
                                                    Margin="0,0,0,5"
                                                    Foreground="#FF333333"/>
 
-                                        <ListBox x:Name="LstSizeOngACMV"
-                                                 Height="140"
-                                                 FontSize="13"
-                                                 Margin="0,0,0,5"
-                                                 ScrollViewer.VerticalScrollBarVisibility="Auto"
-                                                 BorderBrush="#FFCCCCCC"
-                                                 KeyDown="LstSizeOng_KeyDown"
-                                                 HorizontalContentAlignment="Stretch">
-                                            <ListBox.ItemTemplate>
-                                                <DataTemplate>
-                                                    <Grid>
-                                                        <Grid.ColumnDefinitions>
-                                                            <ColumnDefinition Width="*"/>
-                                                            <ColumnDefinition Width="Auto"/>
-                                                        </Grid.ColumnDefinitions>
+                                        <Grid Margin="0,0,0,5">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="1.5*"/>
+                                                <ColumnDefinition Width="4"/>
+                                                <ColumnDefinition Width="0.85*"/>
+                                            </Grid.ColumnDefinitions>
 
-                                                        <TextBlock Text="{Binding SizeName}"
-                                                                   VerticalAlignment="Center"/>
+                                            <StackPanel Grid.Column="0">
+                                                <TextBlock Text="Kích thước"
+                                                           FontSize="11"
+                                                           FontWeight="Bold"
+                                                           HorizontalAlignment="Center"
+                                                           Margin="0,0,0,3"/>
+                                                <ListBox x:Name="LstSizeOngACMV"
+                                                         Height="140"
+                                                         FontSize="13"
+                                                         BorderBrush="#FFCCCCCC"
+                                                         KeyDown="LstSizeOng_KeyDown"
+                                                         HorizontalContentAlignment="Stretch"
+                                                         ScrollViewer.VerticalScrollBarVisibility="Auto">
+                                                    <ListBox.ItemTemplate>
+                                                        <DataTemplate>
+                                                            <Grid>
+                                                                <Grid.ColumnDefinitions>
+                                                                    <ColumnDefinition Width="*"/>
+                                                                    <ColumnDefinition Width="Auto"/>
+                                                                </Grid.ColumnDefinitions>
+                                                                <TextBlock Text="{Binding SizeName}"
+                                                                           VerticalAlignment="Center"/>
+                                                                <Button Grid.Column="1"
+                                                                        Width="20"
+                                                                        Height="20"
+                                                                        Background="{Binding LayerColorBrush}"
+                                                                        Cursor="Hand"
+                                                                        Click="BtnColor_Click"
+                                                                        ToolTip="Kích để chọn lại màu Layer"
+                                                                        BorderThickness="1"
+                                                                        BorderBrush="Gray"
+                                                                        Padding="0"/>
+                                                            </Grid>
+                                                        </DataTemplate>
+                                                    </ListBox.ItemTemplate>
+                                                </ListBox>
+                                                <TextBox x:Name="TxtCustomSizeACMV"
+                                                         Height="26"
+                                                         FontSize="12"
+                                                         Padding="3"
+                                                         Margin="0,3,0,0"
+                                                         ToolTip="Nhập kích thước rồi nhấn Enter"
+                                                         KeyDown="TxtCustomSize_KeyDown"/>
+                                            </StackPanel>
 
-                                                        <Button Grid.Column="1"
-                                                                Width="20"
-                                                                Height="20"
-                                                                Background="{Binding LayerColorBrush}"
-                                                                Cursor="Hand"
-                                                                Click="BtnColor_Click"
-                                                                ToolTip="Kích để chọn lại màu Layer"
-                                                                BorderThickness="1"
-                                                                BorderBrush="Gray"
-                                                                Padding="0"/>
-                                                    </Grid>
-                                                </DataTemplate>
-                                            </ListBox.ItemTemplate>
-                                        </ListBox>
-
-                                        <TextBox x:Name="TxtCustomSizeACMV"
-                                                 Height="30"
-                                                 FontSize="13"
-                                                 Padding="4"
-                                                 ToolTip="Nhập kích thước rồi nhấn Enter"
-                                                 KeyDown="TxtCustomSize_KeyDown"/>
+                                            <StackPanel Grid.Column="2">
+                                                <StackPanel Orientation="Horizontal"
+                                                            HorizontalAlignment="Center"
+                                                            Margin="0,0,0,3">
+                                                    <CheckBox x:Name="ChkDungCnOngACMV"
+                                                              IsChecked="False"
+                                                              VerticalAlignment="Center"
+                                                              Margin="0,0,4,0"
+                                                              Checked="ChkDungCnOngAcmv_Changed"
+                                                              Unchecked="ChkDungCnOngAcmv_Changed"/>
+                                                    <TextBlock Text="CN"
+                                                               FontSize="11"
+                                                               FontWeight="Bold"
+                                                               VerticalAlignment="Center"/>
+                                                </StackPanel>
+                                                <ListBox x:Name="LstCnOngACMV"
+                                                         Height="140"
+                                                         FontSize="12"
+                                                         BorderBrush="#FFCCCCCC"
+                                                         SelectedIndex="0"
+                                                         IsEnabled="False"
+                                                         Opacity="0.45"
+                                                         ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                                                         KeyDown="LstCnOngAcmv_KeyDown">
+                                                    <ListBoxItem Content="CN10"/>
+                                                    <ListBoxItem Content="CN13"/>
+                                                    <ListBoxItem Content="CN15"/>
+                                                    <ListBoxItem Content="CN19"/>
+                                                    <ListBoxItem Content="CN25"/>
+                                                    <ListBoxItem Content="CN30"/>
+                                                    <ListBoxItem Content="CN35"/>
+                                                    <ListBoxItem Content="CN50"/>
+                                                    <ListBoxItem Content="CN60"/>
+                                                </ListBox>
+                                                <TextBox x:Name="TxtCnOngACMVThem"
+                                                         Height="26"
+                                                         FontSize="12"
+                                                         Padding="3"
+                                                         Margin="0,3,0,0"
+                                                         IsEnabled="False"
+                                                         Opacity="0.45"
+                                                         ToolTip="Nhập CN mới rồi Enter"
+                                                         KeyDown="TxtCnOngAcmvThem_KeyDown"/>
+                                            </StackPanel>
+                                        </Grid>
                                     </StackPanel>
 
                                     <!-- Size ống gió: 2 cột Kích thước + CN/EI -->
@@ -817,14 +1023,23 @@
 
                                         <Button x:Name="BtnVeOngACMV"
                                                 Grid.Column="0"
-                                                Content="VẼ ỐNG"
+                                                Content="VẼ ỐNG 1"
                                                 Height="35"
                                                 FontSize="14"
                                                 FontWeight="Bold"
                                                 Background="#FF0078D7"
                                                 Foreground="White"
                                                 Cursor="Hand"
-                                                Click="BtnVeOng_Click"/>
+                                                ToolTipService.InitialShowDelay="3000"
+                                                ToolTipService.ShowDuration="20000"
+                                                Click="BtnVeOng_Click">
+                                            <Button.ToolTip>
+                                                <ToolTip>
+                                                    <TextBlock MaxWidth="240" TextWrapping="Wrap"
+                                                               Text="VẼ ỐNG 1: Chọn vật liệu + size trên bảng, bấm nút rồi vẽ PLINE trên bản vẽ. Layer và chữ size tự tạo theo lựa chọn (Vị trí / vật liệu / size / CN nếu có)."/>
+                                                </ToolTip>
+                                            </Button.ToolTip>
+                                        </Button>
 
                                         <Button x:Name="BtnDoiLayerACMV"
                                                 Grid.Column="2"
@@ -835,8 +1050,37 @@
                                                 Background="#FF6F42C1"
                                                 Foreground="White"
                                                 Cursor="Hand"
-                                                Click="BtnDoiLayer_Click"/>
+                                                ToolTipService.InitialShowDelay="3000"
+                                                ToolTipService.ShowDuration="20000"
+                                                Click="BtnDoiLayer_Click">
+                                            <Button.ToolTip>
+                                                <ToolTip>
+                                                    <TextBlock MaxWidth="240" TextWrapping="Wrap"
+                                                               Text="ĐỔI LAYER: Chọn vật liệu + size trên bảng, bấm nút rồi quét chọn đối tượng trên bản vẽ. Đối tượng được chuyển sang layer mới, đổi độ dày nét và cập nhật chữ size."/>
+                                                </ToolTip>
+                                            </Button.ToolTip>
+                                        </Button>
                                     </Grid>
+
+                                    <Button x:Name="BtnVeOng2ACMV"
+                                            Content="VẼ ỐNG 2"
+                                            Height="35"
+                                            FontSize="14"
+                                            FontWeight="Bold"
+                                            Background="#FF17A2B8"
+                                            Foreground="White"
+                                            Margin="0,10,0,0"
+                                            Cursor="Hand"
+                                            ToolTipService.InitialShowDelay="3000"
+                                            ToolTipService.ShowDuration="20000"
+                                            Click="BtnVeOng2_Click">
+                                        <Button.ToolTip>
+                                            <ToolTip>
+                                                <TextBlock MaxWidth="240" TextWrapping="Wrap"
+                                                           Text="VẼ ỐNG 2: Chọn vật liệu trên bảng (có thể tích CN), bấm nút rồi click text size trên bản vẽ (vd: PPR DN20). Tool lấy size từ text, tạo layer rồi vẽ PLINE liên tục."/>
+                                            </ToolTip>
+                                        </Button.ToolTip>
+                                    </Button>
 
                                     <Button x:Name="BtnAutoConvertPipeACMV"
                                             Content="TỰ ĐỘNG VẼ ỐNG"
@@ -847,7 +1091,16 @@
                                             Foreground="White"
                                             Margin="0,10,0,0"
                                             Cursor="Hand"
-                                            Click="BtnAutoConvertPipe_Click"/>
+                                            ToolTipService.InitialShowDelay="3000"
+                                            ToolTipService.ShowDuration="20000"
+                                            Click="BtnAutoConvertPipe_Click">
+                                        <Button.ToolTip>
+                                            <ToolTip>
+                                                <TextBlock MaxWidth="240" TextWrapping="Wrap"
+                                                           Text="TỰ ĐỘNG VẼ ỐNG: Quét chọn đường ống + text size trên bản vẽ. Tool nhận diện size (chữ song song ống), tách đoạn, gán layer và tạo chữ tự động."/>
+                                            </ToolTip>
+                                        </Button.ToolTip>
+                                    </Button>
 
                                     <Button x:Name="BtnAutoDrawByTemplateACMV"
                                             Content="VẼ ỐNG TỰ ĐỘNG THEO MẪU"
@@ -858,7 +1111,16 @@
                                             Foreground="White"
                                             Margin="0,8,0,0"
                                             Cursor="Hand"
-                                            Click="BtnAutoDrawByTemplate_Click"/>
+                                            ToolTipService.InitialShowDelay="3000"
+                                            ToolTipService.ShowDuration="20000"
+                                            Click="BtnAutoDrawByTemplate_Click">
+                                        <Button.ToolTip>
+                                            <ToolTip>
+                                                <TextBlock MaxWidth="240" TextWrapping="Wrap"
+                                                           Text="VẼ ỐNG TỰ ĐỘNG THEO MẪU: Chọn đoạn ống mẫu đã có layer/size, tool tìm các đoạn tương tự trên bản vẽ và áp dụng cùng layer, độ dày, chữ size."/>
+                                            </ToolTip>
+                                        </Button.ToolTip>
+                                    </Button>
                                 </StackPanel>
                             </Grid>
 
@@ -875,13 +1137,23 @@
                                 </Grid.Style>
 
                                 <StackPanel Orientation="Vertical">
-                                    <TextBlock Text="Chọn loại van:"
-                                               FontWeight="Bold"
-                                               Margin="0,0,0,5"
-                                               Foreground="#FF333333"/>
+                                    <!-- Nhóm VAN -->
+                                    <StackPanel Orientation="Horizontal" Margin="0,0,0,4">
+                                        <CheckBox x:Name="ChkNhomVanACMV"
+                                                  IsChecked="True"
+                                                  VerticalAlignment="Center"
+                                                  Margin="0,0,6,0"
+                                                  Checked="ChkNhomVanAcmv_Changed"
+                                                  Unchecked="ChkNhomVanAcmv_Changed"/>
+                                        <TextBlock Text="Van"
+                                                   FontWeight="Bold"
+                                                   FontSize="13"
+                                                   VerticalAlignment="Center"
+                                                   Foreground="#FF333333"/>
+                                    </StackPanel>
 
                                     <ListBox x:Name="LstLoaiVanACMV"
-                                             MinHeight="66"
+                                             MinHeight="36"
                                              FontSize="9.5"
                                              BorderThickness="0"
                                              SelectedIndex="0"
@@ -907,9 +1179,60 @@
                                              Height="28"
                                              FontSize="12"
                                              Padding="4"
-                                             Margin="0,4,0,10"
+                                             Margin="0,4,0,12"
                                              ToolTip="Nhập thêm loại van rồi nhấn Enter"
                                              KeyDown="TxtLoaiVanBoSung_KeyDown"/>
+
+                                    <!-- Nhóm VAN GIÓ / MIỆNG GIÓ -->
+                                    <StackPanel Orientation="Horizontal" Margin="0,0,0,4">
+                                        <CheckBox x:Name="ChkNhomVanGioACMV"
+                                                  IsChecked="False"
+                                                  VerticalAlignment="Center"
+                                                  Margin="0,0,6,0"
+                                                  Checked="ChkNhomVanAcmv_Changed"
+                                                  Unchecked="ChkNhomVanAcmv_Changed"/>
+                                        <TextBlock Text="Van gió / Miệng gió"
+                                                   FontWeight="Bold"
+                                                   FontSize="13"
+                                                   VerticalAlignment="Center"
+                                                   Foreground="#FF333333"/>
+                                    </StackPanel>
+
+                                    <ListBox x:Name="LstLoaiVanGioACMV"
+                                             MinHeight="36"
+                                             FontSize="9.5"
+                                             BorderThickness="0"
+                                             SelectedIndex="0"
+                                             IsEnabled="False"
+                                             Opacity="0.45"
+                                             ScrollViewer.VerticalScrollBarVisibility="Disabled"
+                                             ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                                             ItemContainerStyle="{StaticResource VatLieuItemStyle}"
+                                             SelectionChanged="LstLoaiVan_SelectionChanged"
+                                             KeyDown="LstLoaiVan_KeyDown">
+                                        <ListBox.ItemsPanel>
+                                            <ItemsPanelTemplate>
+                                                <WrapPanel ItemWidth="84" ItemHeight="30"/>
+                                            </ItemsPanelTemplate>
+                                        </ListBox.ItemsPanel>
+                                        <ListBoxItem Content="VCD"/>
+                                        <ListBoxItem Content="FD"/>
+                                        <ListBoxItem Content="MFD"/>
+                                        <ListBoxItem Content="PRD"/>
+                                        <ListBoxItem Content="MG CẤP"/>
+                                        <ListBoxItem Content="MG THẢI"/>
+                                        <ListBoxItem Content="LOUVER"/>
+                                    </ListBox>
+
+                                    <TextBox x:Name="TxtLoaiVanGioBoSungACMV"
+                                             Height="28"
+                                             FontSize="12"
+                                             Padding="4"
+                                             Margin="0,4,0,10"
+                                             IsEnabled="False"
+                                             Opacity="0.45"
+                                             ToolTip="Nhập thêm loại van gió/miệng gió rồi nhấn Enter"
+                                             KeyDown="TxtLoaiVanGioBoSung_KeyDown"/>
 
                                     <TextBlock Text="Kích thước van (Kèm màu Layer):"
                                                FontWeight="Bold"
@@ -1352,18 +1675,38 @@
                 <TabItem Header="3. CTN">
                     <Grid Margin="2">
                         <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
                             <RowDefinition Height="30"/>
                             <RowDefinition Height="*"/>
                         </Grid.RowDefinitions>
 
-                        <UniformGrid Grid.Row="0" Rows="1" Columns="4">
+                        <Grid Grid.Row="0" Margin="2,2,2,6">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Grid.Column="0"
+                                       Text="Vị trí:"
+                                       FontWeight="Bold"
+                                       VerticalAlignment="Center"
+                                       Margin="0,0,8,0"
+                                       Foreground="#FF333333"/>
+                            <TextBox x:Name="TxtViTriCTN"
+                                     Grid.Column="1"
+                                     Height="28"
+                                     FontSize="13"
+                                     Padding="4"
+                                     ToolTip="Nhập vị trí (vd: Tầng 1, Hầm P1…) — sẽ gắn vào tên Layer sau mã hệ thống"/>
+                        </Grid>
+
+                        <UniformGrid Grid.Row="1" Rows="1" Columns="4">
                             <RadioButton x:Name="RbCtnDuongOng" Content="ĐƯỜNG ỐNG" GroupName="TabCTN" IsChecked="True" Style="{StaticResource TabNgangStyle}"/>
                             <RadioButton x:Name="RbCtnVan" Content="VAN" GroupName="TabCTN" Style="{StaticResource TabNgangStyle}"/>
                             <RadioButton x:Name="RbCtnThietBi" Content="THIẾT BỊ" GroupName="TabCTN" Style="{StaticResource TabNgangStyle}"/>
                             <RadioButton x:Name="RbCtnThongKe" Content="THỐNG KÊ" GroupName="TabCTN" Style="{StaticResource TabNgangStyle}"/>
                         </UniformGrid>
 
-                        <Grid Grid.Row="1" Margin="2,5,2,2">
+                        <Grid Grid.Row="2" Margin="2,5,2,2">
                             <Grid VerticalAlignment="Top">
                                 <Grid.Style>
                                     <Style TargetType="Grid">
@@ -1478,14 +1821,23 @@
 
                                         <Button x:Name="BtnVeOngCTN"
                                                 Grid.Column="0"
-                                                Content="VẼ ỐNG"
+                                                Content="VẼ ỐNG 1"
                                                 Height="35"
                                                 FontSize="14"
                                                 FontWeight="Bold"
                                                 Background="#FF0078D7"
                                                 Foreground="White"
                                                 Cursor="Hand"
-                                                Click="BtnVeOng_Click"/>
+                                                ToolTipService.InitialShowDelay="3000"
+                                                ToolTipService.ShowDuration="20000"
+                                                Click="BtnVeOng_Click">
+                                            <Button.ToolTip>
+                                                <ToolTip>
+                                                    <TextBlock MaxWidth="240" TextWrapping="Wrap"
+                                                               Text="VẼ ỐNG 1: Chọn vật liệu + size trên bảng, bấm nút rồi vẽ PLINE trên bản vẽ. Layer và chữ size tự tạo theo lựa chọn (Vị trí / vật liệu / size / CN nếu có)."/>
+                                                </ToolTip>
+                                            </Button.ToolTip>
+                                        </Button>
 
                                         <Button x:Name="BtnDoiLayerCTN"
                                                 Grid.Column="2"
@@ -1496,8 +1848,37 @@
                                                 Background="#FF6F42C1"
                                                 Foreground="White"
                                                 Cursor="Hand"
-                                                Click="BtnDoiLayer_Click"/>
+                                                ToolTipService.InitialShowDelay="3000"
+                                                ToolTipService.ShowDuration="20000"
+                                                Click="BtnDoiLayer_Click">
+                                            <Button.ToolTip>
+                                                <ToolTip>
+                                                    <TextBlock MaxWidth="240" TextWrapping="Wrap"
+                                                               Text="ĐỔI LAYER: Chọn vật liệu + size trên bảng, bấm nút rồi quét chọn đối tượng trên bản vẽ. Đối tượng được chuyển sang layer mới, đổi độ dày nét và cập nhật chữ size."/>
+                                                </ToolTip>
+                                            </Button.ToolTip>
+                                        </Button>
                                     </Grid>
+
+                                    <Button x:Name="BtnVeOng2CTN"
+                                            Content="VẼ ỐNG 2"
+                                            Height="35"
+                                            FontSize="14"
+                                            FontWeight="Bold"
+                                            Background="#FF17A2B8"
+                                            Foreground="White"
+                                            Margin="0,10,0,0"
+                                            Cursor="Hand"
+                                            ToolTipService.InitialShowDelay="3000"
+                                            ToolTipService.ShowDuration="20000"
+                                            Click="BtnVeOng2_Click">
+                                        <Button.ToolTip>
+                                            <ToolTip>
+                                                <TextBlock MaxWidth="240" TextWrapping="Wrap"
+                                                           Text="VẼ ỐNG 2: Chọn vật liệu trên bảng (có thể tích CN), bấm nút rồi click text size trên bản vẽ (vd: PPR DN20). Tool lấy size từ text, tạo layer rồi vẽ PLINE liên tục."/>
+                                            </ToolTip>
+                                        </Button.ToolTip>
+                                    </Button>
 
                                     <Button x:Name="BtnAutoConvertPipeCTN"
                                             Content="TỰ ĐỘNG VẼ ỐNG"
@@ -1508,7 +1889,16 @@
                                             Foreground="White"
                                             Margin="0,10,0,0"
                                             Cursor="Hand"
-                                            Click="BtnAutoConvertPipe_Click"/>
+                                            ToolTipService.InitialShowDelay="3000"
+                                            ToolTipService.ShowDuration="20000"
+                                            Click="BtnAutoConvertPipe_Click">
+                                        <Button.ToolTip>
+                                            <ToolTip>
+                                                <TextBlock MaxWidth="240" TextWrapping="Wrap"
+                                                           Text="TỰ ĐỘNG VẼ ỐNG: Quét chọn đường ống + text size trên bản vẽ. Tool nhận diện size (chữ song song ống), tách đoạn, gán layer và tạo chữ tự động."/>
+                                            </ToolTip>
+                                        </Button.ToolTip>
+                                    </Button>
 
                                     <Button x:Name="BtnAutoDrawByTemplateCTN"
                                             Content="VẼ ỐNG TỰ ĐỘNG THEO MẪU"
@@ -1519,7 +1909,16 @@
                                             Foreground="White"
                                             Margin="0,8,0,0"
                                             Cursor="Hand"
-                                            Click="BtnAutoDrawByTemplate_Click"/>
+                                            ToolTipService.InitialShowDelay="3000"
+                                            ToolTipService.ShowDuration="20000"
+                                            Click="BtnAutoDrawByTemplate_Click">
+                                        <Button.ToolTip>
+                                            <ToolTip>
+                                                <TextBlock MaxWidth="240" TextWrapping="Wrap"
+                                                           Text="VẼ ỐNG TỰ ĐỘNG THEO MẪU: Chọn đoạn ống mẫu đã có layer/size, tool tìm các đoạn tương tự trên bản vẽ và áp dụng cùng layer, độ dày, chữ size."/>
+                                            </ToolTip>
+                                        </Button.ToolTip>
+                                    </Button>
                                 </StackPanel>
                             </Grid>
 

@@ -44,6 +44,8 @@ namespace ClassLibrary4
         private const double MinimumLabelTextHeight = 67.0;
         private const double LabelTextHeightToWidthRatio = 2.0 / 9.0;
         private const double AutomaticLabelScale = 2.2;
+        // Độ dày nét cố định cho ống DN và ống đồng (không phụ thuộc size)
+        private const double FixedDnPipeDisplayWidth = 50.0;
         private const string LayerChangeBuild = "DL-20260808-12";
         private const string AutoConvertBuild = "AUTO-20260807-10";
         private const string TemplateAutoDrawBuild = "MAU-20260807-02";
@@ -1106,14 +1108,61 @@ namespace ClassLibrary4
             if (ctx == null)
                 return;
 
-            List<string> newSizes = new List<string>
+            List<string> newSizes = new List<string>();
+
+            string loai = GetSelectedValveTypeName(ctx);
+            bool isDamperGroup = false;
+
+            if (ctx.Suffix == "ACMV")
             {
-                "DN15", "DN20", "DN25", "DN32", "DN40", "DN50",
-                "DN65", "DN80", "DN100", "DN125", "DN150", "DN200",
-                "DN250", "DN300", "DN350", "DN400"
-            };
+                var chkGio =
+                    FindName("ChkNhomVanGioACMV") as System.Windows.Controls.CheckBox;
+                isDamperGroup = chkGio?.IsChecked == true;
+            }
+
+            bool isDamperSize =
+                isDamperGroup ||
+                (ctx.Suffix == "ACMV" && LaVanOngGio(loai));
+
+            if (isDamperSize)
+            {
+                newSizes.AddRange(new[]
+                {
+                    "100x100",
+                    "200x200",
+                    "400x200",
+                    "450x450",
+                    "500x200"
+                });
+            }
+            else
+            {
+                newSizes.AddRange(new[]
+                {
+                    "DN15", "DN20", "DN25", "DN32", "DN40", "DN50",
+                    "DN65", "DN80", "DN100", "DN125", "DN150", "DN200",
+                    "DN250", "DN300", "DN350", "DN400"
+                });
+            }
 
             CapNhatVaSapXepDanhSachSizeVan(ctx, newSizes);
+        }
+
+        private bool LaVanOngGio(string valveType)
+        {
+            string t = (valveType ?? "").Trim().ToUpperInvariant();
+
+            return t == "VCD" ||
+                   t == "FD" ||
+                   t == "MFD" ||
+                   t == "PRD" ||
+                   t == "LOUVER" ||
+                   t.Contains("MG CẤP") ||
+                   t.Contains("MG CAP") ||
+                   t.Contains("MG THẢI") ||
+                   t.Contains("MG THAI") ||
+                   t.Contains("LOUVER") ||
+                   t.Contains("DAMPER");
         }
 
         private void CapNhatVaSapXepDanhSachSizeVan(
@@ -1224,6 +1273,22 @@ namespace ClassLibrary4
 
         private string GetSelectedValveTypeName(ValveUiContext ctx)
         {
+            // ACMV: 2 nhóm Van / Van gió — lấy theo nhóm đang tích
+            if (ctx?.Suffix == "ACMV")
+            {
+                var chkGio =
+                    FindName("ChkNhomVanGioACMV") as System.Windows.Controls.CheckBox;
+
+                if (chkGio?.IsChecked == true)
+                {
+                    var lstGio = TimListBox("LstLoaiVanGioACMV");
+                    if (lstGio?.SelectedItem != null)
+                        return LayNoiDungItem(lstGio.SelectedItem);
+
+                    return "VCD";
+                }
+            }
+
             if (ctx?.LstLoaiVan != null &&
                 ctx.LstLoaiVan.SelectedItem != null)
             {
@@ -1231,6 +1296,135 @@ namespace ClassLibrary4
             }
 
             return "V.CỔNG TN";
+        }
+
+        private bool _updatingNhomVanAcmv = false;
+
+        private void ChkNhomVanAcmv_Changed(
+            object sender,
+            RoutedEventArgs e)
+        {
+            if (_updatingNhomVanAcmv)
+                return;
+
+            _updatingNhomVanAcmv = true;
+
+            try
+            {
+                var chkVan =
+                    FindName("ChkNhomVanACMV") as System.Windows.Controls.CheckBox;
+                var chkGio =
+                    FindName("ChkNhomVanGioACMV") as System.Windows.Controls.CheckBox;
+
+                bool useGio = false;
+
+                if (sender is System.Windows.Controls.CheckBox cb)
+                {
+                    if (cb == chkGio)
+                        useGio = cb.IsChecked == true;
+                    else if (cb == chkVan)
+                        useGio = cb.IsChecked != true;
+                }
+
+                if (chkVan != null)
+                    chkVan.IsChecked = !useGio;
+                if (chkGio != null)
+                    chkGio.IsChecked = useGio;
+
+                SetNhomVanAcmvEnabled(useVan: !useGio, useGio: useGio);
+
+                if (_valveCtxACMV != null)
+                {
+                    CapNhatSizeVan(_valveCtxACMV);
+                    CapNhatMauVanTheoPrefix(_valveCtxACMV);
+                }
+            }
+            finally
+            {
+                _updatingNhomVanAcmv = false;
+            }
+        }
+
+        private void SetNhomVanAcmvEnabled(bool useVan, bool useGio)
+        {
+            var lstVan = TimListBox("LstLoaiVanACMV");
+            var txtVan = TimTextBox("TxtLoaiVanBoSungACMV");
+            var lstGio = TimListBox("LstLoaiVanGioACMV");
+            var txtGio = TimTextBox("TxtLoaiVanGioBoSungACMV");
+
+            void Apply(WpfListBox list, WpfTextBox text, bool enabled)
+            {
+                if (list != null)
+                {
+                    list.IsEnabled = enabled;
+                    list.Opacity = enabled ? 1.0 : 0.45;
+                }
+
+                if (text != null)
+                {
+                    text.IsEnabled = enabled;
+                    text.Opacity = enabled ? 1.0 : 0.45;
+                }
+            }
+
+            Apply(lstVan, txtVan, useVan);
+            Apply(lstGio, txtGio, useGio);
+        }
+
+        private void TxtLoaiVanGioBoSung_KeyDown(
+            object sender,
+            WpfKeyEventArgs e)
+        {
+            if (e.Key != WpfKey.Enter)
+                return;
+
+            var lst = TimListBox("LstLoaiVanGioACMV");
+            var txt = TimTextBox("TxtLoaiVanGioBoSungACMV");
+
+            if (lst == null || txt == null)
+                return;
+
+            string newType = (txt.Text ?? "").Trim();
+            if (string.IsNullOrWhiteSpace(newType))
+                return;
+
+            bool existed =
+                lst.Items
+                    .Cast<object>()
+                    .Any(x => LayNoiDungItem(x).Equals(
+                        newType,
+                        StringComparison.OrdinalIgnoreCase));
+
+            if (!existed)
+            {
+                lst.Items.Add(
+                    new WpfListBoxItem
+                    {
+                        Content = newType.ToUpper()
+                    });
+            }
+
+            foreach (object item in lst.Items)
+            {
+                if (LayNoiDungItem(item).Equals(
+                    newType,
+                    StringComparison.OrdinalIgnoreCase))
+                {
+                    lst.SelectedItem = item;
+                    lst.ScrollIntoView(item);
+                    break;
+                }
+            }
+
+            txt.Text = "";
+
+            if (_valveCtxACMV != null)
+            {
+                CapNhatSizeVan(_valveCtxACMV);
+                CapNhatMauVanTheoPrefix(_valveCtxACMV);
+            }
+
+            e.Handled = true;
         }
 
         private string GetValveSystemCode(ValveUiContext ctx)
@@ -1251,6 +1445,10 @@ namespace ClassLibrary4
             string systemCode = CleanLayerText(GetValveSystemCode(ctx));
             string valveType =
                 CleanLayerText(GetSelectedValveTypeName(ctx));
+            string viTri = GetViTriText(ctx?.Suffix ?? "");
+
+            if (!string.IsNullOrEmpty(viTri))
+                return $"{systemCode}_{viTri}_{valveType}";
 
             return $"{systemCode}_{valveType}";
         }
@@ -1444,6 +1642,22 @@ namespace ClassLibrary4
 
         private string GetSelectedPipeMaterialName(PipeUiContext ctx)
         {
+            // ACMV: 2 nhóm Ống / Ống gió — lấy theo nhóm đang tích
+            if (ctx?.Suffix == "ACMV")
+            {
+                var chkGio =
+                    FindName("ChkNhomOngGioACMV") as System.Windows.Controls.CheckBox;
+
+                if (chkGio?.IsChecked == true)
+                {
+                    var lstGio = TimListBox("LstVatLieuOngGioACMV");
+                    if (lstGio?.SelectedItem != null)
+                        return LayNoiDungItem(lstGio.SelectedItem);
+
+                    return "OG THẢI";
+                }
+            }
+
             if (ctx?.LstVatLieu != null &&
                 ctx.LstVatLieu.SelectedItem != null)
             {
@@ -1457,6 +1671,129 @@ namespace ClassLibrary4
             }
 
             return "TRÁNG KẼM";
+        }
+
+        private bool _updatingNhomOngAcmv = false;
+
+        private void ChkNhomOngAcmv_Changed(
+            object sender,
+            RoutedEventArgs e)
+        {
+            if (_updatingNhomOngAcmv)
+                return;
+
+            _updatingNhomOngAcmv = true;
+
+            try
+            {
+                var chkOng =
+                    FindName("ChkNhomOngACMV") as System.Windows.Controls.CheckBox;
+                var chkGio =
+                    FindName("ChkNhomOngGioACMV") as System.Windows.Controls.CheckBox;
+
+                bool useGio = false;
+
+                if (sender is System.Windows.Controls.CheckBox cb)
+                {
+                    if (cb == chkGio)
+                        useGio = cb.IsChecked == true;
+                    else if (cb == chkOng)
+                        useGio = cb.IsChecked != true;
+                }
+
+                if (chkOng != null)
+                    chkOng.IsChecked = !useGio;
+                if (chkGio != null)
+                    chkGio.IsChecked = useGio;
+
+                SetNhomOngAcmvEnabled(useOng: !useGio, useGio: useGio);
+
+                if (_ctxACMV != null)
+                    CapNhatSizeTheoVatLieu(_ctxACMV);
+            }
+            finally
+            {
+                _updatingNhomOngAcmv = false;
+            }
+        }
+
+        private void SetNhomOngAcmvEnabled(bool useOng, bool useGio)
+        {
+            var lstOng = TimListBox("LstVatLieuOngBangACMV");
+            var txtOng = TimTextBox("TxtVatLieuOngBoSungACMV");
+            var lstGio = TimListBox("LstVatLieuOngGioACMV");
+            var txtGio = TimTextBox("TxtVatLieuOngGioBoSungACMV");
+
+            void Apply(WpfListBox list, WpfTextBox text, bool enabled)
+            {
+                if (list != null)
+                {
+                    list.IsEnabled = enabled;
+                    list.Opacity = enabled ? 1.0 : 0.45;
+                }
+
+                if (text != null)
+                {
+                    text.IsEnabled = enabled;
+                    text.Opacity = enabled ? 1.0 : 0.45;
+                }
+            }
+
+            Apply(lstOng, txtOng, useOng);
+            Apply(lstGio, txtGio, useGio);
+        }
+
+        private void TxtVatLieuOngGioBoSung_KeyDown(
+            object sender,
+            WpfKeyEventArgs e)
+        {
+            if (e.Key != WpfKey.Enter)
+                return;
+
+            var lst = TimListBox("LstVatLieuOngGioACMV");
+            var txt = TimTextBox("TxtVatLieuOngGioBoSungACMV");
+
+            if (lst == null || txt == null)
+                return;
+
+            string newType = (txt.Text ?? "").Trim();
+            if (string.IsNullOrWhiteSpace(newType))
+                return;
+
+            bool existed =
+                lst.Items
+                    .Cast<object>()
+                    .Any(x => LayNoiDungItem(x).Equals(
+                        newType,
+                        StringComparison.OrdinalIgnoreCase));
+
+            if (!existed)
+            {
+                lst.Items.Add(
+                    new WpfListBoxItem
+                    {
+                        Content = newType.ToUpper()
+                    });
+            }
+
+            foreach (object item in lst.Items)
+            {
+                if (LayNoiDungItem(item).Equals(
+                    newType,
+                    StringComparison.OrdinalIgnoreCase))
+                {
+                    lst.SelectedItem = item;
+                    lst.ScrollIntoView(item);
+                    break;
+                }
+            }
+
+            txt.Text = "";
+
+            if (_ctxACMV != null)
+                CapNhatSizeTheoVatLieu(_ctxACMV);
+
+            e.Handled = true;
         }
 
         private string CleanLayerText(string input)
@@ -1496,11 +1833,33 @@ namespace ClassLibrary4
             return sys.Trim();
         }
 
+        private string GetViTriText(string suffix)
+        {
+            string name = "TxtViTriFF";
+
+            if (suffix == "ACMV")
+                name = "TxtViTriACMV";
+            else if (suffix == "CTN")
+                name = "TxtViTriCTN";
+
+            var txt = TimTextBox(name);
+            string viTri = (txt?.Text ?? "").Trim();
+
+            if (string.IsNullOrWhiteSpace(viTri))
+                return "";
+
+            return CleanLayerText(viTri);
+        }
+
         private string GetLayerPrefix(PipeUiContext ctx)
         {
             string systemCode = CleanLayerText(GetSystemCode(ctx));
             string materialName =
                 CleanLayerText(GetSelectedPipeMaterialName(ctx));
+            string viTri = GetViTriText(ctx?.Suffix ?? "");
+
+            if (!string.IsNullOrEmpty(viTri))
+                return $"{systemCode}_{viTri}_{materialName}";
 
             return $"{systemCode}_{materialName}";
         }
@@ -2013,7 +2372,17 @@ namespace ClassLibrary4
             string material = GetSelectedPipeMaterialName(ctx);
             List<string> newSizes = new List<string>();
 
-            if (LaOngGio(material))
+            bool isOngGioSize = LaOngGio(material);
+
+            if (ctx.Suffix == "ACMV")
+            {
+                var chkGio =
+                    FindName("ChkNhomOngGioACMV") as System.Windows.Controls.CheckBox;
+                if (chkGio != null)
+                    isOngGioSize = chkGio.IsChecked == true;
+            }
+
+            if (isOngGioSize)
             {
                 newSizes.AddRange(
                     new[]
@@ -2074,6 +2443,15 @@ namespace ClassLibrary4
 
             string material = GetSelectedPipeMaterialName(ctx);
             bool isOngGio = LaOngGio(material);
+
+            // Ưu tiên theo ô tích nhóm Ống gió (ACMV)
+            if (ctx.Suffix == "ACMV")
+            {
+                var chkGio =
+                    FindName("ChkNhomOngGioACMV") as System.Windows.Controls.CheckBox;
+                if (chkGio != null)
+                    isOngGio = chkGio.IsChecked == true;
+            }
 
             panelThuong.Visibility = isOngGio
                 ? System.Windows.Visibility.Collapsed
@@ -2245,7 +2623,17 @@ namespace ClassLibrary4
 
             string material = GetSelectedPipeMaterialName(ctx);
 
-            if (ctx.Suffix == "ACMV" && LaOngGio(material))
+            bool isOngGioSelected = LaOngGio(material);
+
+            if (ctx.Suffix == "ACMV")
+            {
+                var chkGio =
+                    FindName("ChkNhomOngGioACMV") as System.Windows.Controls.CheckBox;
+                if (chkGio != null)
+                    isOngGioSelected = chkGio.IsChecked == true;
+            }
+
+            if (ctx.Suffix == "ACMV" && isOngGioSelected)
             {
                 string size = GetSelectedOngGioSize();
                 string cnEi = GetSelectedCnEi();
@@ -2259,8 +2647,137 @@ namespace ClassLibrary4
                 return $"{size}_{cnEi}";
             }
 
-            return (ctx.LstSize?.SelectedItem as PipeSizeItem)
-                ?.SizeName ?? "";
+            // Ống thường ACMV: size DN + CN (nếu tích)
+            string baseSize =
+                (ctx.LstSize?.SelectedItem as PipeSizeItem)
+                    ?.SizeName ?? "";
+
+            if (ctx.Suffix == "ACMV" && !isOngGioSelected)
+            {
+                string cnOng = GetSelectedCnOngAcmv();
+
+                if (!string.IsNullOrWhiteSpace(baseSize) &&
+                    !string.IsNullOrWhiteSpace(cnOng))
+                {
+                    return $"{baseSize}_{cnOng}";
+                }
+            }
+
+            return baseSize;
+        }
+
+        private string GetSelectedCnOngAcmv()
+        {
+            var chk =
+                FindName("ChkDungCnOngACMV") as System.Windows.Controls.CheckBox;
+
+            if (chk?.IsChecked != true)
+                return "";
+
+            var lst = TimListBox("LstCnOngACMV");
+            return LayNoiDungItem(lst?.SelectedItem);
+        }
+
+        private void ChkDungCnOngAcmv_Changed(
+            object sender,
+            RoutedEventArgs e)
+        {
+            CapNhatTrangThaiCnOngAcmv();
+        }
+
+        private void CapNhatTrangThaiCnOngAcmv()
+        {
+            var chk =
+                FindName("ChkDungCnOngACMV") as System.Windows.Controls.CheckBox;
+            var lst = TimListBox("LstCnOngACMV");
+            var txt = TimTextBox("TxtCnOngACMVThem");
+
+            bool enabled = chk?.IsChecked == true;
+
+            if (lst != null)
+            {
+                lst.IsEnabled = enabled;
+                lst.Opacity = enabled ? 1.0 : 0.45;
+            }
+
+            if (txt != null)
+            {
+                txt.IsEnabled = enabled;
+                txt.Opacity = enabled ? 1.0 : 0.45;
+            }
+        }
+
+        private void TxtCnOngAcmvThem_KeyDown(
+            object sender,
+            WpfKeyEventArgs e)
+        {
+            if (e.Key != WpfKey.Enter)
+                return;
+
+            WpfTextBox txt = sender as WpfTextBox;
+            if (txt == null)
+                return;
+
+            string value = (txt.Text ?? "").Trim();
+            if (string.IsNullOrWhiteSpace(value))
+                return;
+
+            var lst = TimListBox("LstCnOngACMV");
+            if (lst == null)
+                return;
+
+            bool existed =
+                lst.Items
+                    .Cast<object>()
+                    .Any(x => LayNoiDungItem(x).Equals(
+                        value,
+                        StringComparison.OrdinalIgnoreCase));
+
+            if (!existed)
+            {
+                lst.Items.Add(
+                    new WpfListBoxItem
+                    {
+                        Content = value
+                    });
+            }
+
+            foreach (object item in lst.Items)
+            {
+                if (LayNoiDungItem(item).Equals(
+                    value,
+                    StringComparison.OrdinalIgnoreCase))
+                {
+                    lst.SelectedItem = item;
+                    lst.ScrollIntoView(item);
+                    break;
+                }
+            }
+
+            txt.Text = "";
+            e.Handled = true;
+        }
+
+        private void LstCnOngAcmv_KeyDown(
+            object sender,
+            WpfKeyEventArgs e)
+        {
+            if (e.Key != WpfKey.Delete)
+                return;
+
+            WpfListBox lst = sender as WpfListBox;
+            if (lst?.SelectedItem == null)
+                return;
+
+            if (lst.Items.Count <= 1)
+                return;
+
+            lst.Items.Remove(lst.SelectedItem);
+
+            if (lst.Items.Count > 0)
+                lst.SelectedIndex = 0;
+
+            e.Handled = true;
         }
 
         private void TxtOngGioCotThem_KeyDown(
@@ -2467,18 +2984,22 @@ namespace ClassLibrary4
                 return;
 
             PipeUiContext ctx = GetContext(sender);
+            WpfListBox lst = sender as WpfListBox;
 
-            if (ctx?.LstVatLieu == null ||
-                ctx.LstVatLieu.SelectedItem == null)
-            {
+            if (lst == null)
+                lst = ctx?.LstVatLieu;
+
+            if (lst == null || lst.SelectedItem == null)
                 return;
-            }
 
-            object selected = ctx.LstVatLieu.SelectedItem;
-            ctx.LstVatLieu.Items.Remove(selected);
+            if (lst.Items.Count <= 1)
+                return;
 
-            if (ctx.LstVatLieu.Items.Count > 0)
-                ctx.LstVatLieu.SelectedIndex = 0;
+            object selected = lst.SelectedItem;
+            lst.Items.Remove(selected);
+
+            if (lst.Items.Count > 0)
+                lst.SelectedIndex = 0;
 
             CapNhatComboVatLieuAn(ctx);
             CapNhatSizeTheoVatLieu(ctx);
@@ -2539,21 +3060,31 @@ namespace ClassLibrary4
 
         private double LayWidthTuSize(string size)
         {
-            double plineWidth = 0;
+            string s = (size ?? "").Trim();
 
-            var matches =
-                Regex.Matches(size ?? "", @"\d+(\.\d+)?");
-
-            if (matches.Count > 0)
+            // Ống gió (WxH): giữ độ dày theo kích thước như cũ
+            if (Regex.IsMatch(
+                s,
+                @"\d+(\.\d+)?\s*[xX×]\s*\d+(\.\d+)?"))
             {
-                plineWidth =
-                    matches.Cast<Match>()
+                var matches =
+                    Regex.Matches(s, @"\d+(\.\d+)?");
+
+                if (matches.Count > 0)
+                {
+                    return matches
+                        .Cast<Match>()
                         .Max(m => double.Parse(
                             m.Value,
                             CultureInfo.InvariantCulture));
+                }
+
+                return FixedDnPipeDisplayWidth;
             }
 
-            return plineWidth;
+            // Ống DN / ống đồng / còn lại: cùng 1 độ dày cố định
+            // (tránh DN400 đè chữ vì nét quá dày)
+            return FixedDnPipeDisplayWidth;
         }
 
         private void BtnVeOng_Click(
@@ -2633,6 +3164,251 @@ namespace ClassLibrary4
                 true,
                 false,
                 false);
+        }
+
+        private void BtnVeOng2_Click(
+            object sender,
+            RoutedEventArgs e)
+        {
+            PipeUiContext ctx = GetContext(sender);
+
+            var doc =
+                Autodesk.AutoCAD.ApplicationServices.Core.Application
+                    .DocumentManager
+                    .MdiActiveDocument;
+
+            if (doc == null)
+                return;
+
+            var db = doc.Database;
+            var ed = doc.Editor;
+
+            Autodesk.AutoCAD.Internal.Utils.SetFocusToDwgView();
+
+            // Chọn text trên bản vẽ để lấy kích thước
+            PromptEntityOptions peo =
+                new PromptEntityOptions(
+                    "\n[VẼ ỐNG 2] Chọn text chứa kích thước ống " +
+                    "(vd: PPR DN20, EAL 200x200 EI60): ")
+                {
+                    AllowNone = false
+                };
+
+            peo.SetRejectMessage("\nChỉ chọn TEXT hoặc MTEXT.");
+            peo.AddAllowedClass(typeof(DBText), false);
+            peo.AddAllowedClass(typeof(MText), false);
+
+            PromptEntityResult per = ed.GetEntity(peo);
+
+            if (per.Status != PromptStatus.OK)
+            {
+                ed.WriteMessage("\n[VẼ ỐNG 2] Đã hủy.");
+                return;
+            }
+
+            string rawText = "";
+
+            using (doc.LockDocument())
+            using (Transaction tr =
+                db.TransactionManager.StartTransaction())
+            {
+                Entity ent =
+                    tr.GetObject(per.ObjectId, OpenMode.ForRead)
+                        as Entity;
+
+                if (ent is DBText dbText)
+                    rawText = dbText.TextString ?? "";
+                else if (ent is MText mText)
+                    rawText = mText.Contents ?? mText.Text ?? "";
+
+                tr.Commit();
+            }
+
+            // MText có thể chứa formatting codes
+            rawText = Regex.Replace(
+                rawText,
+                @"\\[A-Za-z][^;]*;",
+                " ");
+            rawText = Regex.Replace(rawText, @"[{}]", " ");
+            rawText = Regex.Replace(rawText, @"\s+", " ").Trim();
+
+            if (string.IsNullOrWhiteSpace(rawText))
+            {
+                MessageBox.Show(
+                    "Không đọc được nội dung text đã chọn!",
+                    "Cảnh báo");
+                return;
+            }
+
+            string size = ExtractSizeFromDrawingText(rawText);
+
+            if (string.IsNullOrWhiteSpace(size))
+            {
+                MessageBox.Show(
+                    $"Không nhận diện được kích thước ống từ text:\n\"{rawText}\"\n\n" +
+                    "Ví dụ hợp lệ: PPR DN20, DN50, 200x200, EAL 500x200 EI60",
+                    "Cảnh báo");
+                return;
+            }
+
+            // Ghép CN/EI từ bảng UI nếu đang tích (không lấy từ text bản vẽ)
+            size = AppendCnFromUiIfSelected(ctx, size);
+
+            double plineWidth = LayWidthTuSize(size);
+            string layerName =
+                $"{GetLayerPrefix(ctx)}_{CleanLayerText(size)}";
+            bool isOngGio = CheckIsOngGio(ctx) ||
+                            size.IndexOf('x') >= 0 ||
+                            size.IndexOf('X') >= 0;
+
+            ed.WriteMessage(
+                $"\n[VẼ ỐNG 2] Text: \"{rawText}\" → Size: {size}");
+            ed.WriteMessage(
+                $"\n[VẼ ỐNG 2] Layer: {layerName}");
+
+            using (doc.LockDocument())
+            {
+                Autodesk.AutoCAD.ApplicationServices.Core.Application
+                    .SetSystemVariable("PLINEWID", plineWidth);
+
+                Autodesk.AutoCAD.ApplicationServices.Core.Application
+                    .SetSystemVariable("CECOLOR", "BYLAYER");
+
+                using (Transaction tr =
+                    db.TransactionManager.StartTransaction())
+                {
+                    EnsureLayerExists(
+                        tr,
+                        db,
+                        layerName,
+                        isOngGio);
+
+                    LayerTable lt =
+                        (LayerTable)tr.GetObject(
+                            db.LayerTableId,
+                            OpenMode.ForRead);
+
+                    db.Clayer = lt[layerName];
+                    tr.Commit();
+                }
+            }
+
+            _currentLayerNameForText = layerName;
+            _currentPlineWidth = plineWidth;
+            _lastPlineId = ObjectId.Null;
+            _pendingPlineIds.Clear();
+
+            StartPlineTextWatcher(doc);
+
+            Autodesk.AutoCAD.Internal.Utils.SetFocusToDwgView();
+
+            doc.SendStringToExecute(
+                "._PLINE ",
+                true,
+                false,
+                false);
+        }
+
+        /// <summary>
+        /// Lấy size từ text bản vẽ: DN20, 200x200, kèm EI/CN nếu có.
+        /// </summary>
+        private string ExtractSizeFromDrawingText(string sourceText)
+        {
+            if (string.IsNullOrWhiteSpace(sourceText))
+                return "";
+
+            string normalized =
+                NormalizePipeLabel(sourceText)
+                    .Replace(',', '.')
+                    .ToUpperInvariant();
+
+            // DN / D / Ø
+            string sizePart = ExtractSizeOnlyText(sourceText);
+
+            // Nếu ExtractSizeOnlyText rỗng, thử DN không khoảng
+            if (string.IsNullOrWhiteSpace(sizePart))
+            {
+                Match dn =
+                    Regex.Match(
+                        normalized,
+                        @"(?<![A-Z0-9])DN\s*(\d{1,4}(?:\.\d+)?)",
+                        RegexOptions.IgnoreCase);
+
+                if (dn.Success)
+                    sizePart = "DN" + dn.Groups[1].Value;
+            }
+
+            // Ống gió: WxH
+            if (string.IsNullOrWhiteSpace(sizePart))
+            {
+                Match rect =
+                    Regex.Match(
+                        normalized,
+                        @"(?<!\d)(\d{2,4})\s*[xX×]\s*(\d{2,4})(?!\d)");
+
+                if (rect.Success)
+                    sizePart =
+                        rect.Groups[1].Value + "x" +
+                        rect.Groups[2].Value;
+            }
+
+            if (string.IsNullOrWhiteSpace(sizePart))
+                return "";
+
+            // Chỉ lấy kích thước (DN / WxH) — không lấy EI / CN
+            sizePart = Regex.Replace(
+                sizePart,
+                @"\s+",
+                "");
+
+            return sizePart;
+        }
+
+        /// <summary>
+        /// Nếu trên bảng đang tích CN (ống) hoặc CN/EI (ống gió)
+        /// thì ghép vào size lấy từ bản vẽ.
+        /// </summary>
+        private string AppendCnFromUiIfSelected(
+            PipeUiContext ctx,
+            string size)
+        {
+            if (ctx == null || string.IsNullOrWhiteSpace(size))
+                return size;
+
+            // Đã có CN/EI trong size rồi thì thôi
+            string upper = size.ToUpperInvariant();
+            if (upper.Contains("_CN") ||
+                upper.Contains("_EI") ||
+                Regex.IsMatch(upper, @"(^|[^A-Z])CN\d") ||
+                Regex.IsMatch(upper, @"(^|[^A-Z])EI\d"))
+            {
+                return size;
+            }
+
+            if (ctx.Suffix != "ACMV")
+                return size;
+
+            var chkOngGio =
+                FindName("ChkNhomOngGioACMV") as System.Windows.Controls.CheckBox;
+            bool isOngGioGroup = chkOngGio?.IsChecked == true;
+
+            string cnPart = "";
+
+            if (isOngGioGroup)
+            {
+                // Ống gió: dùng ChkDungCnEi + LstCnEiOngGioACMV
+                cnPart = GetSelectedCnEi();
+            }
+            else
+            {
+                // Ống thường: dùng ChkDungCnOngACMV + LstCnOngACMV
+                cnPart = GetSelectedCnOngAcmv();
+            }
+
+            if (string.IsNullOrWhiteSpace(cnPart))
+                return size;
+
+            return $"{size}_{cnPart.Trim()}";
         }
 
         private Polyline ConvertCurveToWidePolyline(
@@ -3342,19 +4118,50 @@ namespace ClassLibrary4
 
         private string GetShortSizeLabel(string sizeOrLayer)
         {
-            string extracted = ExtractSizeOnlyText(sizeOrLayer);
+            if (string.IsNullOrWhiteSpace(sizeOrLayer))
+                return "";
 
-            if (!string.IsNullOrWhiteSpace(extracted))
-                return extracted;
+            string source = sizeOrLayer.Trim();
+            string sizePart = ExtractSizeOnlyText(source);
 
-            // Fallback: lấy phần sau dấu _ cuối (thường là DN150)
-            if (!string.IsNullOrWhiteSpace(sizeOrLayer) &&
-                sizeOrLayer.Contains("_"))
+            // Fallback: phần sau _ cuối nếu chưa lấy được size
+            if (string.IsNullOrWhiteSpace(sizePart) &&
+                source.Contains("_"))
             {
-                return sizeOrLayer.Split('_').Last().Trim();
+                sizePart = source.Split('_').Last().Trim();
             }
 
-            return (sizeOrLayer ?? "").Trim();
+            if (string.IsNullOrWhiteSpace(sizePart))
+                sizePart = source;
+
+            // Lấy CN / EI nếu có trong chuỗi (vd: DN20_CN25, ..._EI60)
+            string upper = source.ToUpperInvariant();
+            string cnEi = "";
+
+            Match ei =
+                Regex.Match(
+                    upper,
+                    @"(?<![A-Z0-9])EI\s*(\d{2,3})(?![A-Z0-9])");
+
+            Match cn =
+                Regex.Match(
+                    upper,
+                    @"(?<![A-Z0-9])CN\s*(\d{1,3})(?![A-Z0-9])");
+
+            if (ei.Success)
+                cnEi = "EI" + ei.Groups[1].Value;
+            else if (cn.Success)
+                cnEi = "CN" + cn.Groups[1].Value;
+
+            if (!string.IsNullOrWhiteSpace(cnEi))
+            {
+                // Tránh lặp nếu sizePart đã chứa CN/EI
+                string sizeUpper = sizePart.ToUpperInvariant();
+                if (!sizeUpper.Contains(cnEi))
+                    return $"{sizePart} {cnEi}";
+            }
+
+            return sizePart;
         }
 
         private void ApplyLayerAndLabel(
@@ -7609,13 +8416,16 @@ namespace ClassLibrary4
                             segment.StartPoint.DistanceTo(
                                 segment.EndPoint);
 
-                        // Giới hạn 3 m chỉ áp dụng cho
-                        // chức năng vẽ ống bằng tay.
-                        if (segmentLength <
-                            ManualMinimumLabelSegmentLength)
-                        {
+                        // Dưới 3m: vẫn hiện chữ, chỉ DN (+ CN/EI nếu có)
+                        // Từ 3m trở lên: hiện full layer như cũ
+                        string displayText =
+                            segmentLength <
+                            ManualMinimumLabelSegmentLength
+                                ? GetShortSizeLabel(layerName)
+                                : layerName;
+
+                        if (string.IsNullOrWhiteSpace(displayText))
                             continue;
-                        }
 
                         Point3d midPt =
                             segment.MidPoint;
@@ -7645,7 +8455,7 @@ namespace ClassLibrary4
 
                         DBText txt = new DBText();
                         txt.SetDatabaseDefaults(db);
-                        txt.TextString = layerName;
+                        txt.TextString = displayText;
                         txt.Height = textHeight;
                         txt.Layer = layerName;
                         txt.ColorIndex = 256;
@@ -7691,6 +8501,7 @@ namespace ClassLibrary4
             System.Windows.Controls.SelectionChangedEventArgs e)
         {
             ValveUiContext ctx = GetValveContext(sender);
+            CapNhatSizeVan(ctx);
             CapNhatMauVanTheoPrefix(ctx);
         }
 
@@ -7755,19 +8566,25 @@ namespace ClassLibrary4
                 return;
 
             ValveUiContext ctx = GetValveContext(sender);
+            WpfListBox lst = sender as WpfListBox;
 
-            if (ctx?.LstLoaiVan == null ||
-                ctx.LstLoaiVan.SelectedItem == null)
-            {
+            // Ưu tiên list đang gửi sự kiện (Van hoặc Van gió)
+            if (lst == null)
+                lst = ctx?.LstLoaiVan;
+
+            if (lst == null || lst.SelectedItem == null)
                 return;
-            }
 
-            object selected = ctx.LstLoaiVan.SelectedItem;
-            ctx.LstLoaiVan.Items.Remove(selected);
+            if (lst.Items.Count <= 1)
+                return;
 
-            if (ctx.LstLoaiVan.Items.Count > 0)
-                ctx.LstLoaiVan.SelectedIndex = 0;
+            object selected = lst.SelectedItem;
+            lst.Items.Remove(selected);
 
+            if (lst.Items.Count > 0)
+                lst.SelectedIndex = 0;
+
+            CapNhatSizeVan(ctx);
             CapNhatMauVanTheoPrefix(ctx);
             e.Handled = true;
         }
