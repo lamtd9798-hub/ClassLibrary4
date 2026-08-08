@@ -711,6 +711,18 @@
                                             <Button x:Name="BtnAutoDrawByTemplateACMV" Grid.Column="2" Content="VẼ ỐNG MẪU" Height="32" FontSize="12" FontWeight="Bold"
                                                     Background="#FF00875A" Foreground="White" Cursor="Hand" Click="BtnAutoDrawByTemplate_Click"/>
                                         </Grid>
+                                        <Button x:Name="BtnVeOgTuDongACMV" Content="VẼ OG TỰ ĐỘNG"
+                                                Height="36" FontSize="13" FontWeight="Bold"
+                                                Background="#FF8E44AD" Foreground="White"
+                                                Margin="0,8,0,0" Cursor="Hand"
+                                                Click="BtnVeOgTuDong_Click">
+                                            <Button.ToolTip>
+                                                <ToolTip>
+                                                    <TextBlock MaxWidth="280" TextWrapping="Wrap"
+                                                               Text="VẼ OG TỰ ĐỘNG: Quét chọn vùng có đường ống gió + chữ kích thước (500x200) + tên OG. Tool nhận diện size/tên và tạo ống gió đúng layer + độ dày."/>
+                                                </ToolTip>
+                                            </Button.ToolTip>
+                                        </Button>
                                     </StackPanel>
                                 </Grid>
 
@@ -1100,7 +1112,8 @@
                                             </ListBox.ItemsPanel>
                                             <ListBoxItem Content="TRÁNG KẼM"/>
                                             <ListBoxItem Content="HDPE"/>
-                                            <ListBoxItem Content="THÉP ĐEN"/>
+                                            <ListBoxItem Content="PPR"/>
+                                            <ListBoxItem Content="UPVC"/>
                                             <ListBoxItem Content="INOX"/>
                                             <ListBoxItem Content="NHÚNG NÓNG"/>
                                         </ListBox>

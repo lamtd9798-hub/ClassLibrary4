@@ -6763,6 +6763,467 @@ namespace ClassLibrary4
             }
         }
 
+        private void BtnVeOgTuDong_Click(
+            object sender,
+            RoutedEventArgs e)
+        {
+            // Chỉ dùng cho ACMV ống gió
+            PipeUiContext ctx = _ctxACMV ?? GetContext(sender);
+            if (ctx == null)
+                ctx = _ctxACMV;
+
+            var doc =
+                Autodesk.AutoCAD.ApplicationServices.Core.Application
+                    .DocumentManager
+                    .MdiActiveDocument;
+
+            if (doc == null)
+                return;
+
+            var ed = doc.Editor;
+            var db = doc.Database;
+
+            Autodesk.AutoCAD.Internal.Utils.SetFocusToDwgView();
+
+            PromptSelectionOptions pso =
+                new PromptSelectionOptions();
+            pso.MessageForAdding =
+                "\n[VẼ OG TỰ ĐỘNG] Quét chọn vùng có đường ống gió + chữ size (WxH) + tên OG: ";
+
+            TypedValue[] tvs =
+                new TypedValue[]
+                {
+                    new TypedValue((int)DxfCode.Operator, "<OR"),
+                    new TypedValue((int)DxfCode.Start, "LINE"),
+                    new TypedValue((int)DxfCode.Start, "LWPOLYLINE"),
+                    new TypedValue((int)DxfCode.Start, "POLYLINE"),
+                    new TypedValue((int)DxfCode.Start, "TEXT"),
+                    new TypedValue((int)DxfCode.Start, "MTEXT"),
+                    new TypedValue((int)DxfCode.Operator, "OR>")
+                };
+
+            PromptSelectionResult psr =
+                ed.GetSelection(pso, new SelectionFilter(tvs));
+
+            if (psr.Status != PromptStatus.OK ||
+                psr.Value.Count == 0)
+                return;
+
+            var sizeTexts =
+                new List<(Point3d Pos, string Size, double Width, string Ei)>();
+            var ogTypeTexts =
+                new List<(Point3d Pos, string Type)>();
+            var curves = new List<ObjectId>();
+
+            string layerPrefix = GetLayerPrefix(ctx);
+            if (string.IsNullOrWhiteSpace(layerPrefix))
+                layerPrefix = "ACMV";
+
+            using (doc.LockDocument())
+            using (Transaction tr =
+                db.TransactionManager.StartTransaction())
+            {
+                foreach (SelectedObject so in psr.Value)
+                {
+                    if (so == null) continue;
+                    Entity ent =
+                        tr.GetObject(so.ObjectId, OpenMode.ForRead)
+                            as Entity;
+                    if (ent == null) continue;
+
+                    if (ent is DBText dbText)
+                    {
+                        string str = (dbText.TextString ?? "")
+                            .Replace("\r", " ").Replace("\n", " ").Trim();
+                        Point3d pt = dbText.Position;
+                        if (dbText.Justify != AttachmentPoint.BaseLeft &&
+                            !(dbText.AlignmentPoint.X == 0 &&
+                              dbText.AlignmentPoint.Y == 0))
+                            pt = dbText.AlignmentPoint;
+
+                        if (TryParseOngGioSize(str, out string sz, out double w, out string ei))
+                            sizeTexts.Add((pt, sz, w, ei));
+
+                        if (TryParseOngGioType(str, out string ogType))
+                            ogTypeTexts.Add((pt, ogType));
+                    }
+                    else if (ent is MText mText)
+                    {
+                        string str = (mText.Contents ?? "")
+                            .Replace("\\P", " ").Trim();
+                        // bỏ format đơn giản
+                        if (str.Contains(";"))
+                        {
+                            int i = str.LastIndexOf(';');
+                            if (i >= 0 && i + 1 < str.Length)
+                                str = str.Substring(i + 1);
+                        }
+                        str = Regex.Replace(str, @"\\[A-Za-z][^;]*;", "");
+                        Point3d pt = mText.Location;
+
+                        if (TryParseOngGioSize(str, out string sz, out double w, out string ei))
+                            sizeTexts.Add((pt, sz, w, ei));
+
+                        if (TryParseOngGioType(str, out string ogType))
+                            ogTypeTexts.Add((pt, ogType));
+                    }
+                    else if (ent is Curve)
+                    {
+                        curves.Add(so.ObjectId);
+                    }
+                }
+
+                tr.Commit();
+            }
+
+            if (curves.Count == 0)
+            {
+                MessageBox.Show(
+                    "Không tìm thấy đường LINE/POLYLINE trong vùng chọn.",
+                    "Cảnh báo");
+                return;
+            }
+
+            if (sizeTexts.Count == 0)
+            {
+                MessageBox.Show(
+                    "Không tìm thấy chữ kích thước ống gió (dạng 500x200, 800x300...).",
+                    "Cảnh báo");
+                return;
+            }
+
+            int converted = 0;
+            string defaultOg =
+                ogTypeTexts.Count > 0 ? ogTypeTexts[0].Type : "OG THẢI";
+
+            using (doc.LockDocument())
+            using (Transaction tr =
+                db.TransactionManager.StartTransaction())
+            {
+                BlockTableRecord btr =
+                    (BlockTableRecord)tr.GetObject(
+                        db.CurrentSpaceId, OpenMode.ForWrite);
+
+                foreach (ObjectId cid in curves)
+                {
+                    Entity src =
+                        tr.GetObject(cid, OpenMode.ForRead)
+                            as Entity;
+                    if (src == null) continue;
+
+                    // Bỏ đường bao hình chữ nhật (outline ống gió 2D)
+                    // — chỉ lấy đường tâm (mở, đủ dài)
+                    if (LaDuongBaoOngGio(src))
+                        continue;
+
+                    Point3d mid = LayDiemDaiDien(src);
+
+                    // Size gần nhất
+                    string size = sizeTexts[0].Size;
+                    double width = sizeTexts[0].Width;
+                    string eiPart = sizeTexts[0].Ei;
+                    double best = double.MaxValue;
+                    foreach (var st in sizeTexts)
+                    {
+                        double d = mid.DistanceTo(st.Pos);
+                        if (d < best)
+                        {
+                            best = d;
+                            size = st.Size;
+                            width = st.Width;
+                            eiPart = st.Ei;
+                        }
+                    }
+
+                    // Tên OG gần nhất
+                    string ogType = defaultOg;
+                    best = double.MaxValue;
+                    foreach (var ot in ogTypeTexts)
+                    {
+                        double d = mid.DistanceTo(ot.Pos);
+                        if (d < best)
+                        {
+                            best = d;
+                            ogType = ot.Type;
+                        }
+                    }
+
+                    if (width <= 0)
+                        width = LayWidthTuSize(size);
+                    if (width <= 0)
+                        width = 100;
+
+                    // Layer: ACMV_OG THẢI_900x300_EI30
+                    string sizeForLayer = size;
+                    if (!string.IsNullOrWhiteSpace(eiPart))
+                        sizeForLayer = size + "_" + eiPart;
+
+                    string layerName =
+                        $"{layerPrefix}_{CleanLayerText(ogType)}_{CleanLayerText(sizeForLayer)}";
+
+                    EnsureLayerExists(tr, db, layerName, true);
+
+                    Polyline newPl = TaoPolylineTuCurve(src);
+                    if (newPl == null)
+                        continue;
+
+                    // Bỏ polyline quá ngắn sau khi copy
+                    try
+                    {
+                        if (newPl.Length < width * 0.3 && newPl.Closed)
+                        {
+                            newPl.Dispose();
+                            continue;
+                        }
+                    }
+                    catch { }
+
+                    newPl.SetDatabaseDefaults(db);
+                    newPl.Layer = layerName;
+                    newPl.ColorIndex = 256;
+                    // ConstantWidth = cạnh lớn của WxH
+                    newPl.ConstantWidth = width;
+
+                    btr.AppendEntity(newPl);
+                    tr.AddNewlyCreatedDBObject(newPl, true);
+
+                    // Text size giữa đường
+                    try
+                    {
+                        Point3d textPt = LayDiemGiuaPolyline(newPl);
+                        DBText label = new DBText();
+                        label.SetDatabaseDefaults(db);
+                        label.TextStyleId = db.Textstyle;
+                        label.TextString = size;
+                        label.Height = Math.Max(
+                            MinimumLabelTextHeight,
+                            width * 0.15);
+                        label.WidthFactor = 1.0;
+                        label.Layer = layerName;
+                        label.ColorIndex = 256;
+                        label.Justify = AttachmentPoint.MiddleCenter;
+                        label.AlignmentPoint = textPt;
+                        label.Position = textPt;
+                        btr.AppendEntity(label);
+                        tr.AddNewlyCreatedDBObject(label, true);
+                        try { label.AdjustAlignment(db); } catch { }
+                    }
+                    catch { }
+
+                    converted++;
+                }
+
+                tr.Commit();
+            }
+
+            ed.Regen();
+            ed.WriteMessage(
+                $"\n[VẼ OG TỰ ĐỘNG] Đã tạo {converted} ống gió " +
+                $"(size nhận diện từ bản vẽ, tên OG: {defaultOg} / theo text gần nhất).");
+        }
+
+        private bool TryParseOngGioSize(
+            string source,
+            out string sizeText,
+            out double width,
+            out string eiText)
+        {
+            sizeText = "";
+            width = 0;
+            eiText = "";
+            if (string.IsNullOrWhiteSpace(source))
+                return false;
+
+            string n = source.ToUpperInvariant()
+                .Replace(',', '.')
+                .Replace('×', 'X')
+                .Replace('Х', 'X');
+
+            Match m = Regex.Match(
+                n,
+                @"(?<![A-Z0-9])(?<A>\d{2,4}(?:\.\d+)?)\s*[xX/\-]\s*(?<B>\d{2,4}(?:\.\d+)?)(?![A-Z0-9])");
+
+            if (!m.Success)
+                return false;
+
+            if (!double.TryParse(
+                    m.Groups["A"].Value,
+                    NumberStyles.Any,
+                    CultureInfo.InvariantCulture,
+                    out double a) ||
+                !double.TryParse(
+                    m.Groups["B"].Value,
+                    NumberStyles.Any,
+                    CultureInfo.InvariantCulture,
+                    out double b))
+                return false;
+
+            if (a < 50 || b < 50 || a > 5000 || b > 5000)
+                return false;
+
+            sizeText =
+                FormatSizeNumber(a) + "x" + FormatSizeNumber(b);
+            // Bề rộng nét = cạnh LỚN (900x300 → 900)
+            width = Math.Max(a, b);
+
+            // EI đi kèm: "900x300, ei30" / "900x300 EI30"
+            Match ei = Regex.Match(
+                n,
+                @"\bEI\s*(?<E>\d{1,3})\b");
+            if (ei.Success)
+                eiText = "EI" + ei.Groups["E"].Value;
+
+            return true;
+        }
+
+        /// <summary>
+        /// Đường bao hình hộp ống gió (closed, gần chữ nhật, chu vi nhỏ)
+        /// — không dùng làm đường tâm.
+        /// </summary>
+        private static bool LaDuongBaoOngGio(Entity src)
+        {
+            try
+            {
+                if (src is Polyline pl)
+                {
+                    if (pl.Closed)
+                        return true;
+
+                    // 4-5 đỉnh ngắn: có thể là khung
+                    if (pl.NumberOfVertices >= 4 &&
+                        pl.NumberOfVertices <= 6 &&
+                        pl.Length < 5000)
+                    {
+                        // Kiểm tra gần khép kín
+                        Point2d a = pl.GetPoint2dAt(0);
+                        Point2d b = pl.GetPoint2dAt(pl.NumberOfVertices - 1);
+                        if (a.GetDistanceTo(b) < 50)
+                            return true;
+                    }
+                }
+
+                if (src is Line line)
+                {
+                    // Đoạn rất ngắn — bỏ
+                    if (line.Length < 100)
+                        return true;
+                }
+            }
+            catch { }
+
+            return false;
+        }
+
+        private bool TryParseOngGioType(
+            string source,
+            out string ogType)
+        {
+            ogType = "";
+            if (string.IsNullOrWhiteSpace(source))
+                return false;
+
+            string u = BoDauTiengViet(source.Trim());
+
+            // Khớp các loại OG
+            string[][] map =
+            {
+                new[] { "OG HUT KHOI", "OG HÚT KHÓI" },
+                new[] { "HUT KHOI", "OG HÚT KHÓI" },
+                new[] { "OG THAI", "OG THẢI" },
+                new[] { "OG LANH", "OG LẠNH" },
+                new[] { "OG CAP", "OG CẤP" },
+                new[] { "OG HOI", "OG HỒI" },
+                new[] { "ONG GIO THAI", "OG THẢI" },
+                new[] { "ONG GIO", "OG THẢI" },
+            };
+
+            foreach (var pair in map)
+            {
+                if (u.Contains(pair[0]))
+                {
+                    ogType = pair[1];
+                    return true;
+                }
+            }
+
+            // OG đứng riêng + từ sau
+            Match m = Regex.Match(
+                u,
+                @"\bOG\s*(THAI|HUT|LANH|CAP|HOI|KHOI)?");
+            if (m.Success)
+            {
+                string k = m.Groups[1].Value;
+                if (k.Contains("HUT") || k.Contains("KHOI"))
+                    ogType = "OG HÚT KHÓI";
+                else if (k == "LANH")
+                    ogType = "OG LẠNH";
+                else if (k == "CAP")
+                    ogType = "OG CẤP";
+                else if (k == "HOI")
+                    ogType = "OG HỒI";
+                else
+                    ogType = "OG THẢI";
+                return true;
+            }
+
+            return false;
+        }
+
+        private Polyline TaoPolylineTuCurve(Entity src)
+        {
+            try
+            {
+                if (src is Polyline pl)
+                {
+                    Polyline copy = new Polyline();
+                    for (int i = 0; i < pl.NumberOfVertices; i++)
+                    {
+                        copy.AddVertexAt(
+                            i,
+                            pl.GetPoint2dAt(i),
+                            pl.GetBulgeAt(i),
+                            0, 0);
+                    }
+                    copy.Closed = pl.Closed;
+                    return copy;
+                }
+
+                if (src is Line line)
+                {
+                    Polyline copy = new Polyline();
+                    copy.AddVertexAt(
+                        0,
+                        new Point2d(line.StartPoint.X, line.StartPoint.Y),
+                        0, 0, 0);
+                    copy.AddVertexAt(
+                        1,
+                        new Point2d(line.EndPoint.X, line.EndPoint.Y),
+                        0, 0, 0);
+                    return copy;
+                }
+
+                if (src is Autodesk.AutoCAD.DatabaseServices.Polyline2d ||
+                    src is Autodesk.AutoCAD.DatabaseServices.Polyline3d)
+                {
+                    // Lấy điểm gần đúng qua Curve
+                    if (src is Curve cv)
+                    {
+                        Polyline copy = new Polyline();
+                        Point3d sp = cv.StartPoint;
+                        Point3d ep = cv.EndPoint;
+                        copy.AddVertexAt(
+                            0, new Point2d(sp.X, sp.Y), 0, 0, 0);
+                        copy.AddVertexAt(
+                            1, new Point2d(ep.X, ep.Y), 0, 0, 0);
+                        return copy;
+                    }
+                }
+            }
+            catch { }
+
+            return null;
+        }
+
         private void BtnAutoConvertPipe_Click(
             object sender,
             RoutedEventArgs e)
