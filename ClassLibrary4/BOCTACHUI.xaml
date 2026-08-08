@@ -67,6 +67,13 @@
                         </Setter>
                     </Style>
 
+                    <!-- Mặc định: rê chuột 3s mới hiện ToolTip — áp dụng mọi Button -->
+                    <Style TargetType="Button">
+                        <Setter Property="ToolTipService.InitialShowDelay" Value="3000"/>
+                        <Setter Property="ToolTipService.ShowDuration" Value="20000"/>
+                        <Setter Property="ToolTipService.BetweenShowDelay" Value="0"/>
+                    </Style>
+
                     <Style x:Key="VatLieuItemStyle" TargetType="ListBoxItem">
                         <Setter Property="Height" Value="32"/>
                         <Setter Property="Padding" Value="2"/>
@@ -290,45 +297,49 @@
                                         </Button.ToolTip>
                                     </Button>
 
-                                    <Button x:Name="BtnAutoConvertPipe"
-                                            Content="TỰ ĐỘNG VẼ ỐNG"
-                                            Height="35"
-                                            FontSize="14"
-                                            FontWeight="Bold"
-                                            Background="#FFD35400"
-                                            Foreground="White"
-                                            Margin="0,10,0,0"
-                                            Cursor="Hand"
-                                            ToolTipService.InitialShowDelay="3000"
-                                            ToolTipService.ShowDuration="20000"
-                                            Click="BtnAutoConvertPipe_Click">
-                                        <Button.ToolTip>
-                                            <ToolTip>
-                                                <TextBlock MaxWidth="240" TextWrapping="Wrap"
-                                                           Text="TỰ ĐỘNG VẼ ỐNG: Quét chọn đường ống + text size trên bản vẽ. Tool nhận diện size (chữ song song ống), tách đoạn, gán layer và tạo chữ tự động."/>
-                                            </ToolTip>
-                                        </Button.ToolTip>
-                                    </Button>
+                                    <Grid Margin="0,10,0,0">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="8"/>
+                                            <ColumnDefinition Width="*"/>
+                                        </Grid.ColumnDefinitions>
 
-                                    <Button x:Name="BtnAutoDrawByTemplate"
-                                            Content="VẼ ỐNG TỰ ĐỘNG THEO MẪU"
-                                            Height="35"
-                                            FontSize="13"
-                                            FontWeight="Bold"
-                                            Background="#FF00875A"
-                                            Foreground="White"
-                                            Margin="0,8,0,0"
-                                            Cursor="Hand"
-                                            ToolTipService.InitialShowDelay="3000"
-                                            ToolTipService.ShowDuration="20000"
-                                            Click="BtnAutoDrawByTemplate_Click">
-                                        <Button.ToolTip>
-                                            <ToolTip>
-                                                <TextBlock MaxWidth="240" TextWrapping="Wrap"
-                                                           Text="VẼ ỐNG TỰ ĐỘNG THEO MẪU: Chọn đoạn ống mẫu đã có layer/size, tool tìm các đoạn tương tự trên bản vẽ và áp dụng cùng layer, độ dày, chữ size."/>
-                                            </ToolTip>
-                                        </Button.ToolTip>
-                                    </Button>
+                                        <Button x:Name="BtnAutoConvertPipe"
+                                                Grid.Column="0"
+                                                Content="TĐ VẼ ỐNG"
+                                                Height="35"
+                                                FontSize="13"
+                                                FontWeight="Bold"
+                                                Background="#FFD35400"
+                                                Foreground="White"
+                                                Cursor="Hand"
+                                                Click="BtnAutoConvertPipe_Click">
+                                            <Button.ToolTip>
+                                                <ToolTip>
+                                                    <TextBlock MaxWidth="240" TextWrapping="Wrap"
+                                                               Text="TĐ VẼ ỐNG: Quét chọn đường ống + text size trên bản vẽ. Tool nhận diện size (chữ song song ống), tách đoạn, gán layer và tạo chữ tự động."/>
+                                                </ToolTip>
+                                            </Button.ToolTip>
+                                        </Button>
+
+                                        <Button x:Name="BtnAutoDrawByTemplate"
+                                                Grid.Column="2"
+                                                Content="VẼ ỐNG MẪU"
+                                                Height="35"
+                                                FontSize="13"
+                                                FontWeight="Bold"
+                                                Background="#FF00875A"
+                                                Foreground="White"
+                                                Cursor="Hand"
+                                                Click="BtnAutoDrawByTemplate_Click">
+                                            <Button.ToolTip>
+                                                <ToolTip>
+                                                    <TextBlock MaxWidth="240" TextWrapping="Wrap"
+                                                               Text="VẼ ỐNG MẪU: Chọn đoạn ống mẫu đã có layer/size, tool tìm các đoạn tương tự trên bản vẽ và áp dụng cùng layer, độ dày, chữ size."/>
+                                                </ToolTip>
+                                            </Button.ToolTip>
+                                        </Button>
+                                    </Grid>
                                 </StackPanel>
                             </Grid>
 
@@ -432,7 +443,14 @@
                                             Foreground="White"
                                             Margin="0,12,0,0"
                                             Cursor="Hand"
-                                            Click="BtnDatVan_Click"/>
+                                            Click="BtnDatVan_Click">
+                                        <Button.ToolTip>
+                                            <ToolTip>
+                                                <TextBlock MaxWidth="240" TextWrapping="Wrap"
+                                                           Text="ĐẶT VAN: Chọn loại van + kích thước, bấm nút rồi click từng vị trí trên bản vẽ để đặt text. ESC để thoát. Layer tự tạo theo hệ / vị trí / loại van / size."/>
+                                            </ToolTip>
+                                        </Button.ToolTip>
+                                    </Button>
                                 </StackPanel>
                             </Grid>
 
@@ -639,7 +657,14 @@
                                             Foreground="White"
                                             Margin="0,12,0,0"
                                             Cursor="Hand"
-                                            Click="BtnDatThietBi_Click"/>
+                                            Click="BtnDatThietBi_Click">
+                                        <Button.ToolTip>
+                                            <ToolTip>
+                                                <TextBlock MaxWidth="240" TextWrapping="Wrap"
+                                                           Text="ĐẶT THIẾT BỊ: Chọn loại thiết bị + model, bấm nút rồi click từng vị trí trên bản vẽ để đặt text. ESC để thoát. Layer tự tạo theo hệ / vị trí / loại / model."/>
+                                            </ToolTip>
+                                        </Button.ToolTip>
+                                    </Button>
                                 </StackPanel>
                             </Grid>
 
@@ -1082,45 +1107,49 @@
                                         </Button.ToolTip>
                                     </Button>
 
-                                    <Button x:Name="BtnAutoConvertPipeACMV"
-                                            Content="TỰ ĐỘNG VẼ ỐNG"
-                                            Height="35"
-                                            FontSize="14"
-                                            FontWeight="Bold"
-                                            Background="#FFD35400"
-                                            Foreground="White"
-                                            Margin="0,10,0,0"
-                                            Cursor="Hand"
-                                            ToolTipService.InitialShowDelay="3000"
-                                            ToolTipService.ShowDuration="20000"
-                                            Click="BtnAutoConvertPipe_Click">
-                                        <Button.ToolTip>
-                                            <ToolTip>
-                                                <TextBlock MaxWidth="240" TextWrapping="Wrap"
-                                                           Text="TỰ ĐỘNG VẼ ỐNG: Quét chọn đường ống + text size trên bản vẽ. Tool nhận diện size (chữ song song ống), tách đoạn, gán layer và tạo chữ tự động."/>
-                                            </ToolTip>
-                                        </Button.ToolTip>
-                                    </Button>
+                                    <Grid Margin="0,10,0,0">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="8"/>
+                                            <ColumnDefinition Width="*"/>
+                                        </Grid.ColumnDefinitions>
 
-                                    <Button x:Name="BtnAutoDrawByTemplateACMV"
-                                            Content="VẼ ỐNG TỰ ĐỘNG THEO MẪU"
-                                            Height="35"
-                                            FontSize="13"
-                                            FontWeight="Bold"
-                                            Background="#FF00875A"
-                                            Foreground="White"
-                                            Margin="0,8,0,0"
-                                            Cursor="Hand"
-                                            ToolTipService.InitialShowDelay="3000"
-                                            ToolTipService.ShowDuration="20000"
-                                            Click="BtnAutoDrawByTemplate_Click">
-                                        <Button.ToolTip>
-                                            <ToolTip>
-                                                <TextBlock MaxWidth="240" TextWrapping="Wrap"
-                                                           Text="VẼ ỐNG TỰ ĐỘNG THEO MẪU: Chọn đoạn ống mẫu đã có layer/size, tool tìm các đoạn tương tự trên bản vẽ và áp dụng cùng layer, độ dày, chữ size."/>
-                                            </ToolTip>
-                                        </Button.ToolTip>
-                                    </Button>
+                                        <Button x:Name="BtnAutoConvertPipeACMV"
+                                                Grid.Column="0"
+                                                Content="TĐ VẼ ỐNG"
+                                                Height="35"
+                                                FontSize="13"
+                                                FontWeight="Bold"
+                                                Background="#FFD35400"
+                                                Foreground="White"
+                                                Cursor="Hand"
+                                                Click="BtnAutoConvertPipe_Click">
+                                            <Button.ToolTip>
+                                                <ToolTip>
+                                                    <TextBlock MaxWidth="240" TextWrapping="Wrap"
+                                                               Text="TĐ VẼ ỐNG: Quét chọn đường ống + text size trên bản vẽ. Tool nhận diện size (chữ song song ống), tách đoạn, gán layer và tạo chữ tự động."/>
+                                                </ToolTip>
+                                            </Button.ToolTip>
+                                        </Button>
+
+                                        <Button x:Name="BtnAutoDrawByTemplateACMV"
+                                                Grid.Column="2"
+                                                Content="VẼ ỐNG MẪU"
+                                                Height="35"
+                                                FontSize="13"
+                                                FontWeight="Bold"
+                                                Background="#FF00875A"
+                                                Foreground="White"
+                                                Cursor="Hand"
+                                                Click="BtnAutoDrawByTemplate_Click">
+                                            <Button.ToolTip>
+                                                <ToolTip>
+                                                    <TextBlock MaxWidth="240" TextWrapping="Wrap"
+                                                               Text="VẼ ỐNG MẪU: Chọn đoạn ống mẫu đã có layer/size, tool tìm các đoạn tương tự trên bản vẽ và áp dụng cùng layer, độ dày, chữ size."/>
+                                                </ToolTip>
+                                            </Button.ToolTip>
+                                        </Button>
+                                    </Grid>
                                 </StackPanel>
                             </Grid>
 
@@ -1285,7 +1314,14 @@
                                             Foreground="White"
                                             Margin="0,12,0,0"
                                             Cursor="Hand"
-                                            Click="BtnDatVan_Click"/>
+                                            Click="BtnDatVan_Click">
+                                        <Button.ToolTip>
+                                            <ToolTip>
+                                                <TextBlock MaxWidth="240" TextWrapping="Wrap"
+                                                           Text="ĐẶT VAN: Chọn nhóm Van hoặc Van gió, loại + size, bấm nút rồi click từng vị trí để đặt text. ESC để thoát."/>
+                                            </ToolTip>
+                                        </Button.ToolTip>
+                                    </Button>
                                 </StackPanel>
                             </Grid>
 
@@ -1642,7 +1678,14 @@
                                             Foreground="White"
                                             Margin="0,12,0,0"
                                             Cursor="Hand"
-                                            Click="BtnDatThietBi_Click"/>
+                                            Click="BtnDatThietBi_Click">
+                                        <Button.ToolTip>
+                                            <ToolTip>
+                                                <TextBlock MaxWidth="240" TextWrapping="Wrap"
+                                                           Text="ĐẶT THIẾT BỊ: Chọn loại (Máy lạnh / Quạt / Bơm) + thông số, bấm nút rồi click từng vị trí để đặt text. ESC để thoát."/>
+                                            </ToolTip>
+                                        </Button.ToolTip>
+                                    </Button>
                                 </StackPanel>
                             </Grid>
 
@@ -1880,45 +1923,49 @@
                                         </Button.ToolTip>
                                     </Button>
 
-                                    <Button x:Name="BtnAutoConvertPipeCTN"
-                                            Content="TỰ ĐỘNG VẼ ỐNG"
-                                            Height="35"
-                                            FontSize="14"
-                                            FontWeight="Bold"
-                                            Background="#FFD35400"
-                                            Foreground="White"
-                                            Margin="0,10,0,0"
-                                            Cursor="Hand"
-                                            ToolTipService.InitialShowDelay="3000"
-                                            ToolTipService.ShowDuration="20000"
-                                            Click="BtnAutoConvertPipe_Click">
-                                        <Button.ToolTip>
-                                            <ToolTip>
-                                                <TextBlock MaxWidth="240" TextWrapping="Wrap"
-                                                           Text="TỰ ĐỘNG VẼ ỐNG: Quét chọn đường ống + text size trên bản vẽ. Tool nhận diện size (chữ song song ống), tách đoạn, gán layer và tạo chữ tự động."/>
-                                            </ToolTip>
-                                        </Button.ToolTip>
-                                    </Button>
+                                    <Grid Margin="0,10,0,0">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="8"/>
+                                            <ColumnDefinition Width="*"/>
+                                        </Grid.ColumnDefinitions>
 
-                                    <Button x:Name="BtnAutoDrawByTemplateCTN"
-                                            Content="VẼ ỐNG TỰ ĐỘNG THEO MẪU"
-                                            Height="35"
-                                            FontSize="13"
-                                            FontWeight="Bold"
-                                            Background="#FF00875A"
-                                            Foreground="White"
-                                            Margin="0,8,0,0"
-                                            Cursor="Hand"
-                                            ToolTipService.InitialShowDelay="3000"
-                                            ToolTipService.ShowDuration="20000"
-                                            Click="BtnAutoDrawByTemplate_Click">
-                                        <Button.ToolTip>
-                                            <ToolTip>
-                                                <TextBlock MaxWidth="240" TextWrapping="Wrap"
-                                                           Text="VẼ ỐNG TỰ ĐỘNG THEO MẪU: Chọn đoạn ống mẫu đã có layer/size, tool tìm các đoạn tương tự trên bản vẽ và áp dụng cùng layer, độ dày, chữ size."/>
-                                            </ToolTip>
-                                        </Button.ToolTip>
-                                    </Button>
+                                        <Button x:Name="BtnAutoConvertPipeCTN"
+                                                Grid.Column="0"
+                                                Content="TĐ VẼ ỐNG"
+                                                Height="35"
+                                                FontSize="13"
+                                                FontWeight="Bold"
+                                                Background="#FFD35400"
+                                                Foreground="White"
+                                                Cursor="Hand"
+                                                Click="BtnAutoConvertPipe_Click">
+                                            <Button.ToolTip>
+                                                <ToolTip>
+                                                    <TextBlock MaxWidth="240" TextWrapping="Wrap"
+                                                               Text="TĐ VẼ ỐNG: Quét chọn đường ống + text size trên bản vẽ. Tool nhận diện size (chữ song song ống), tách đoạn, gán layer và tạo chữ tự động."/>
+                                                </ToolTip>
+                                            </Button.ToolTip>
+                                        </Button>
+
+                                        <Button x:Name="BtnAutoDrawByTemplateCTN"
+                                                Grid.Column="2"
+                                                Content="VẼ ỐNG MẪU"
+                                                Height="35"
+                                                FontSize="13"
+                                                FontWeight="Bold"
+                                                Background="#FF00875A"
+                                                Foreground="White"
+                                                Cursor="Hand"
+                                                Click="BtnAutoDrawByTemplate_Click">
+                                            <Button.ToolTip>
+                                                <ToolTip>
+                                                    <TextBlock MaxWidth="240" TextWrapping="Wrap"
+                                                               Text="VẼ ỐNG MẪU: Chọn đoạn ống mẫu đã có layer/size, tool tìm các đoạn tương tự trên bản vẽ và áp dụng cùng layer, độ dày, chữ size."/>
+                                                </ToolTip>
+                                            </Button.ToolTip>
+                                        </Button>
+                                    </Grid>
                                 </StackPanel>
                             </Grid>
 
@@ -2022,7 +2069,14 @@
                                             Foreground="White"
                                             Margin="0,12,0,0"
                                             Cursor="Hand"
-                                            Click="BtnDatVan_Click"/>
+                                            Click="BtnDatVan_Click">
+                                        <Button.ToolTip>
+                                            <ToolTip>
+                                                <TextBlock MaxWidth="240" TextWrapping="Wrap"
+                                                           Text="ĐẶT VAN: Chọn loại van + kích thước, bấm nút rồi click từng vị trí trên bản vẽ để đặt text. ESC để thoát."/>
+                                            </ToolTip>
+                                        </Button.ToolTip>
+                                    </Button>
                                 </StackPanel>
                             </Grid>
 
@@ -2123,7 +2177,14 @@
                                             Foreground="White"
                                             Margin="0,12,0,0"
                                             Cursor="Hand"
-                                            Click="BtnDatThietBi_Click"/>
+                                            Click="BtnDatThietBi_Click">
+                                        <Button.ToolTip>
+                                            <ToolTip>
+                                                <TextBlock MaxWidth="240" TextWrapping="Wrap"
+                                                           Text="ĐẶT THIẾT BỊ: Chọn loại thiết bị + model, bấm nút rồi click từng vị trí trên bản vẽ để đặt text. ESC để thoát."/>
+                                            </ToolTip>
+                                        </Button.ToolTip>
+                                    </Button>
                                 </StackPanel>
                             </Grid>
 
