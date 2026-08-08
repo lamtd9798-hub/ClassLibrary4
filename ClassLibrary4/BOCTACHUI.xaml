@@ -268,14 +268,95 @@
                                     </Style>
                                 </Grid.Style>
 
-                                <StackPanel>
-                                    <TextBlock Text="VAN CHỮA CHÁY"
+                                <StackPanel Orientation="Vertical">
+                                    <TextBlock Text="Chọn loại van:"
                                                FontWeight="Bold"
-                                               FontSize="14"
-                                               Foreground="#FF0078D7"
-                                               Margin="0,0,0,10"/>
-                                    <TextBlock Text="Bạn xây dựng nội dung riêng của tab VAN tại đây."
-                                               Foreground="Gray"/>
+                                               Margin="0,0,0,5"
+                                               Foreground="#FF333333"/>
+
+                                    <ListBox x:Name="LstLoaiVan"
+                                             MinHeight="66"
+                                             FontSize="9.5"
+                                             BorderThickness="0"
+                                             SelectedIndex="0"
+                                             ScrollViewer.VerticalScrollBarVisibility="Disabled"
+                                             ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                                             ItemContainerStyle="{StaticResource VatLieuItemStyle}"
+                                             SelectionChanged="LstLoaiVan_SelectionChanged"
+                                             KeyDown="LstLoaiVan_KeyDown">
+                                        <ListBox.ItemsPanel>
+                                            <ItemsPanelTemplate>
+                                                <WrapPanel ItemWidth="84" ItemHeight="30"/>
+                                            </ItemsPanelTemplate>
+                                        </ListBox.ItemsPanel>
+                                        <ListBoxItem Content="V.CỔNG TN"/>
+                                        <ListBoxItem Content="V.CỔNG TC"/>
+                                        <ListBoxItem Content="VAN 1C"/>
+                                        <ListBoxItem Content="V.CỔNG ĐIỆN"/>
+                                        <ListBoxItem Content="Y LỌC"/>
+                                        <ListBoxItem Content="KNM"/>
+                                    </ListBox>
+
+                                    <TextBox x:Name="TxtLoaiVanBoSung"
+                                             Height="28"
+                                             FontSize="12"
+                                             Padding="4"
+                                             Margin="0,4,0,10"
+                                             ToolTip="Nhập thêm loại van rồi nhấn Enter"
+                                             KeyDown="TxtLoaiVanBoSung_KeyDown"/>
+
+                                    <TextBlock Text="Kích thước van (Kèm màu Layer):"
+                                               FontWeight="Bold"
+                                               Margin="0,0,0,5"
+                                               Foreground="#FF333333"/>
+
+                                    <ListBox x:Name="LstSizeVan"
+                                             Height="140"
+                                             FontSize="13"
+                                             Margin="0,0,0,5"
+                                             ScrollViewer.VerticalScrollBarVisibility="Auto"
+                                             BorderBrush="#FFCCCCCC"
+                                             KeyDown="LstSizeVan_KeyDown"
+                                             HorizontalContentAlignment="Stretch">
+                                        <ListBox.ItemTemplate>
+                                            <DataTemplate>
+                                                <Grid>
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="*"/>
+                                                        <ColumnDefinition Width="Auto"/>
+                                                    </Grid.ColumnDefinitions>
+                                                    <TextBlock Text="{Binding SizeName}" VerticalAlignment="Center"/>
+                                                    <Button Grid.Column="1"
+                                                            Width="20" Height="20"
+                                                            Background="{Binding LayerColorBrush}"
+                                                            Cursor="Hand"
+                                                            Click="BtnColorVan_Click"
+                                                            ToolTip="Kích để chọn lại màu Layer"
+                                                            BorderThickness="1"
+                                                            BorderBrush="Gray"
+                                                            Padding="0"/>
+                                                </Grid>
+                                            </DataTemplate>
+                                        </ListBox.ItemTemplate>
+                                    </ListBox>
+
+                                    <TextBox x:Name="TxtCustomSizeVan"
+                                             Height="30"
+                                             FontSize="13"
+                                             Padding="4"
+                                             ToolTip="Nhập kích thước rồi nhấn Enter"
+                                             KeyDown="TxtCustomSizeVan_KeyDown"/>
+
+                                    <Button x:Name="BtnDatVan"
+                                            Content="ĐẶT VAN"
+                                            Height="40"
+                                            FontSize="15"
+                                            FontWeight="Bold"
+                                            Background="#FF0078D7"
+                                            Foreground="White"
+                                            Margin="0,12,0,0"
+                                            Cursor="Hand"
+                                            Click="BtnDatVan_Click"/>
                                 </StackPanel>
                             </Grid>
 
@@ -291,14 +372,198 @@
                                     </Style>
                                 </Grid.Style>
 
-                                <StackPanel>
-                                    <TextBlock Text="THIẾT BỊ CHỮA CHÁY"
+                                <StackPanel Orientation="Vertical">
+                                    <TextBlock Text="Chọn thiết bị:"
                                                FontWeight="Bold"
-                                               FontSize="14"
-                                               Foreground="#FF0078D7"
-                                               Margin="0,0,0,10"/>
-                                    <TextBlock Text="Bạn xây dựng nội dung riêng của tab THIẾT BỊ tại đây."
-                                               Foreground="Gray"/>
+                                               Margin="0,0,0,5"
+                                               Foreground="#FF333333"/>
+
+                                    <ListBox x:Name="LstLoaiThietBi"
+                                             MinHeight="36"
+                                             FontSize="9.5"
+                                             BorderThickness="0"
+                                             SelectedIndex="0"
+                                             ScrollViewer.VerticalScrollBarVisibility="Disabled"
+                                             ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                                             ItemContainerStyle="{StaticResource VatLieuItemStyle}"
+                                             SelectionChanged="LstLoaiThietBi_SelectionChanged"
+                                             KeyDown="LstLoaiThietBi_KeyDown">
+                                        <ListBox.ItemsPanel>
+                                            <ItemsPanelTemplate>
+                                                <WrapPanel ItemWidth="84" ItemHeight="30"/>
+                                            </ItemsPanelTemplate>
+                                        </ListBox.ItemsPanel>
+                                        <ListBoxItem Content="BÌNH CC"/>
+                                        <ListBoxItem Content="ĐẦU PHUN"/>
+                                    </ListBox>
+
+                                    <TextBox x:Name="TxtLoaiThietBiBoSung"
+                                             Height="28"
+                                             FontSize="12"
+                                             Padding="4"
+                                             Margin="0,4,0,10"
+                                             ToolTip="Nhập thêm loại thiết bị rồi nhấn Enter"
+                                             KeyDown="TxtLoaiThietBiBoSung_KeyDown"/>
+
+                                    <!-- Panel Bình CC: danh sách model -->
+                                    <StackPanel x:Name="PanelBinhCC">
+                                        <TextBlock Text="Model / Kích thước (Kèm màu Layer):"
+                                                   FontWeight="Bold"
+                                                   Margin="0,0,0,5"
+                                                   Foreground="#FF333333"/>
+
+                                        <ListBox x:Name="LstSizeThietBi"
+                                                 Height="180"
+                                                 FontSize="13"
+                                                 Margin="0,0,0,5"
+                                                 ScrollViewer.VerticalScrollBarVisibility="Auto"
+                                                 BorderBrush="#FFCCCCCC"
+                                                 KeyDown="LstSizeThietBi_KeyDown"
+                                                 HorizontalContentAlignment="Stretch">
+                                            <ListBox.ItemTemplate>
+                                                <DataTemplate>
+                                                    <Grid>
+                                                        <Grid.ColumnDefinitions>
+                                                            <ColumnDefinition Width="*"/>
+                                                            <ColumnDefinition Width="Auto"/>
+                                                        </Grid.ColumnDefinitions>
+                                                        <TextBlock Text="{Binding SizeName}" VerticalAlignment="Center"/>
+                                                        <Button Grid.Column="1"
+                                                                Width="20" Height="20"
+                                                                Background="{Binding LayerColorBrush}"
+                                                                Cursor="Hand"
+                                                                Click="BtnColorThietBi_Click"
+                                                                ToolTip="Kích để chọn lại màu Layer"
+                                                                BorderThickness="1"
+                                                                BorderBrush="Gray"
+                                                                Padding="0"/>
+                                                    </Grid>
+                                                </DataTemplate>
+                                            </ListBox.ItemTemplate>
+                                        </ListBox>
+
+                                        <TextBox x:Name="TxtCustomSizeThietBi"
+                                                 Height="30"
+                                                 FontSize="13"
+                                                 Padding="4"
+                                                 ToolTip="Nhập model/kích thước rồi nhấn Enter"
+                                                 KeyDown="TxtCustomSizeThietBi_KeyDown"/>
+                                    </StackPanel>
+
+                                    <!-- Panel Đầu phun: 3 cột Hướng / K / Nhiệt độ -->
+                                    <StackPanel x:Name="PanelDauPhun" Visibility="Collapsed">
+                                        <TextBlock Text="Chọn thông số đầu phun:"
+                                                   FontWeight="Bold"
+                                                   Margin="0,0,0,5"
+                                                   Foreground="#FF333333"/>
+
+                                        <Grid Margin="0,0,0,5">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="1.7*"/>
+                                                <ColumnDefinition Width="4"/>
+                                                <ColumnDefinition Width="0.65*"/>
+                                                <ColumnDefinition Width="4"/>
+                                                <ColumnDefinition Width="0.65*"/>
+                                            </Grid.ColumnDefinitions>
+
+                                            <StackPanel Grid.Column="0">
+                                                <TextBlock Text="Hướng"
+                                                           FontSize="11"
+                                                           FontWeight="Bold"
+                                                           HorizontalAlignment="Center"
+                                                           Margin="0,0,0,3"/>
+                                                <ListBox x:Name="LstHuongDauPhun"
+                                                         Height="130"
+                                                         FontSize="11"
+                                                         BorderBrush="#FFCCCCCC"
+                                                         SelectedIndex="0"
+                                                         ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                                                         ScrollViewer.VerticalScrollBarVisibility="Auto"
+                                                         KeyDown="LstDauPhunCot_KeyDown">
+                                                    <ListBoxItem Content="Hướng Lên"/>
+                                                    <ListBoxItem Content="Hướng xuống"/>
+                                                    <ListBoxItem Content="Hướng ngang"/>
+                                                    <ListBoxItem Content="Hướng lên OG"/>
+                                                    <ListBoxItem Content="Hướng xuống OG"/>
+                                                </ListBox>
+                                                <TextBox x:Name="TxtHuongDauPhunThem"
+                                                         Height="26"
+                                                         FontSize="11"
+                                                         Padding="3"
+                                                         Margin="0,3,0,0"
+                                                         ToolTip="Nhập hướng mới rồi Enter"
+                                                         KeyDown="TxtDauPhunCotThem_KeyDown"/>
+                                            </StackPanel>
+
+                                            <StackPanel Grid.Column="2">
+                                                <TextBlock Text="Hệ số K"
+                                                           FontSize="11"
+                                                           FontWeight="Bold"
+                                                           HorizontalAlignment="Center"
+                                                           Margin="0,0,0,3"/>
+                                                <ListBox x:Name="LstKDauPhun"
+                                                         Height="130"
+                                                         FontSize="11"
+                                                         BorderBrush="#FFCCCCCC"
+                                                         SelectedIndex="0"
+                                                         ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                                                         KeyDown="LstDauPhunCot_KeyDown">
+                                                    <ListBoxItem Content="K5.6"/>
+                                                    <ListBoxItem Content="K8.0"/>
+                                                    <ListBoxItem Content="K11.2"/>
+                                                    <ListBoxItem Content="K14"/>
+                                                    <ListBoxItem Content="K25.2"/>
+                                                </ListBox>
+                                                <TextBox x:Name="TxtKDauPhunThem"
+                                                         Height="26"
+                                                         FontSize="11"
+                                                         Padding="3"
+                                                         Margin="0,3,0,0"
+                                                         ToolTip="Nhập K mới rồi Enter"
+                                                         KeyDown="TxtDauPhunCotThem_KeyDown"/>
+                                            </StackPanel>
+
+                                            <StackPanel Grid.Column="4">
+                                                <TextBlock Text="Nhiệt độ"
+                                                           FontSize="11"
+                                                           FontWeight="Bold"
+                                                           HorizontalAlignment="Center"
+                                                           Margin="0,0,0,3"/>
+                                                <ListBox x:Name="LstNhietDoDauPhun"
+                                                         Height="130"
+                                                         FontSize="11"
+                                                         BorderBrush="#FFCCCCCC"
+                                                         SelectedIndex="1"
+                                                         ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                                                         KeyDown="LstDauPhunCot_KeyDown">
+                                                    <ListBoxItem Content="57°C"/>
+                                                    <ListBoxItem Content="68°C"/>
+                                                    <ListBoxItem Content="79°C"/>
+                                                    <ListBoxItem Content="93°C"/>
+                                                    <ListBoxItem Content="141°C"/>
+                                                    <ListBoxItem Content="182°C"/>
+                                                </ListBox>
+                                                <TextBox x:Name="TxtNhietDoDauPhunThem"
+                                                         Height="26"
+                                                         FontSize="11"
+                                                         Padding="3"
+                                                         Margin="0,3,0,0"
+                                                         ToolTip="Nhập nhiệt độ mới rồi Enter"
+                                                         KeyDown="TxtDauPhunCotThem_KeyDown"/>
+                                            </StackPanel>
+                                        </Grid>
+                                    </StackPanel>
+
+                                    <Button x:Name="BtnDatThietBi"
+                                            Content="ĐẶT THIẾT BỊ"
+                                            Height="40"
+                                            FontSize="15"
+                                            FontWeight="Bold"
+                                            Background="#FF0078D7"
+                                            Foreground="White"
+                                            Margin="0,12,0,0"
+                                            Cursor="Hand"
+                                            Click="BtnDatThietBi_Click"/>
                                 </StackPanel>
                             </Grid>
 
@@ -392,6 +657,10 @@
                                         <ListBoxItem Content="INOX"/>
                                         <ListBoxItem Content="UPVC"/>
                                         <ListBoxItem Content="ỐNG ĐỒNG"/>
+                                        <ListBoxItem Content="OG THẢI"/>
+                                        <ListBoxItem Content="OG HÚT KHÓI"/>
+                                        <ListBoxItem Content="OG LẠNH"/>
+                                        <ListBoxItem Content="OG CẤP"/>
                                     </ListBox>
 
                                     <TextBox x:Name="TxtVatLieuOngBoSungACMV"
@@ -402,51 +671,142 @@
                                              ToolTip="Nhập thêm loại ống rồi nhấn Enter"
                                              KeyDown="TxtVatLieuOngBoSung_KeyDown"/>
 
-                                    <TextBlock Text="Size ống (Kèm màu Layer):"
-                                               FontWeight="Bold"
-                                               Margin="0,0,0,5"
-                                               Foreground="#FF333333"/>
+                                    <!-- Size ống thường (DN / Đồng) -->
+                                    <StackPanel x:Name="PanelSizeOngThuongACMV">
+                                        <TextBlock Text="Size ống (Kèm màu Layer):"
+                                                   FontWeight="Bold"
+                                                   Margin="0,0,0,5"
+                                                   Foreground="#FF333333"/>
 
-                                    <ListBox x:Name="LstSizeOngACMV"
-                                             Height="140"
-                                             FontSize="13"
-                                             Margin="0,0,0,5"
-                                             ScrollViewer.VerticalScrollBarVisibility="Auto"
-                                             BorderBrush="#FFCCCCCC"
-                                             KeyDown="LstSizeOng_KeyDown"
-                                             HorizontalContentAlignment="Stretch">
-                                        <ListBox.ItemTemplate>
-                                            <DataTemplate>
-                                                <Grid>
-                                                    <Grid.ColumnDefinitions>
-                                                        <ColumnDefinition Width="*"/>
-                                                        <ColumnDefinition Width="Auto"/>
-                                                    </Grid.ColumnDefinitions>
+                                        <ListBox x:Name="LstSizeOngACMV"
+                                                 Height="140"
+                                                 FontSize="13"
+                                                 Margin="0,0,0,5"
+                                                 ScrollViewer.VerticalScrollBarVisibility="Auto"
+                                                 BorderBrush="#FFCCCCCC"
+                                                 KeyDown="LstSizeOng_KeyDown"
+                                                 HorizontalContentAlignment="Stretch">
+                                            <ListBox.ItemTemplate>
+                                                <DataTemplate>
+                                                    <Grid>
+                                                        <Grid.ColumnDefinitions>
+                                                            <ColumnDefinition Width="*"/>
+                                                            <ColumnDefinition Width="Auto"/>
+                                                        </Grid.ColumnDefinitions>
 
-                                                    <TextBlock Text="{Binding SizeName}"
+                                                        <TextBlock Text="{Binding SizeName}"
+                                                                   VerticalAlignment="Center"/>
+
+                                                        <Button Grid.Column="1"
+                                                                Width="20"
+                                                                Height="20"
+                                                                Background="{Binding LayerColorBrush}"
+                                                                Cursor="Hand"
+                                                                Click="BtnColor_Click"
+                                                                ToolTip="Kích để chọn lại màu Layer"
+                                                                BorderThickness="1"
+                                                                BorderBrush="Gray"
+                                                                Padding="0"/>
+                                                    </Grid>
+                                                </DataTemplate>
+                                            </ListBox.ItemTemplate>
+                                        </ListBox>
+
+                                        <TextBox x:Name="TxtCustomSizeACMV"
+                                                 Height="30"
+                                                 FontSize="13"
+                                                 Padding="4"
+                                                 ToolTip="Nhập kích thước rồi nhấn Enter"
+                                                 KeyDown="TxtCustomSize_KeyDown"/>
+                                    </StackPanel>
+
+                                    <!-- Size ống gió: 2 cột Kích thước + CN/EI -->
+                                    <StackPanel x:Name="PanelSizeOngGioACMV" Visibility="Collapsed">
+                                        <TextBlock Text="Size ống gió + CN/EI:"
+                                                   FontWeight="Bold"
+                                                   Margin="0,0,0,5"
+                                                   Foreground="#FF333333"/>
+
+                                        <Grid Margin="0,0,0,5">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="1.4*"/>
+                                                <ColumnDefinition Width="4"/>
+                                                <ColumnDefinition Width="0.9*"/>
+                                            </Grid.ColumnDefinitions>
+
+                                            <StackPanel Grid.Column="0">
+                                                <TextBlock Text="Kích thước"
+                                                           FontSize="11"
+                                                           FontWeight="Bold"
+                                                           HorizontalAlignment="Center"
+                                                           Margin="0,0,0,3"/>
+                                                <ListBox x:Name="LstSizeOngGioACMV"
+                                                         Height="140"
+                                                         FontSize="12"
+                                                         BorderBrush="#FFCCCCCC"
+                                                         SelectedIndex="0"
+                                                         ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                                                         KeyDown="LstOngGioCot_KeyDown">
+                                                    <ListBoxItem Content="100x100"/>
+                                                    <ListBoxItem Content="200x100"/>
+                                                    <ListBoxItem Content="500x200"/>
+                                                    <ListBoxItem Content="800x300"/>
+                                                    <ListBoxItem Content="800x350"/>
+                                                </ListBox>
+                                                <TextBox x:Name="TxtSizeOngGioACMVThem"
+                                                         Height="26"
+                                                         FontSize="12"
+                                                         Padding="3"
+                                                         Margin="0,3,0,0"
+                                                         ToolTip="Nhập size ống gió mới rồi Enter"
+                                                         KeyDown="TxtOngGioCotThem_KeyDown"/>
+                                            </StackPanel>
+
+                                            <StackPanel Grid.Column="2">
+                                                <StackPanel Orientation="Horizontal"
+                                                            HorizontalAlignment="Center"
+                                                            Margin="0,0,0,3">
+                                                    <CheckBox x:Name="ChkDungCnEi"
+                                                              IsChecked="False"
+                                                              VerticalAlignment="Center"
+                                                              Margin="0,0,4,0"
+                                                              Checked="ChkDungCnEi_Changed"
+                                                              Unchecked="ChkDungCnEi_Changed"/>
+                                                    <TextBlock x:Name="TxtTieuDeCnEi"
+                                                               Text="CN"
+                                                               FontSize="11"
+                                                               FontWeight="Bold"
                                                                VerticalAlignment="Center"/>
-
-                                                    <Button Grid.Column="1"
-                                                            Width="20"
-                                                            Height="20"
-                                                            Background="{Binding LayerColorBrush}"
-                                                            Cursor="Hand"
-                                                            Click="BtnColor_Click"
-                                                            ToolTip="Kích để chọn lại màu Layer"
-                                                            BorderThickness="1"
-                                                            BorderBrush="Gray"
-                                                            Padding="0"/>
-                                                </Grid>
-                                            </DataTemplate>
-                                        </ListBox.ItemTemplate>
-                                    </ListBox>
-
-                                    <TextBox x:Name="TxtCustomSizeACMV"
-                                             Height="30"
-                                             FontSize="13"
-                                             Padding="4"
-                                             ToolTip="Nhập kích thước rồi nhấn Enter"
-                                             KeyDown="TxtCustomSize_KeyDown"/>
+                                                </StackPanel>
+                                                <ListBox x:Name="LstCnEiOngGioACMV"
+                                                         Height="140"
+                                                         FontSize="12"
+                                                         BorderBrush="#FFCCCCCC"
+                                                         SelectedIndex="0"
+                                                         IsEnabled="False"
+                                                         Opacity="0.45"
+                                                         ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                                                         KeyDown="LstOngGioCot_KeyDown">
+                                                    <ListBoxItem Content="CN10"/>
+                                                    <ListBoxItem Content="CN13"/>
+                                                    <ListBoxItem Content="CN15"/>
+                                                    <ListBoxItem Content="CN20"/>
+                                                    <ListBoxItem Content="CN25"/>
+                                                    <ListBoxItem Content="CN32"/>
+                                                    <ListBoxItem Content="CN50"/>
+                                                </ListBox>
+                                                <TextBox x:Name="TxtCnEiOngGioACMVThem"
+                                                         Height="26"
+                                                         FontSize="12"
+                                                         Padding="3"
+                                                         Margin="0,3,0,0"
+                                                         IsEnabled="False"
+                                                         Opacity="0.45"
+                                                         ToolTip="Nhập CN/EI mới rồi Enter"
+                                                         KeyDown="TxtOngGioCotThem_KeyDown"/>
+                                            </StackPanel>
+                                        </Grid>
+                                    </StackPanel>
 
                                     <Grid Margin="0,10,0,0">
                                         <Grid.ColumnDefinitions>
@@ -514,14 +874,95 @@
                                     </Style>
                                 </Grid.Style>
 
-                                <StackPanel>
-                                    <TextBlock Text="VAN ACMV"
+                                <StackPanel Orientation="Vertical">
+                                    <TextBlock Text="Chọn loại van:"
                                                FontWeight="Bold"
-                                               FontSize="14"
-                                               Foreground="#FF0078D7"
-                                               Margin="0,0,0,10"/>
-                                    <TextBlock Text="Bạn xây dựng nội dung riêng của tab VAN tại đây."
-                                               Foreground="Gray"/>
+                                               Margin="0,0,0,5"
+                                               Foreground="#FF333333"/>
+
+                                    <ListBox x:Name="LstLoaiVanACMV"
+                                             MinHeight="66"
+                                             FontSize="9.5"
+                                             BorderThickness="0"
+                                             SelectedIndex="0"
+                                             ScrollViewer.VerticalScrollBarVisibility="Disabled"
+                                             ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                                             ItemContainerStyle="{StaticResource VatLieuItemStyle}"
+                                             SelectionChanged="LstLoaiVan_SelectionChanged"
+                                             KeyDown="LstLoaiVan_KeyDown">
+                                        <ListBox.ItemsPanel>
+                                            <ItemsPanelTemplate>
+                                                <WrapPanel ItemWidth="84" ItemHeight="30"/>
+                                            </ItemsPanelTemplate>
+                                        </ListBox.ItemsPanel>
+                                        <ListBoxItem Content="V.CỔNG TN"/>
+                                        <ListBoxItem Content="V.CỔNG TC"/>
+                                        <ListBoxItem Content="VAN 1C"/>
+                                        <ListBoxItem Content="V.CỔNG ĐIỆN"/>
+                                        <ListBoxItem Content="Y LỌC"/>
+                                        <ListBoxItem Content="KNM"/>
+                                    </ListBox>
+
+                                    <TextBox x:Name="TxtLoaiVanBoSungACMV"
+                                             Height="28"
+                                             FontSize="12"
+                                             Padding="4"
+                                             Margin="0,4,0,10"
+                                             ToolTip="Nhập thêm loại van rồi nhấn Enter"
+                                             KeyDown="TxtLoaiVanBoSung_KeyDown"/>
+
+                                    <TextBlock Text="Kích thước van (Kèm màu Layer):"
+                                               FontWeight="Bold"
+                                               Margin="0,0,0,5"
+                                               Foreground="#FF333333"/>
+
+                                    <ListBox x:Name="LstSizeVanACMV"
+                                             Height="140"
+                                             FontSize="13"
+                                             Margin="0,0,0,5"
+                                             ScrollViewer.VerticalScrollBarVisibility="Auto"
+                                             BorderBrush="#FFCCCCCC"
+                                             KeyDown="LstSizeVan_KeyDown"
+                                             HorizontalContentAlignment="Stretch">
+                                        <ListBox.ItemTemplate>
+                                            <DataTemplate>
+                                                <Grid>
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="*"/>
+                                                        <ColumnDefinition Width="Auto"/>
+                                                    </Grid.ColumnDefinitions>
+                                                    <TextBlock Text="{Binding SizeName}" VerticalAlignment="Center"/>
+                                                    <Button Grid.Column="1"
+                                                            Width="20" Height="20"
+                                                            Background="{Binding LayerColorBrush}"
+                                                            Cursor="Hand"
+                                                            Click="BtnColorVan_Click"
+                                                            ToolTip="Kích để chọn lại màu Layer"
+                                                            BorderThickness="1"
+                                                            BorderBrush="Gray"
+                                                            Padding="0"/>
+                                                </Grid>
+                                            </DataTemplate>
+                                        </ListBox.ItemTemplate>
+                                    </ListBox>
+
+                                    <TextBox x:Name="TxtCustomSizeVanACMV"
+                                             Height="30"
+                                             FontSize="13"
+                                             Padding="4"
+                                             ToolTip="Nhập kích thước rồi nhấn Enter"
+                                             KeyDown="TxtCustomSizeVan_KeyDown"/>
+
+                                    <Button x:Name="BtnDatVanACMV"
+                                            Content="ĐẶT VAN"
+                                            Height="40"
+                                            FontSize="15"
+                                            FontWeight="Bold"
+                                            Background="#FF0078D7"
+                                            Foreground="White"
+                                            Margin="0,12,0,0"
+                                            Cursor="Hand"
+                                            Click="BtnDatVan_Click"/>
                                 </StackPanel>
                             </Grid>
 
@@ -537,14 +978,348 @@
                                     </Style>
                                 </Grid.Style>
 
-                                <StackPanel>
-                                    <TextBlock Text="THIẾT BỊ ACMV"
+                                <StackPanel Orientation="Vertical">
+                                    <TextBlock Text="Chọn thiết bị:"
                                                FontWeight="Bold"
-                                               FontSize="14"
-                                               Foreground="#FF0078D7"
-                                               Margin="0,0,0,10"/>
-                                    <TextBlock Text="Bạn xây dựng nội dung riêng của tab THIẾT BỊ tại đây."
-                                               Foreground="Gray"/>
+                                               Margin="0,0,0,5"
+                                               Foreground="#FF333333"/>
+
+                                    <ListBox x:Name="LstLoaiThietBiACMV"
+                                             MinHeight="36"
+                                             FontSize="9.5"
+                                             BorderThickness="0"
+                                             SelectedIndex="0"
+                                             ScrollViewer.VerticalScrollBarVisibility="Disabled"
+                                             ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                                             ItemContainerStyle="{StaticResource VatLieuItemStyle}"
+                                             SelectionChanged="LstLoaiThietBi_SelectionChanged"
+                                             KeyDown="LstLoaiThietBi_KeyDown">
+                                        <ListBox.ItemsPanel>
+                                            <ItemsPanelTemplate>
+                                                <WrapPanel ItemWidth="84" ItemHeight="30"/>
+                                            </ItemsPanelTemplate>
+                                        </ListBox.ItemsPanel>
+                                        <ListBoxItem Content="MÁY LẠNH"/>
+                                        <ListBoxItem Content="QUẠT"/>
+                                        <ListBoxItem Content="BƠM"/>
+                                    </ListBox>
+
+                                    <TextBox x:Name="TxtLoaiThietBiBoSungACMV"
+                                             Height="28"
+                                             FontSize="12"
+                                             Padding="4"
+                                             Margin="0,4,0,10"
+                                             ToolTip="Nhập thêm loại thiết bị rồi nhấn Enter"
+                                             KeyDown="TxtLoaiThietBiBoSung_KeyDown"/>
+
+                                    <!-- Panel Quạt / Bơm: list model thường -->
+                                    <StackPanel x:Name="PanelAcmvKhac" Visibility="Collapsed">
+                                        <TextBlock Text="Model / Kích thước (Kèm màu Layer):"
+                                                   FontWeight="Bold"
+                                                   Margin="0,0,0,5"
+                                                   Foreground="#FF333333"/>
+
+                                        <ListBox x:Name="LstSizeThietBiACMV"
+                                                 Height="160"
+                                                 FontSize="13"
+                                                 Margin="0,0,0,5"
+                                                 ScrollViewer.VerticalScrollBarVisibility="Auto"
+                                                 BorderBrush="#FFCCCCCC"
+                                                 KeyDown="LstSizeThietBi_KeyDown"
+                                                 HorizontalContentAlignment="Stretch">
+                                            <ListBox.ItemTemplate>
+                                                <DataTemplate>
+                                                    <Grid>
+                                                        <Grid.ColumnDefinitions>
+                                                            <ColumnDefinition Width="*"/>
+                                                            <ColumnDefinition Width="Auto"/>
+                                                        </Grid.ColumnDefinitions>
+                                                        <TextBlock Text="{Binding SizeName}" VerticalAlignment="Center"/>
+                                                        <Button Grid.Column="1"
+                                                                Width="20" Height="20"
+                                                                Background="{Binding LayerColorBrush}"
+                                                                Cursor="Hand"
+                                                                Click="BtnColorThietBi_Click"
+                                                                ToolTip="Kích để chọn lại màu Layer"
+                                                                BorderThickness="1"
+                                                                BorderBrush="Gray"
+                                                                Padding="0"/>
+                                                    </Grid>
+                                                </DataTemplate>
+                                            </ListBox.ItemTemplate>
+                                        </ListBox>
+
+                                        <TextBox x:Name="TxtCustomSizeThietBiACMV"
+                                                 Height="30"
+                                                 FontSize="13"
+                                                 Padding="4"
+                                                 ToolTip="Nhập model/kích thước rồi nhấn Enter"
+                                                 KeyDown="TxtCustomSizeThietBi_KeyDown"/>
+                                    </StackPanel>
+
+                                    <!-- Panel Quạt: 3 cột Loại / M3/h / Cột áp -->
+                                    <StackPanel x:Name="PanelQuat" Visibility="Collapsed">
+                                        <TextBlock Text="Chọn thông số quạt:"
+                                                   FontWeight="Bold"
+                                                   Margin="0,0,0,5"
+                                                   Foreground="#FF333333"/>
+
+                                        <Grid Margin="0,0,0,5">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="1.5*"/>
+                                                <ColumnDefinition Width="4"/>
+                                                <ColumnDefinition Width="0.75*"/>
+                                                <ColumnDefinition Width="4"/>
+                                                <ColumnDefinition Width="0.85*"/>
+                                            </Grid.ColumnDefinitions>
+
+                                            <!-- Cột 1: Loại quạt -->
+                                            <StackPanel Grid.Column="0">
+                                                <TextBlock Text="Loại quạt"
+                                                           FontSize="11"
+                                                           FontWeight="Bold"
+                                                           HorizontalAlignment="Center"
+                                                           Margin="0,0,0,3"/>
+                                                <ListBox x:Name="LstLoaiQuat"
+                                                         Height="150"
+                                                         FontSize="11"
+                                                         BorderBrush="#FFCCCCCC"
+                                                         SelectedIndex="0"
+                                                         ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                                                         KeyDown="LstQuatCot_KeyDown">
+                                                    <ListBoxItem Content="Gắn mái"/>
+                                                    <ListBoxItem Content="Hướng trục"/>
+                                                    <ListBoxItem Content="Ly tâm"/>
+                                                    <ListBoxItem Content="Ly tâm đặt sàn"/>
+                                                    <ListBoxItem Content="Gắn tường"/>
+                                                    <ListBoxItem Content="Gắn trần"/>
+                                                    <ListBoxItem Content="Quạt hộp"/>
+                                                </ListBox>
+                                                <TextBox x:Name="TxtLoaiQuatThem"
+                                                         Height="26"
+                                                         FontSize="11"
+                                                         Padding="3"
+                                                         Margin="0,3,0,0"
+                                                         ToolTip="Nhập loại quạt mới rồi Enter"
+                                                         KeyDown="TxtQuatCotThem_KeyDown"/>
+                                            </StackPanel>
+
+                                            <!-- Cột 2: Lưu lượng M3/h -->
+                                            <StackPanel Grid.Column="2">
+                                                <TextBlock Text="M³/h"
+                                                           FontSize="11"
+                                                           FontWeight="Bold"
+                                                           HorizontalAlignment="Center"
+                                                           Margin="0,0,0,3"/>
+                                                <ListBox x:Name="LstLuuLuongQuat"
+                                                         Height="150"
+                                                         FontSize="11"
+                                                         BorderBrush="#FFCCCCCC"
+                                                         SelectedIndex="0"
+                                                         ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                                                         KeyDown="LstQuatCot_KeyDown">
+                                                    <ListBoxItem Content="1020"/>
+                                                    <ListBoxItem Content="1500"/>
+                                                </ListBox>
+                                                <TextBox x:Name="TxtLuuLuongQuatThem"
+                                                         Height="26"
+                                                         FontSize="11"
+                                                         Padding="3"
+                                                         Margin="0,3,0,0"
+                                                         ToolTip="Nhập lưu lượng M³/h mới rồi Enter"
+                                                         KeyDown="TxtQuatCotThem_KeyDown"/>
+                                            </StackPanel>
+
+                                            <!-- Cột 3: Cột áp -->
+                                            <StackPanel Grid.Column="4">
+                                                <TextBlock Text="Cột áp"
+                                                           FontSize="11"
+                                                           FontWeight="Bold"
+                                                           HorizontalAlignment="Center"
+                                                           Margin="0,0,0,3"/>
+                                                <ListBox x:Name="LstCotApQuat"
+                                                         Height="150"
+                                                         FontSize="11"
+                                                         BorderBrush="#FFCCCCCC"
+                                                         SelectedIndex="0"
+                                                         ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                                                         ScrollViewer.VerticalScrollBarVisibility="Auto"
+                                                         KeyDown="LstQuatCot_KeyDown">
+                                                    <ListBoxItem Content="50Pa"/>
+                                                    <ListBoxItem Content="70Pa"/>
+                                                    <ListBoxItem Content="100Pa"/>
+                                                    <ListBoxItem Content="150Pa"/>
+                                                    <ListBoxItem Content="200Pa"/>
+                                                    <ListBoxItem Content="250Pa"/>
+                                                    <ListBoxItem Content="300Pa"/>
+                                                    <ListBoxItem Content="350Pa"/>
+                                                    <ListBoxItem Content="400Pa"/>
+                                                    <ListBoxItem Content="450Pa"/>
+                                                    <ListBoxItem Content="500Pa"/>
+                                                    <ListBoxItem Content="550Pa"/>
+                                                    <ListBoxItem Content="600Pa"/>
+                                                    <ListBoxItem Content="650Pa"/>
+                                                    <ListBoxItem Content="700Pa"/>
+                                                    <ListBoxItem Content="750Pa"/>
+                                                    <ListBoxItem Content="800Pa"/>
+                                                    <ListBoxItem Content="850Pa"/>
+                                                    <ListBoxItem Content="900Pa"/>
+                                                    <ListBoxItem Content="950Pa"/>
+                                                </ListBox>
+                                                <TextBox x:Name="TxtCotApQuatThem"
+                                                         Height="26"
+                                                         FontSize="11"
+                                                         Padding="3"
+                                                         Margin="0,3,0,0"
+                                                         ToolTip="Nhập cột áp mới rồi Enter"
+                                                         KeyDown="TxtQuatCotThem_KeyDown"/>
+                                            </StackPanel>
+                                        </Grid>
+                                    </StackPanel>
+
+                                    <!-- Panel Máy lạnh: 3 cột Loại / HP / KW -->
+                                    <StackPanel x:Name="PanelMayLanh" Visibility="Collapsed">
+                                        <TextBlock Text="Chọn thông số máy lạnh:"
+                                                   FontWeight="Bold"
+                                                   Margin="0,0,0,5"
+                                                   Foreground="#FF333333"/>
+
+                                        <Grid Margin="0,0,0,5">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="1.4*"/>
+                                                <ColumnDefinition Width="4"/>
+                                                <ColumnDefinition Width="0.8*"/>
+                                                <ColumnDefinition Width="4"/>
+                                                <ColumnDefinition Width="0.8*"/>
+                                            </Grid.ColumnDefinitions>
+
+                                            <!-- Cột 1: Loại máy -->
+                                            <StackPanel Grid.Column="0">
+                                                <TextBlock Text="Loại máy"
+                                                           FontSize="11"
+                                                           FontWeight="Bold"
+                                                           HorizontalAlignment="Center"
+                                                           Margin="0,0,0,3"/>
+                                                <ListBox x:Name="LstLoaiMayLanh"
+                                                         Height="150"
+                                                         FontSize="11"
+                                                         BorderBrush="#FFCCCCCC"
+                                                         SelectedIndex="0"
+                                                         ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                                                         KeyDown="LstMayLanhCot_KeyDown">
+                                                    <ListBoxItem Content="Cassette"/>
+                                                    <ListBoxItem Content="Gắn tường"/>
+                                                    <ListBoxItem Content="Âm trần NOG"/>
+                                                    <ListBoxItem Content="Áp trần"/>
+                                                    <ListBoxItem Content="Dàn nóng"/>
+                                                </ListBox>
+                                                <TextBox x:Name="TxtLoaiMayLanhThem"
+                                                         Height="26"
+                                                         FontSize="11"
+                                                         Padding="3"
+                                                         Margin="0,3,0,0"
+                                                         ToolTip="Nhập loại máy mới rồi Enter"
+                                                         KeyDown="TxtMayLanhCotThem_KeyDown"/>
+                                            </StackPanel>
+
+                                            <!-- Cột 2: HP -->
+                                            <StackPanel Grid.Column="2">
+                                                <StackPanel Orientation="Horizontal"
+                                                            HorizontalAlignment="Center"
+                                                            Margin="0,0,0,3">
+                                                    <CheckBox x:Name="ChkDonViHP"
+                                                              IsChecked="True"
+                                                              VerticalAlignment="Center"
+                                                              Margin="0,0,4,0"
+                                                              Checked="ChkDonViMayLanh_Checked"
+                                                              Unchecked="ChkDonViMayLanh_Unchecked"/>
+                                                    <TextBlock Text="HP"
+                                                               FontSize="11"
+                                                               FontWeight="Bold"
+                                                               VerticalAlignment="Center"/>
+                                                </StackPanel>
+                                                <ListBox x:Name="LstCongSuatHP"
+                                                         Height="150"
+                                                         FontSize="11"
+                                                         BorderBrush="#FFCCCCCC"
+                                                         SelectedIndex="0"
+                                                         ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                                                         KeyDown="LstMayLanhCot_KeyDown">
+                                                    <ListBoxItem Content="1 HP"/>
+                                                    <ListBoxItem Content="1.5 HP"/>
+                                                    <ListBoxItem Content="2 HP"/>
+                                                    <ListBoxItem Content="2.5 HP"/>
+                                                    <ListBoxItem Content="3 HP"/>
+                                                    <ListBoxItem Content="3.5 HP"/>
+                                                    <ListBoxItem Content="4 HP"/>
+                                                </ListBox>
+                                                <TextBox x:Name="TxtCongSuatHPThem"
+                                                         Height="26"
+                                                         FontSize="11"
+                                                         Padding="3"
+                                                         Margin="0,3,0,0"
+                                                         ToolTip="Nhập công suất HP mới rồi Enter"
+                                                         KeyDown="TxtMayLanhCotThem_KeyDown"/>
+                                            </StackPanel>
+
+                                            <!-- Cột 3: KW -->
+                                            <StackPanel Grid.Column="4">
+                                                <StackPanel Orientation="Horizontal"
+                                                            HorizontalAlignment="Center"
+                                                            Margin="0,0,0,3">
+                                                    <CheckBox x:Name="ChkDonViKW"
+                                                              IsChecked="False"
+                                                              VerticalAlignment="Center"
+                                                              Margin="0,0,4,0"
+                                                              Checked="ChkDonViMayLanh_Checked"
+                                                              Unchecked="ChkDonViMayLanh_Unchecked"/>
+                                                    <TextBlock Text="KW"
+                                                               FontSize="11"
+                                                               FontWeight="Bold"
+                                                               VerticalAlignment="Center"/>
+                                                </StackPanel>
+                                                <ListBox x:Name="LstCongSuatKW"
+                                                         Height="150"
+                                                         FontSize="11"
+                                                         BorderBrush="#FFCCCCCC"
+                                                         SelectedIndex="0"
+                                                         ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                                                         Opacity="0.45"
+                                                         IsEnabled="False"
+                                                         KeyDown="LstMayLanhCot_KeyDown">
+                                                    <ListBoxItem Content="2.6 KW"/>
+                                                    <ListBoxItem Content="3.5 KW"/>
+                                                    <ListBoxItem Content="5.2 KW"/>
+                                                    <ListBoxItem Content="7.03 KW"/>
+                                                    <ListBoxItem Content="8.8 KW"/>
+                                                    <ListBoxItem Content="10.5 KW"/>
+                                                    <ListBoxItem Content="13 KW"/>
+                                                    <ListBoxItem Content="14 KW"/>
+                                                    <ListBoxItem Content="15 KW"/>
+                                                </ListBox>
+                                                <TextBox x:Name="TxtCongSuatKWThem"
+                                                         Height="26"
+                                                         FontSize="11"
+                                                         Padding="3"
+                                                         Margin="0,3,0,0"
+                                                         IsEnabled="False"
+                                                         Opacity="0.45"
+                                                         ToolTip="Nhập công suất KW mới rồi Enter"
+                                                         KeyDown="TxtMayLanhCotThem_KeyDown"/>
+                                            </StackPanel>
+                                        </Grid>
+                                    </StackPanel>
+
+                                    <Button x:Name="BtnDatThietBiACMV"
+                                            Content="ĐẶT THIẾT BỊ"
+                                            Height="40"
+                                            FontSize="15"
+                                            FontWeight="Bold"
+                                            Background="#FF0078D7"
+                                            Foreground="White"
+                                            Margin="0,12,0,0"
+                                            Cursor="Hand"
+                                            Click="BtnDatThietBi_Click"/>
                                 </StackPanel>
                             </Grid>
 
@@ -760,14 +1535,95 @@
                                     </Style>
                                 </Grid.Style>
 
-                                <StackPanel>
-                                    <TextBlock Text="VAN CTN"
+                                <StackPanel Orientation="Vertical">
+                                    <TextBlock Text="Chọn loại van:"
                                                FontWeight="Bold"
-                                               FontSize="14"
-                                               Foreground="#FF0078D7"
-                                               Margin="0,0,0,10"/>
-                                    <TextBlock Text="Bạn xây dựng nội dung riêng của tab VAN tại đây."
-                                               Foreground="Gray"/>
+                                               Margin="0,0,0,5"
+                                               Foreground="#FF333333"/>
+
+                                    <ListBox x:Name="LstLoaiVanCTN"
+                                             MinHeight="66"
+                                             FontSize="9.5"
+                                             BorderThickness="0"
+                                             SelectedIndex="0"
+                                             ScrollViewer.VerticalScrollBarVisibility="Disabled"
+                                             ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                                             ItemContainerStyle="{StaticResource VatLieuItemStyle}"
+                                             SelectionChanged="LstLoaiVan_SelectionChanged"
+                                             KeyDown="LstLoaiVan_KeyDown">
+                                        <ListBox.ItemsPanel>
+                                            <ItemsPanelTemplate>
+                                                <WrapPanel ItemWidth="84" ItemHeight="30"/>
+                                            </ItemsPanelTemplate>
+                                        </ListBox.ItemsPanel>
+                                        <ListBoxItem Content="V.CỔNG TN"/>
+                                        <ListBoxItem Content="V.CỔNG TC"/>
+                                        <ListBoxItem Content="VAN 1C"/>
+                                        <ListBoxItem Content="V.CỔNG ĐIỆN"/>
+                                        <ListBoxItem Content="Y LỌC"/>
+                                        <ListBoxItem Content="KNM"/>
+                                    </ListBox>
+
+                                    <TextBox x:Name="TxtLoaiVanBoSungCTN"
+                                             Height="28"
+                                             FontSize="12"
+                                             Padding="4"
+                                             Margin="0,4,0,10"
+                                             ToolTip="Nhập thêm loại van rồi nhấn Enter"
+                                             KeyDown="TxtLoaiVanBoSung_KeyDown"/>
+
+                                    <TextBlock Text="Kích thước van (Kèm màu Layer):"
+                                               FontWeight="Bold"
+                                               Margin="0,0,0,5"
+                                               Foreground="#FF333333"/>
+
+                                    <ListBox x:Name="LstSizeVanCTN"
+                                             Height="140"
+                                             FontSize="13"
+                                             Margin="0,0,0,5"
+                                             ScrollViewer.VerticalScrollBarVisibility="Auto"
+                                             BorderBrush="#FFCCCCCC"
+                                             KeyDown="LstSizeVan_KeyDown"
+                                             HorizontalContentAlignment="Stretch">
+                                        <ListBox.ItemTemplate>
+                                            <DataTemplate>
+                                                <Grid>
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="*"/>
+                                                        <ColumnDefinition Width="Auto"/>
+                                                    </Grid.ColumnDefinitions>
+                                                    <TextBlock Text="{Binding SizeName}" VerticalAlignment="Center"/>
+                                                    <Button Grid.Column="1"
+                                                            Width="20" Height="20"
+                                                            Background="{Binding LayerColorBrush}"
+                                                            Cursor="Hand"
+                                                            Click="BtnColorVan_Click"
+                                                            ToolTip="Kích để chọn lại màu Layer"
+                                                            BorderThickness="1"
+                                                            BorderBrush="Gray"
+                                                            Padding="0"/>
+                                                </Grid>
+                                            </DataTemplate>
+                                        </ListBox.ItemTemplate>
+                                    </ListBox>
+
+                                    <TextBox x:Name="TxtCustomSizeVanCTN"
+                                             Height="30"
+                                             FontSize="13"
+                                             Padding="4"
+                                             ToolTip="Nhập kích thước rồi nhấn Enter"
+                                             KeyDown="TxtCustomSizeVan_KeyDown"/>
+
+                                    <Button x:Name="BtnDatVanCTN"
+                                            Content="ĐẶT VAN"
+                                            Height="40"
+                                            FontSize="15"
+                                            FontWeight="Bold"
+                                            Background="#FF0078D7"
+                                            Foreground="White"
+                                            Margin="0,12,0,0"
+                                            Cursor="Hand"
+                                            Click="BtnDatVan_Click"/>
                                 </StackPanel>
                             </Grid>
 
@@ -783,14 +1639,92 @@
                                     </Style>
                                 </Grid.Style>
 
-                                <StackPanel>
-                                    <TextBlock Text="THIẾT BỊ CTN"
+                                <StackPanel Orientation="Vertical">
+                                    <TextBlock Text="Chọn thiết bị:"
                                                FontWeight="Bold"
-                                               FontSize="14"
-                                               Foreground="#FF0078D7"
-                                               Margin="0,0,0,10"/>
-                                    <TextBlock Text="Bạn xây dựng nội dung riêng của tab THIẾT BỊ tại đây."
-                                               Foreground="Gray"/>
+                                               Margin="0,0,0,5"
+                                               Foreground="#FF333333"/>
+
+                                    <ListBox x:Name="LstLoaiThietBiCTN"
+                                             MinHeight="36"
+                                             FontSize="9.5"
+                                             BorderThickness="0"
+                                             SelectedIndex="0"
+                                             ScrollViewer.VerticalScrollBarVisibility="Disabled"
+                                             ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                                             ItemContainerStyle="{StaticResource VatLieuItemStyle}"
+                                             SelectionChanged="LstLoaiThietBi_SelectionChanged"
+                                             KeyDown="LstLoaiThietBi_KeyDown">
+                                        <ListBox.ItemsPanel>
+                                            <ItemsPanelTemplate>
+                                                <WrapPanel ItemWidth="84" ItemHeight="30"/>
+                                            </ItemsPanelTemplate>
+                                        </ListBox.ItemsPanel>
+                                        <ListBoxItem Content="ĐỒNG HỒ"/>
+                                        <ListBoxItem Content="BƠM"/>
+                                        <ListBoxItem Content="BỒN"/>
+                                    </ListBox>
+
+                                    <TextBox x:Name="TxtLoaiThietBiBoSungCTN"
+                                             Height="28"
+                                             FontSize="12"
+                                             Padding="4"
+                                             Margin="0,4,0,10"
+                                             ToolTip="Nhập thêm loại thiết bị rồi nhấn Enter"
+                                             KeyDown="TxtLoaiThietBiBoSung_KeyDown"/>
+
+                                    <TextBlock Text="Model / Kích thước (Kèm màu Layer):"
+                                               FontWeight="Bold"
+                                               Margin="0,0,0,5"
+                                               Foreground="#FF333333"/>
+
+                                    <ListBox x:Name="LstSizeThietBiCTN"
+                                             Height="160"
+                                             FontSize="13"
+                                             Margin="0,0,0,5"
+                                             ScrollViewer.VerticalScrollBarVisibility="Auto"
+                                             BorderBrush="#FFCCCCCC"
+                                             KeyDown="LstSizeThietBi_KeyDown"
+                                             HorizontalContentAlignment="Stretch">
+                                        <ListBox.ItemTemplate>
+                                            <DataTemplate>
+                                                <Grid>
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="*"/>
+                                                        <ColumnDefinition Width="Auto"/>
+                                                    </Grid.ColumnDefinitions>
+                                                    <TextBlock Text="{Binding SizeName}" VerticalAlignment="Center"/>
+                                                    <Button Grid.Column="1"
+                                                            Width="20" Height="20"
+                                                            Background="{Binding LayerColorBrush}"
+                                                            Cursor="Hand"
+                                                            Click="BtnColorThietBi_Click"
+                                                            ToolTip="Kích để chọn lại màu Layer"
+                                                            BorderThickness="1"
+                                                            BorderBrush="Gray"
+                                                            Padding="0"/>
+                                                </Grid>
+                                            </DataTemplate>
+                                        </ListBox.ItemTemplate>
+                                    </ListBox>
+
+                                    <TextBox x:Name="TxtCustomSizeThietBiCTN"
+                                             Height="30"
+                                             FontSize="13"
+                                             Padding="4"
+                                             ToolTip="Nhập model/kích thước rồi nhấn Enter"
+                                             KeyDown="TxtCustomSizeThietBi_KeyDown"/>
+
+                                    <Button x:Name="BtnDatThietBiCTN"
+                                            Content="ĐẶT THIẾT BỊ"
+                                            Height="40"
+                                            FontSize="15"
+                                            FontWeight="Bold"
+                                            Background="#FF0078D7"
+                                            Foreground="White"
+                                            Margin="0,12,0,0"
+                                            Cursor="Hand"
+                                            Click="BtnDatThietBi_Click"/>
                                 </StackPanel>
                             </Grid>
 

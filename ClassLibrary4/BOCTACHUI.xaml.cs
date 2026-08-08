@@ -98,9 +98,35 @@ namespace ClassLibrary4
         private readonly ObservableCollection<PipeSizeItem> _pipeSizesCTN =
             new ObservableCollection<PipeSizeItem>();
 
+        private readonly ObservableCollection<PipeSizeItem> _valveSizesFF =
+            new ObservableCollection<PipeSizeItem>();
+
+        private readonly ObservableCollection<PipeSizeItem> _valveSizesACMV =
+            new ObservableCollection<PipeSizeItem>();
+
+        private readonly ObservableCollection<PipeSizeItem> _valveSizesCTN =
+            new ObservableCollection<PipeSizeItem>();
+
+        private readonly ObservableCollection<PipeSizeItem> _equipSizesFF =
+            new ObservableCollection<PipeSizeItem>();
+
+        private readonly ObservableCollection<PipeSizeItem> _equipSizesACMV =
+            new ObservableCollection<PipeSizeItem>();
+
+        private readonly ObservableCollection<PipeSizeItem> _equipSizesCTN =
+            new ObservableCollection<PipeSizeItem>();
+
         private PipeUiContext _ctxFF;
         private PipeUiContext _ctxACMV;
         private PipeUiContext _ctxCTN;
+
+        private ValveUiContext _valveCtxFF;
+        private ValveUiContext _valveCtxACMV;
+        private ValveUiContext _valveCtxCTN;
+
+        private EquipUiContext _equipCtxFF;
+        private EquipUiContext _equipCtxACMV;
+        private EquipUiContext _equipCtxCTN;
 
         private bool _isWaitingForPline = false;
         private Document _plineWatcherDocument;
@@ -119,6 +145,8 @@ namespace ClassLibrary4
         {
             InitializeComponent();
             KhoiTaoTatCaTabOng();
+            KhoiTaoTatCaTabVan();
+            KhoiTaoTatCaTabThietBi();
         }
 
         private WpfComboBox TimComboBox(string name)
@@ -180,6 +208,1068 @@ namespace ClassLibrary4
             KhoiTaoContext(_ctxFF);
             KhoiTaoContext(_ctxACMV);
             KhoiTaoContext(_ctxCTN);
+        }
+
+        private void KhoiTaoTatCaTabVan()
+        {
+            _valveCtxFF = new ValveUiContext
+            {
+                Suffix = "",
+                HeThongMacDinh = "Chữa cháy _ FF",
+                CmbHeThong = TimComboBox("CmbHeThong"),
+                LstLoaiVan = TimListBox("LstLoaiVan"),
+                TxtLoaiVanThem = TimTextBox("TxtLoaiVanBoSung"),
+                LstSize = TimListBox("LstSizeVan"),
+                TxtSizeThem = TimTextBox("TxtCustomSizeVan"),
+                Sizes = _valveSizesFF
+            };
+
+            _valveCtxACMV = new ValveUiContext
+            {
+                Suffix = "ACMV",
+                HeThongMacDinh = "ACMV _ ACMV",
+                CmbHeThong = TimComboBox("CmbHeThongACMV"),
+                LstLoaiVan = TimListBox("LstLoaiVanACMV"),
+                TxtLoaiVanThem = TimTextBox("TxtLoaiVanBoSungACMV"),
+                LstSize = TimListBox("LstSizeVanACMV"),
+                TxtSizeThem = TimTextBox("TxtCustomSizeVanACMV"),
+                Sizes = _valveSizesACMV
+            };
+
+            _valveCtxCTN = new ValveUiContext
+            {
+                Suffix = "CTN",
+                HeThongMacDinh = "CTN _ CTN",
+                CmbHeThong = TimComboBox("CmbHeThongCTN"),
+                LstLoaiVan = TimListBox("LstLoaiVanCTN"),
+                TxtLoaiVanThem = TimTextBox("TxtLoaiVanBoSungCTN"),
+                LstSize = TimListBox("LstSizeVanCTN"),
+                TxtSizeThem = TimTextBox("TxtCustomSizeVanCTN"),
+                Sizes = _valveSizesCTN
+            };
+
+            KhoiTaoValveContext(_valveCtxFF);
+            KhoiTaoValveContext(_valveCtxACMV);
+            KhoiTaoValveContext(_valveCtxCTN);
+        }
+
+        private void KhoiTaoTatCaTabThietBi()
+        {
+            _equipCtxFF = new EquipUiContext
+            {
+                Suffix = "",
+                HeThongMacDinh = "Chữa cháy _ FF",
+                CmbHeThong = TimComboBox("CmbHeThong"),
+                LstLoai = TimListBox("LstLoaiThietBi"),
+                TxtLoaiThem = TimTextBox("TxtLoaiThietBiBoSung"),
+                LstSize = TimListBox("LstSizeThietBi"),
+                TxtSizeThem = TimTextBox("TxtCustomSizeThietBi"),
+                Sizes = _equipSizesFF
+            };
+
+            _equipCtxACMV = new EquipUiContext
+            {
+                Suffix = "ACMV",
+                HeThongMacDinh = "ACMV _ ACMV",
+                CmbHeThong = TimComboBox("CmbHeThongACMV"),
+                LstLoai = TimListBox("LstLoaiThietBiACMV"),
+                TxtLoaiThem = TimTextBox("TxtLoaiThietBiBoSungACMV"),
+                LstSize = TimListBox("LstSizeThietBiACMV"),
+                TxtSizeThem = TimTextBox("TxtCustomSizeThietBiACMV"),
+                Sizes = _equipSizesACMV
+            };
+
+            _equipCtxCTN = new EquipUiContext
+            {
+                Suffix = "CTN",
+                HeThongMacDinh = "CTN _ CTN",
+                CmbHeThong = TimComboBox("CmbHeThongCTN"),
+                LstLoai = TimListBox("LstLoaiThietBiCTN"),
+                TxtLoaiThem = TimTextBox("TxtLoaiThietBiBoSungCTN"),
+                LstSize = TimListBox("LstSizeThietBiCTN"),
+                TxtSizeThem = TimTextBox("TxtCustomSizeThietBiCTN"),
+                Sizes = _equipSizesCTN
+            };
+
+            KhoiTaoEquipContext(_equipCtxFF);
+            KhoiTaoEquipContext(_equipCtxACMV);
+            KhoiTaoEquipContext(_equipCtxCTN);
+        }
+
+        private void KhoiTaoEquipContext(EquipUiContext ctx)
+        {
+            if (ctx == null)
+                return;
+
+            if (ctx.LstLoai != null &&
+                ctx.LstLoai.SelectedIndex < 0 &&
+                ctx.LstLoai.Items.Count > 0)
+            {
+                ctx.LstLoai.SelectedIndex = 0;
+            }
+
+            if (ctx.LstSize != null)
+                ctx.LstSize.ItemsSource = ctx.Sizes;
+
+            CapNhatModelTheoLoaiThietBi(ctx);
+            CapNhatHienThiPanelThietBiFF(ctx);
+            CapNhatHienThiPanelMayLanhACMV(ctx);
+        }
+
+        private void CapNhatModelTheoLoaiThietBi(EquipUiContext ctx)
+        {
+            if (ctx == null)
+                return;
+
+            string loai = GetSelectedEquipTypeName(ctx);
+            List<string> models = new List<string>();
+
+            string key = (loai ?? "").Trim().ToUpperInvariant();
+
+            if (ctx.Suffix == "ACMV")
+            {
+                if (key.Contains("MÁY LẠNH") || key.Contains("MAY LANH"))
+                {
+                    // Máy lạnh dùng panel 3 cột — không cần list model
+                    models.Clear();
+                }
+                else if (key.Contains("QUẠT") || key.Contains("QUAT"))
+                {
+                    // Quạt dùng panel 3 cột — không cần list model
+                    models.Clear();
+                }
+                else if (key.Contains("BƠM") || key.Contains("BOM"))
+                {
+                    models.AddRange(new[]
+                    {
+                        "Bơm ly tâm",
+                        "Bơm trục đứng",
+                        "Bơm tăng áp"
+                    });
+                }
+                else
+                {
+                    models.Add("Model 1");
+                }
+            }
+            else if (ctx.Suffix == "CTN")
+            {
+                if (key.Contains("ĐỒNG HỒ") || key.Contains("DONG HO"))
+                {
+                    models.AddRange(new[] { "DN15", "DN20", "DN25", "DN32", "DN40", "DN50" });
+                }
+                else if (key.Contains("BƠM") || key.Contains("BOM"))
+                {
+                    models.AddRange(new[] { "Bơm tăng áp", "Bơm tuần hoàn" });
+                }
+                else if (key.Contains("BỒN") || key.Contains("BON"))
+                {
+                    models.AddRange(new[] { "Bồn inox 500L", "Bồn inox 1000L", "Bồn composite" });
+                }
+                else
+                {
+                    models.Add("Model 1");
+                }
+            }
+            else
+            {
+                // Chữa cháy FF
+                if (key.Contains("ĐẦU PHUN") ||
+                    key.Contains("DAU PHUN") ||
+                    key.Contains("PHUN"))
+                {
+                    // Đầu phun dùng panel 3 cột — không cần list model
+                    models.Clear();
+                }
+                else if (key.Contains("BÌNH") ||
+                         key.Contains("BINH") ||
+                         key.Contains("CC"))
+                {
+                    models.AddRange(new[]
+                    {
+                        "ABC 4KG",
+                        "ABC 6KG",
+                        "ABC 8KG",
+                        "ABC 9KG",
+                        "CO2 3KG",
+                        "CO2 5KG",
+                        "ABC TREO 6KG",
+                        "ABC TREO 8KG"
+                    });
+                }
+                else
+                {
+                    models.Add("Model 1");
+                }
+            }
+
+            CapNhatVaSapXepDanhSachSizeEquip(ctx, models);
+            CapNhatHienThiPanelThietBiFF(ctx);
+            CapNhatHienThiPanelMayLanhACMV(ctx);
+        }
+
+        private void CapNhatHienThiPanelMayLanhACMV(EquipUiContext ctx)
+        {
+            if (ctx == null || ctx.Suffix != "ACMV")
+                return;
+
+            var panelMayLanh =
+                FindName("PanelMayLanh") as System.Windows.UIElement;
+            var panelQuat =
+                FindName("PanelQuat") as System.Windows.UIElement;
+            var panelKhac =
+                FindName("PanelAcmvKhac") as System.Windows.UIElement;
+
+            if (panelMayLanh == null || panelKhac == null)
+                return;
+
+            string loai = GetSelectedEquipTypeName(ctx).ToUpperInvariant();
+            bool isMayLanh =
+                loai.Contains("MÁY LẠNH") || loai.Contains("MAY LANH");
+            bool isQuat =
+                loai.Contains("QUẠT") || loai.Contains("QUAT");
+
+            panelMayLanh.Visibility = isMayLanh
+                ? System.Windows.Visibility.Visible
+                : System.Windows.Visibility.Collapsed;
+
+            if (panelQuat != null)
+            {
+                panelQuat.Visibility = isQuat
+                    ? System.Windows.Visibility.Visible
+                    : System.Windows.Visibility.Collapsed;
+            }
+
+            // Panel list thường chỉ hiện khi không phải Máy lạnh / Quạt (vd: Bơm)
+            panelKhac.Visibility = (!isMayLanh && !isQuat)
+                ? System.Windows.Visibility.Visible
+                : System.Windows.Visibility.Collapsed;
+        }
+
+        private string BuildQuatModelText()
+        {
+            string loaiQuat = "Gắn mái";
+            string luuLuong = "1020";
+            string cotAp = "50Pa";
+
+            var lstLoai = TimListBox("LstLoaiQuat");
+            var lstLuuLuong = TimListBox("LstLuuLuongQuat");
+            var lstCotAp = TimListBox("LstCotApQuat");
+
+            if (lstLoai?.SelectedItem != null)
+                loaiQuat = LayNoiDungItem(lstLoai.SelectedItem);
+
+            if (lstLuuLuong?.SelectedItem != null)
+                luuLuong = LayNoiDungItem(lstLuuLuong.SelectedItem);
+
+            if (lstCotAp?.SelectedItem != null)
+                cotAp = LayNoiDungItem(lstCotAp.SelectedItem);
+
+            // Chuẩn hóa đơn vị hiển thị
+            if (!luuLuong.ToUpperInvariant().Contains("M3") &&
+                !luuLuong.Contains("m³") &&
+                !luuLuong.ToUpperInvariant().Contains("M³"))
+            {
+                luuLuong = $"{luuLuong} m³/h";
+            }
+
+            return $"{loaiQuat} {luuLuong} {cotAp}";
+        }
+
+        private void TxtQuatCotThem_KeyDown(
+            object sender,
+            WpfKeyEventArgs e)
+        {
+            if (e.Key != WpfKey.Enter)
+                return;
+
+            WpfTextBox txt = sender as WpfTextBox;
+            if (txt == null)
+                return;
+
+            string value = (txt.Text ?? "").Trim();
+            if (string.IsNullOrWhiteSpace(value))
+                return;
+
+            string listName = null;
+            string name = txt.Name ?? "";
+
+            if (name.Contains("LoaiQuat"))
+                listName = "LstLoaiQuat";
+            else if (name.Contains("LuuLuong"))
+                listName = "LstLuuLuongQuat";
+            else if (name.Contains("CotAp"))
+                listName = "LstCotApQuat";
+
+            if (listName == null)
+                return;
+
+            WpfListBox lst = TimListBox(listName);
+            if (lst == null)
+                return;
+
+            bool existed =
+                lst.Items
+                    .Cast<object>()
+                    .Any(x => LayNoiDungItem(x).Equals(
+                        value,
+                        StringComparison.OrdinalIgnoreCase));
+
+            if (!existed)
+            {
+                lst.Items.Add(
+                    new WpfListBoxItem
+                    {
+                        Content = value
+                    });
+            }
+
+            foreach (object item in lst.Items)
+            {
+                if (LayNoiDungItem(item).Equals(
+                    value,
+                    StringComparison.OrdinalIgnoreCase))
+                {
+                    lst.SelectedItem = item;
+                    lst.ScrollIntoView(item);
+                    break;
+                }
+            }
+
+            txt.Text = "";
+            e.Handled = true;
+        }
+
+        private void LstQuatCot_KeyDown(
+            object sender,
+            WpfKeyEventArgs e)
+        {
+            if (e.Key != WpfKey.Delete)
+                return;
+
+            WpfListBox lst = sender as WpfListBox;
+            if (lst?.SelectedItem == null)
+                return;
+
+            if (lst.Items.Count <= 1)
+                return;
+
+            object selected = lst.SelectedItem;
+            lst.Items.Remove(selected);
+
+            if (lst.Items.Count > 0)
+                lst.SelectedIndex = 0;
+
+            e.Handled = true;
+        }
+
+        private bool _updatingDonViMayLanh = false;
+
+        private void ChkDonViMayLanh_Checked(
+            object sender,
+            RoutedEventArgs e)
+        {
+            if (_updatingDonViMayLanh)
+                return;
+
+            _updatingDonViMayLanh = true;
+
+            try
+            {
+                var chkHP =
+                    FindName("ChkDonViHP") as System.Windows.Controls.CheckBox;
+                var chkKW =
+                    FindName("ChkDonViKW") as System.Windows.Controls.CheckBox;
+                var lstHP = TimListBox("LstCongSuatHP");
+                var lstKW = TimListBox("LstCongSuatKW");
+                var txtHP = TimTextBox("TxtCongSuatHPThem");
+                var txtKW = TimTextBox("TxtCongSuatKWThem");
+
+                bool useHP = sender == chkHP;
+
+                if (chkHP != null)
+                    chkHP.IsChecked = useHP;
+                if (chkKW != null)
+                    chkKW.IsChecked = !useHP;
+
+                SetMayLanhCapacityEnabled(lstHP, txtHP, useHP);
+                SetMayLanhCapacityEnabled(lstKW, txtKW, !useHP);
+            }
+            finally
+            {
+                _updatingDonViMayLanh = false;
+            }
+        }
+
+        private void ChkDonViMayLanh_Unchecked(
+            object sender,
+            RoutedEventArgs e)
+        {
+            if (_updatingDonViMayLanh)
+                return;
+
+            // Không cho bỏ tích cả hai — nếu uncheck thì bật cái còn lại
+            _updatingDonViMayLanh = true;
+
+            try
+            {
+                var chkHP =
+                    FindName("ChkDonViHP") as System.Windows.Controls.CheckBox;
+                var chkKW =
+                    FindName("ChkDonViKW") as System.Windows.Controls.CheckBox;
+
+                if (sender == chkHP && chkKW != null)
+                {
+                    chkKW.IsChecked = true;
+                    ChkDonViMayLanh_Checked(chkKW, e);
+                }
+                else if (sender == chkKW && chkHP != null)
+                {
+                    chkHP.IsChecked = true;
+                    ChkDonViMayLanh_Checked(chkHP, e);
+                }
+            }
+            finally
+            {
+                _updatingDonViMayLanh = false;
+            }
+        }
+
+        private void SetMayLanhCapacityEnabled(
+            WpfListBox list,
+            WpfTextBox textBox,
+            bool enabled)
+        {
+            if (list != null)
+            {
+                list.IsEnabled = enabled;
+                list.Opacity = enabled ? 1.0 : 0.45;
+            }
+
+            if (textBox != null)
+            {
+                textBox.IsEnabled = enabled;
+                textBox.Opacity = enabled ? 1.0 : 0.45;
+            }
+        }
+
+        private string BuildMayLanhModelText()
+        {
+            string loaiMay = "Cassette";
+            string congSuat = "1 HP";
+
+            var lstLoai = TimListBox("LstLoaiMayLanh");
+            var lstHP = TimListBox("LstCongSuatHP");
+            var lstKW = TimListBox("LstCongSuatKW");
+            var chkHP =
+                FindName("ChkDonViHP") as System.Windows.Controls.CheckBox;
+
+            if (lstLoai?.SelectedItem != null)
+                loaiMay = LayNoiDungItem(lstLoai.SelectedItem);
+
+            bool useHP = chkHP?.IsChecked == true;
+
+            if (useHP)
+            {
+                if (lstHP?.SelectedItem != null)
+                    congSuat = LayNoiDungItem(lstHP.SelectedItem);
+            }
+            else
+            {
+                if (lstKW?.SelectedItem != null)
+                    congSuat = LayNoiDungItem(lstKW.SelectedItem);
+            }
+
+            return $"{loaiMay} {congSuat}";
+        }
+
+        private void TxtMayLanhCotThem_KeyDown(
+            object sender,
+            WpfKeyEventArgs e)
+        {
+            if (e.Key != WpfKey.Enter)
+                return;
+
+            WpfTextBox txt = sender as WpfTextBox;
+            if (txt == null)
+                return;
+
+            string value = (txt.Text ?? "").Trim();
+            if (string.IsNullOrWhiteSpace(value))
+                return;
+
+            string listName = null;
+            string name = txt.Name ?? "";
+
+            if (name.Contains("LoaiMayLanh"))
+                listName = "LstLoaiMayLanh";
+            else if (name.Contains("HP"))
+                listName = "LstCongSuatHP";
+            else if (name.Contains("KW"))
+                listName = "LstCongSuatKW";
+
+            if (listName == null)
+                return;
+
+            WpfListBox lst = TimListBox(listName);
+            if (lst == null)
+                return;
+
+            bool existed =
+                lst.Items
+                    .Cast<object>()
+                    .Any(x => LayNoiDungItem(x).Equals(
+                        value,
+                        StringComparison.OrdinalIgnoreCase));
+
+            if (!existed)
+            {
+                lst.Items.Add(
+                    new WpfListBoxItem
+                    {
+                        Content = value
+                    });
+            }
+
+            foreach (object item in lst.Items)
+            {
+                if (LayNoiDungItem(item).Equals(
+                    value,
+                    StringComparison.OrdinalIgnoreCase))
+                {
+                    lst.SelectedItem = item;
+                    lst.ScrollIntoView(item);
+                    break;
+                }
+            }
+
+            txt.Text = "";
+            e.Handled = true;
+        }
+
+        private void LstMayLanhCot_KeyDown(
+            object sender,
+            WpfKeyEventArgs e)
+        {
+            if (e.Key != WpfKey.Delete)
+                return;
+
+            WpfListBox lst = sender as WpfListBox;
+            if (lst?.SelectedItem == null)
+                return;
+
+            if (lst.Items.Count <= 1)
+                return;
+
+            object selected = lst.SelectedItem;
+            lst.Items.Remove(selected);
+
+            if (lst.Items.Count > 0)
+                lst.SelectedIndex = 0;
+
+            e.Handled = true;
+        }
+
+        private void CapNhatHienThiPanelThietBiFF(EquipUiContext ctx)
+        {
+            // Chỉ áp dụng cho tab Chữa cháy (không có suffix)
+            if (ctx == null || !string.IsNullOrEmpty(ctx.Suffix))
+                return;
+
+            var panelBinh = FindName("PanelBinhCC") as System.Windows.UIElement;
+            var panelPhun = FindName("PanelDauPhun") as System.Windows.UIElement;
+
+            if (panelBinh == null || panelPhun == null)
+                return;
+
+            string loai = GetSelectedEquipTypeName(ctx).ToUpperInvariant();
+            bool isDauPhun =
+                loai.Contains("ĐẦU PHUN") ||
+                loai.Contains("DAU PHUN") ||
+                loai.Contains("PHUN");
+
+            panelBinh.Visibility = isDauPhun
+                ? System.Windows.Visibility.Collapsed
+                : System.Windows.Visibility.Visible;
+
+            panelPhun.Visibility = isDauPhun
+                ? System.Windows.Visibility.Visible
+                : System.Windows.Visibility.Collapsed;
+        }
+
+        private void TxtDauPhunCotThem_KeyDown(
+            object sender,
+            WpfKeyEventArgs e)
+        {
+            if (e.Key != WpfKey.Enter)
+                return;
+
+            WpfTextBox txt = sender as WpfTextBox;
+            if (txt == null)
+                return;
+
+            string value = (txt.Text ?? "").Trim();
+            if (string.IsNullOrWhiteSpace(value))
+                return;
+
+            string listName = null;
+            string name = txt.Name ?? "";
+
+            if (name.Contains("Huong"))
+                listName = "LstHuongDauPhun";
+            else if (name.Contains("NhietDo") || name.Contains("Nhiet"))
+                listName = "LstNhietDoDauPhun";
+            else if (name.Contains("KDauPhun") || name == "TxtKDauPhunThem")
+                listName = "LstKDauPhun";
+
+            if (listName == null)
+                return;
+
+            WpfListBox lst = TimListBox(listName);
+            if (lst == null)
+                return;
+
+            bool existed =
+                lst.Items
+                    .Cast<object>()
+                    .Any(x => LayNoiDungItem(x).Equals(
+                        value,
+                        StringComparison.OrdinalIgnoreCase));
+
+            if (!existed)
+            {
+                lst.Items.Add(
+                    new WpfListBoxItem
+                    {
+                        Content = value
+                    });
+            }
+
+            foreach (object item in lst.Items)
+            {
+                if (LayNoiDungItem(item).Equals(
+                    value,
+                    StringComparison.OrdinalIgnoreCase))
+                {
+                    lst.SelectedItem = item;
+                    lst.ScrollIntoView(item);
+                    break;
+                }
+            }
+
+            txt.Text = "";
+            e.Handled = true;
+        }
+
+        private void LstDauPhunCot_KeyDown(
+            object sender,
+            WpfKeyEventArgs e)
+        {
+            if (e.Key != WpfKey.Delete)
+                return;
+
+            WpfListBox lst = sender as WpfListBox;
+            if (lst?.SelectedItem == null)
+                return;
+
+            // Không xóa hết — giữ ít nhất 1 mục
+            if (lst.Items.Count <= 1)
+                return;
+
+            object selected = lst.SelectedItem;
+            lst.Items.Remove(selected);
+
+            if (lst.Items.Count > 0)
+                lst.SelectedIndex = 0;
+
+            e.Handled = true;
+        }
+
+        private string BuildDauPhunModelText()
+        {
+            string huong = "Hướng Lên";
+            string k = "K5.6";
+            string nhiet = "68°C";
+
+            var lstHuong = TimListBox("LstHuongDauPhun");
+            var lstK = TimListBox("LstKDauPhun");
+            var lstNhiet = TimListBox("LstNhietDoDauPhun");
+
+            if (lstHuong?.SelectedItem != null)
+                huong = LayNoiDungItem(lstHuong.SelectedItem);
+
+            if (lstK?.SelectedItem != null)
+                k = LayNoiDungItem(lstK.SelectedItem);
+
+            if (lstNhiet?.SelectedItem != null)
+                nhiet = LayNoiDungItem(lstNhiet.SelectedItem);
+
+            // Rút gọn hướng thành mã ngắn giống ký hiệu phổ biến
+            string huongCode = huong.Trim().ToUpperInvariant();
+
+            if (huongCode.Contains("LÊN OG") || huongCode.Contains("LEN OG"))
+                huongCode = "HL-OG";
+            else if (huongCode.Contains("XUỐNG OG") || huongCode.Contains("XUONG OG"))
+                huongCode = "HX-OG";
+            else if (huongCode.Contains("LÊN") || huongCode.Contains("LEN"))
+                huongCode = "HL";
+            else if (huongCode.Contains("XUỐNG") || huongCode.Contains("XUONG"))
+                huongCode = "HX";
+            else if (huongCode.Contains("NGANG"))
+                huongCode = "HN";
+            else
+                huongCode = CleanLayerText(huong);
+
+            // Bỏ ký tự °C nếu có, chỉ giữ số
+            string tempNum = nhiet
+                .Replace("°C", "")
+                .Replace("ĐỘ C", "")
+                .Replace("DO C", "")
+                .Trim();
+
+            return $"{huongCode} {k} {tempNum}";
+        }
+
+        private void CapNhatVaSapXepDanhSachSizeEquip(
+            EquipUiContext ctx,
+            List<string> rawSizes,
+            string itemToSelect = null)
+        {
+            if (ctx?.Sizes == null)
+                return;
+
+            var sortedSizes = rawSizes
+                .Where(x => !string.IsNullOrWhiteSpace(x))
+                .Select(x => x.Trim())
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            ctx.Sizes.Clear();
+
+            string prefix = GetEquipLayerPrefix(ctx);
+
+            foreach (var s in sortedSizes)
+            {
+                string layerName = $"{prefix}_{CleanLayerText(s)}";
+                short aci = GetExpectedAciColor(layerName);
+
+                ctx.Sizes.Add(
+                    new PipeSizeItem
+                    {
+                        SizeName = s,
+                        AciColor = aci,
+                        LayerColorBrush = GetBrushFromAci(aci)
+                    });
+            }
+
+            if (ctx.LstSize == null)
+                return;
+
+            if (itemToSelect != null)
+            {
+                var target = ctx.Sizes.FirstOrDefault(
+                    x => x.SizeName.Equals(
+                        itemToSelect,
+                        StringComparison.OrdinalIgnoreCase));
+
+                if (target != null)
+                {
+                    ctx.LstSize.SelectedItem = target;
+                    ctx.LstSize.ScrollIntoView(target);
+                }
+            }
+            else if (ctx.Sizes.Count > 0)
+            {
+                ctx.LstSize.SelectedIndex = 0;
+            }
+        }
+
+        private EquipUiContext GetEquipContext(object sender)
+        {
+            if (sender is WpfButton btn &&
+                btn.DataContext is PipeSizeItem item)
+            {
+                if (_equipCtxACMV != null &&
+                    _equipCtxACMV.Sizes.Contains(item))
+                    return _equipCtxACMV;
+
+                if (_equipCtxCTN != null &&
+                    _equipCtxCTN.Sizes.Contains(item))
+                    return _equipCtxCTN;
+
+                return _equipCtxFF;
+            }
+
+            if (sender is WpfFrameworkElement fe)
+            {
+                string name = fe.Name ?? "";
+
+                if (name.Contains("ACMV"))
+                    return _equipCtxACMV;
+
+                if (name.Contains("CTN"))
+                    return _equipCtxCTN;
+            }
+
+            WpfTabControl mainTabs =
+                FindName("MainSystemTabs") as WpfTabControl;
+
+            if (mainTabs != null)
+            {
+                if (mainTabs.SelectedIndex == 1)
+                    return _equipCtxACMV;
+
+                if (mainTabs.SelectedIndex == 2)
+                    return _equipCtxCTN;
+            }
+
+            return _equipCtxFF;
+        }
+
+        private string GetSelectedEquipTypeName(EquipUiContext ctx)
+        {
+            if (ctx?.LstLoai != null &&
+                ctx.LstLoai.SelectedItem != null)
+            {
+                return LayNoiDungItem(ctx.LstLoai.SelectedItem);
+            }
+
+            if (ctx?.Suffix == "ACMV")
+                return "MÁY LẠNH";
+
+            if (ctx?.Suffix == "CTN")
+                return "ĐỒNG HỒ";
+
+            return "BÌNH CC";
+        }
+
+        private string GetEquipSystemCode(EquipUiContext ctx)
+        {
+            string sys = LayNoiDungItem(ctx?.CmbHeThong?.SelectedItem);
+
+            if (string.IsNullOrWhiteSpace(sys))
+                sys = ctx?.HeThongMacDinh ?? "Chữa cháy _ FF";
+
+            if (sys.Contains("_"))
+                return sys.Split('_').Last().Trim();
+
+            return sys.Trim();
+        }
+
+        private string GetEquipLayerPrefix(EquipUiContext ctx)
+        {
+            string systemCode = CleanLayerText(GetEquipSystemCode(ctx));
+            string equipType =
+                CleanLayerText(GetSelectedEquipTypeName(ctx));
+
+            return $"{systemCode}_{equipType}";
+        }
+
+        private void CapNhatMauEquipTheoPrefix(EquipUiContext ctx)
+        {
+            if (ctx?.Sizes == null || ctx.Sizes.Count == 0)
+                return;
+
+            string prefix = GetEquipLayerPrefix(ctx);
+
+            foreach (var item in ctx.Sizes)
+            {
+                string layerName =
+                    $"{prefix}_{CleanLayerText(item.SizeName)}";
+                short aci = GetExpectedAciColor(layerName);
+
+                item.AciColor = aci;
+                item.LayerColorBrush = GetBrushFromAci(aci);
+            }
+        }
+
+        private void KhoiTaoValveContext(ValveUiContext ctx)
+        {
+            if (ctx == null)
+                return;
+
+            if (ctx.LstLoaiVan != null &&
+                ctx.LstLoaiVan.SelectedIndex < 0 &&
+                ctx.LstLoaiVan.Items.Count > 0)
+            {
+                ctx.LstLoaiVan.SelectedIndex = 0;
+            }
+
+            if (ctx.LstSize != null)
+                ctx.LstSize.ItemsSource = ctx.Sizes;
+
+            CapNhatSizeVan(ctx);
+        }
+
+        private void CapNhatSizeVan(ValveUiContext ctx)
+        {
+            if (ctx == null)
+                return;
+
+            List<string> newSizes = new List<string>
+            {
+                "DN15", "DN20", "DN25", "DN32", "DN40", "DN50",
+                "DN65", "DN80", "DN100", "DN125", "DN150", "DN200",
+                "DN250", "DN300", "DN350", "DN400"
+            };
+
+            CapNhatVaSapXepDanhSachSizeVan(ctx, newSizes);
+        }
+
+        private void CapNhatVaSapXepDanhSachSizeVan(
+            ValveUiContext ctx,
+            List<string> rawSizes,
+            string itemToSelect = null)
+        {
+            if (ctx?.Sizes == null)
+                return;
+
+            var sortedSizes = rawSizes
+                .Where(x => !string.IsNullOrWhiteSpace(x))
+                .Select(x => x.Trim())
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .OrderBy(s =>
+                {
+                    var matches = Regex.Matches(s, @"\d+(\.\d+)?");
+                    return matches.Count > 0
+                        ? double.Parse(
+                            matches[0].Value,
+                            CultureInfo.InvariantCulture)
+                        : 0;
+                })
+                .ThenBy(s => s)
+                .ToList();
+
+            ctx.Sizes.Clear();
+
+            string prefix = GetValveLayerPrefix(ctx);
+
+            foreach (var s in sortedSizes)
+            {
+                string layerName = $"{prefix}_{s}";
+                short aci = GetExpectedAciColor(layerName);
+
+                ctx.Sizes.Add(
+                    new PipeSizeItem
+                    {
+                        SizeName = s,
+                        AciColor = aci,
+                        LayerColorBrush = GetBrushFromAci(aci)
+                    });
+            }
+
+            if (ctx.LstSize == null)
+                return;
+
+            if (itemToSelect != null)
+            {
+                var target = ctx.Sizes.FirstOrDefault(
+                    x => x.SizeName.Equals(
+                        itemToSelect,
+                        StringComparison.OrdinalIgnoreCase));
+
+                if (target != null)
+                {
+                    ctx.LstSize.SelectedItem = target;
+                    ctx.LstSize.ScrollIntoView(target);
+                }
+            }
+            else if (ctx.Sizes.Count > 0)
+            {
+                ctx.LstSize.SelectedIndex = 0;
+            }
+        }
+
+        private ValveUiContext GetValveContext(object sender)
+        {
+            if (sender is WpfButton btn &&
+                btn.DataContext is PipeSizeItem item)
+            {
+                if (_valveCtxACMV != null &&
+                    _valveCtxACMV.Sizes.Contains(item))
+                    return _valveCtxACMV;
+
+                if (_valveCtxCTN != null &&
+                    _valveCtxCTN.Sizes.Contains(item))
+                    return _valveCtxCTN;
+
+                return _valveCtxFF;
+            }
+
+            if (sender is WpfFrameworkElement fe)
+            {
+                string name = fe.Name ?? "";
+
+                if (name.Contains("ACMV"))
+                    return _valveCtxACMV;
+
+                if (name.Contains("CTN"))
+                    return _valveCtxCTN;
+            }
+
+            WpfTabControl mainTabs =
+                FindName("MainSystemTabs") as WpfTabControl;
+
+            if (mainTabs != null)
+            {
+                if (mainTabs.SelectedIndex == 1)
+                    return _valveCtxACMV;
+
+                if (mainTabs.SelectedIndex == 2)
+                    return _valveCtxCTN;
+            }
+
+            return _valveCtxFF;
+        }
+
+        private string GetSelectedValveTypeName(ValveUiContext ctx)
+        {
+            if (ctx?.LstLoaiVan != null &&
+                ctx.LstLoaiVan.SelectedItem != null)
+            {
+                return LayNoiDungItem(ctx.LstLoaiVan.SelectedItem);
+            }
+
+            return "V.CỔNG TN";
+        }
+
+        private string GetValveSystemCode(ValveUiContext ctx)
+        {
+            string sys = LayNoiDungItem(ctx?.CmbHeThong?.SelectedItem);
+
+            if (string.IsNullOrWhiteSpace(sys))
+                sys = ctx?.HeThongMacDinh ?? "Chữa cháy _ FF";
+
+            if (sys.Contains("_"))
+                return sys.Split('_').Last().Trim();
+
+            return sys.Trim();
+        }
+
+        private string GetValveLayerPrefix(ValveUiContext ctx)
+        {
+            string systemCode = CleanLayerText(GetValveSystemCode(ctx));
+            string valveType =
+                CleanLayerText(GetSelectedValveTypeName(ctx));
+
+            return $"{systemCode}_{valveType}";
+        }
+
+        private void CapNhatMauVanTheoPrefix(ValveUiContext ctx)
+        {
+            if (ctx?.Sizes == null || ctx.Sizes.Count == 0)
+                return;
+
+            string prefix = GetValveLayerPrefix(ctx);
+
+            foreach (var item in ctx.Sizes)
+            {
+                string layerName = $"{prefix}_{item.SizeName}";
+                short aci = GetExpectedAciColor(layerName);
+
+                item.AciColor = aci;
+                item.LayerColorBrush = GetBrushFromAci(aci);
+            }
         }
 
         private void KhoiTaoContext(PipeUiContext ctx)
@@ -425,8 +1515,8 @@ namespace ClassLibrary4
             return sys.Contains("HVAC") ||
                    sys.Contains("SM") ||
                    sys.Contains("TG") ||
-                   sys.Contains("ACMV") ||
-                   mat.Contains("ỐNG GIÓ");
+                   mat.Contains("ỐNG GIÓ") ||
+                   LaOngGio(mat);
         }
 
         private void BtnColor_Click(
@@ -873,15 +1963,34 @@ namespace ClassLibrary4
                 (material ?? "").Trim().ToUpperInvariant();
 
             return m.Contains("ỐNG GIÓ") ||
+                   m.Contains("ONG GIO") ||
+                   m.StartsWith("OG ") ||
+                   m.StartsWith("OG_") ||
+                   m == "OG" ||
+                   m.Contains("OG THẢI") ||
+                   m.Contains("OG THAI") ||
+                   m.Contains("OG HÚT") ||
+                   m.Contains("OG HUT") ||
+                   m.Contains("OG LẠNH") ||
+                   m.Contains("OG LANH") ||
+                   m.Contains("OG CẤP") ||
+                   m.Contains("OG CAP") ||
                    m.Contains("SEAF") ||
                    m.Contains("FAF") ||
                    m.Contains("EAF") ||
                    m.Contains("PAF") ||
-                   m.Contains("BEP") ||
-                   m.Contains("CN13") ||
-                   m.Contains("CN20") ||
-                   m.Contains("CN32") ||
-                   m.Contains("CN50");
+                   m.Contains("BEP");
+        }
+
+        private bool LaOngGioHutKhoi(string material)
+        {
+            string m =
+                (material ?? "").Trim().ToUpperInvariant();
+
+            return m.Contains("HÚT KHÓI") ||
+                   m.Contains("HUT KHOI") ||
+                   m.Contains("HÚT KHÓI") ||
+                   m.Contains("SMOKE");
         }
 
         private bool LaOngDong(string material)
@@ -909,11 +2018,11 @@ namespace ClassLibrary4
                 newSizes.AddRange(
                     new[]
                     {
-                        "150x100", "200x150", "200x200",
-                        "250x250", "300x200", "300x300",
-                        "400x200", "400x300", "400x400",
-                        "500x300", "500x500", "600x300",
-                        "600x400", "800x400"
+                        "100x100",
+                        "200x100",
+                        "500x200",
+                        "800x300",
+                        "800x350"
                     });
             }
             else if (LaOngDong(material))
@@ -946,6 +2055,326 @@ namespace ClassLibrary4
             }
 
             CapNhatVaSapXepDanhSachSize(ctx, newSizes);
+            CapNhatHienThiPanelOngGioACMV(ctx);
+            CapNhatDanhSachCnEiOngGio(ctx);
+        }
+
+        private void CapNhatHienThiPanelOngGioACMV(PipeUiContext ctx)
+        {
+            if (ctx == null || ctx.Suffix != "ACMV")
+                return;
+
+            var panelThuong =
+                FindName("PanelSizeOngThuongACMV") as System.Windows.UIElement;
+            var panelGio =
+                FindName("PanelSizeOngGioACMV") as System.Windows.UIElement;
+
+            if (panelThuong == null || panelGio == null)
+                return;
+
+            string material = GetSelectedPipeMaterialName(ctx);
+            bool isOngGio = LaOngGio(material);
+
+            panelThuong.Visibility = isOngGio
+                ? System.Windows.Visibility.Collapsed
+                : System.Windows.Visibility.Visible;
+
+            panelGio.Visibility = isOngGio
+                ? System.Windows.Visibility.Visible
+                : System.Windows.Visibility.Collapsed;
+
+            // Đồng bộ list size ống gió từ ctx.Sizes
+            if (isOngGio)
+            {
+                var lstGio = TimListBox("LstSizeOngGioACMV");
+                if (lstGio != null)
+                {
+                    string selected =
+                        LayNoiDungItem(lstGio.SelectedItem);
+
+                    lstGio.Items.Clear();
+
+                    foreach (var item in ctx.Sizes)
+                    {
+                        lstGio.Items.Add(
+                            new WpfListBoxItem
+                            {
+                                Content = item.SizeName
+                            });
+                    }
+
+                    if (lstGio.Items.Count > 0)
+                    {
+                        int idx = 0;
+
+                        for (int i = 0; i < lstGio.Items.Count; i++)
+                        {
+                            if (LayNoiDungItem(lstGio.Items[i]).Equals(
+                                selected,
+                                StringComparison.OrdinalIgnoreCase))
+                            {
+                                idx = i;
+                                break;
+                            }
+                        }
+
+                        lstGio.SelectedIndex = idx;
+                    }
+                }
+            }
+        }
+
+        private void CapNhatDanhSachCnEiOngGio(PipeUiContext ctx)
+        {
+            if (ctx == null || ctx.Suffix != "ACMV")
+                return;
+
+            var lstCnEi = TimListBox("LstCnEiOngGioACMV");
+            var txtTitle =
+                FindName("TxtTieuDeCnEi") as System.Windows.Controls.TextBlock;
+
+            if (lstCnEi == null)
+                return;
+
+            string material = GetSelectedPipeMaterialName(ctx);
+            bool isHutKhoi = LaOngGioHutKhoi(material);
+
+            string[] items = isHutKhoi
+                ? new[] { "EI30", "EI45", "EI60", "EI90", "EI120" }
+                : new[]
+                {
+                    "CN10", "CN13", "CN15", "CN20",
+                    "CN25", "CN32", "CN50"
+                };
+
+            if (txtTitle != null)
+                txtTitle.Text = isHutKhoi ? "EI" : "CN";
+
+            // OG Hút khói thường cần EI → mặc định tích
+            // OG Thải / OG Cấp thường không bọc CN → mặc định bỏ tích
+            var chk =
+                FindName("ChkDungCnEi") as System.Windows.Controls.CheckBox;
+
+            if (chk != null)
+            {
+                chk.IsChecked = isHutKhoi;
+                CapNhatTrangThaiCnEi();
+            }
+
+            string selected = LayNoiDungItem(lstCnEi.SelectedItem);
+            lstCnEi.Items.Clear();
+
+            foreach (string item in items)
+            {
+                lstCnEi.Items.Add(
+                    new WpfListBoxItem
+                    {
+                        Content = item
+                    });
+            }
+
+            int idx = 0;
+
+            for (int i = 0; i < lstCnEi.Items.Count; i++)
+            {
+                if (LayNoiDungItem(lstCnEi.Items[i]).Equals(
+                    selected,
+                    StringComparison.OrdinalIgnoreCase))
+                {
+                    idx = i;
+                    break;
+                }
+            }
+
+            if (lstCnEi.Items.Count > 0)
+                lstCnEi.SelectedIndex = idx;
+        }
+
+        private string GetSelectedOngGioSize()
+        {
+            var lst = TimListBox("LstSizeOngGioACMV");
+            return LayNoiDungItem(lst?.SelectedItem);
+        }
+
+        private string GetSelectedCnEi()
+        {
+            var chk =
+                FindName("ChkDungCnEi") as System.Windows.Controls.CheckBox;
+
+            // Không tích → không dùng CN/EI
+            if (chk?.IsChecked != true)
+                return "";
+
+            var lst = TimListBox("LstCnEiOngGioACMV");
+            return LayNoiDungItem(lst?.SelectedItem);
+        }
+
+        private void ChkDungCnEi_Changed(
+            object sender,
+            RoutedEventArgs e)
+        {
+            CapNhatTrangThaiCnEi();
+        }
+
+        private void CapNhatTrangThaiCnEi()
+        {
+            var chk =
+                FindName("ChkDungCnEi") as System.Windows.Controls.CheckBox;
+            var lst = TimListBox("LstCnEiOngGioACMV");
+            var txt = TimTextBox("TxtCnEiOngGioACMVThem");
+
+            bool enabled = chk?.IsChecked == true;
+
+            if (lst != null)
+            {
+                lst.IsEnabled = enabled;
+                lst.Opacity = enabled ? 1.0 : 0.45;
+            }
+
+            if (txt != null)
+            {
+                txt.IsEnabled = enabled;
+                txt.Opacity = enabled ? 1.0 : 0.45;
+            }
+        }
+
+        private string GetSelectedPipeSizeName(PipeUiContext ctx)
+        {
+            if (ctx == null)
+                return "";
+
+            string material = GetSelectedPipeMaterialName(ctx);
+
+            if (ctx.Suffix == "ACMV" && LaOngGio(material))
+            {
+                string size = GetSelectedOngGioSize();
+                string cnEi = GetSelectedCnEi();
+
+                if (string.IsNullOrWhiteSpace(size))
+                    return "";
+
+                if (string.IsNullOrWhiteSpace(cnEi))
+                    return size;
+
+                return $"{size}_{cnEi}";
+            }
+
+            return (ctx.LstSize?.SelectedItem as PipeSizeItem)
+                ?.SizeName ?? "";
+        }
+
+        private void TxtOngGioCotThem_KeyDown(
+            object sender,
+            WpfKeyEventArgs e)
+        {
+            if (e.Key != WpfKey.Enter)
+                return;
+
+            WpfTextBox txt = sender as WpfTextBox;
+            if (txt == null)
+                return;
+
+            string value = (txt.Text ?? "").Trim();
+            if (string.IsNullOrWhiteSpace(value))
+                return;
+
+            string name = txt.Name ?? "";
+            string listName = null;
+
+            if (name.Contains("SizeOngGio"))
+                listName = "LstSizeOngGioACMV";
+            else if (name.Contains("CnEi"))
+                listName = "LstCnEiOngGioACMV";
+
+            if (listName == null)
+                return;
+
+            WpfListBox lst = TimListBox(listName);
+            if (lst == null)
+                return;
+
+            bool existed =
+                lst.Items
+                    .Cast<object>()
+                    .Any(x => LayNoiDungItem(x).Equals(
+                        value,
+                        StringComparison.OrdinalIgnoreCase));
+
+            if (!existed)
+            {
+                lst.Items.Add(
+                    new WpfListBoxItem
+                    {
+                        Content = value
+                    });
+
+                // Nếu là size ống gió → đồng bộ vào ctx.Sizes
+                if (listName == "LstSizeOngGioACMV" && _ctxACMV != null)
+                {
+                    List<string> sizes =
+                        _ctxACMV.Sizes
+                            .Select(x => x.SizeName)
+                            .ToList();
+
+                    if (!sizes.Contains(
+                        value,
+                        StringComparer.OrdinalIgnoreCase))
+                    {
+                        sizes.Add(value);
+                        CapNhatVaSapXepDanhSachSize(_ctxACMV, sizes, value);
+                    }
+                }
+            }
+
+            foreach (object item in lst.Items)
+            {
+                if (LayNoiDungItem(item).Equals(
+                    value,
+                    StringComparison.OrdinalIgnoreCase))
+                {
+                    lst.SelectedItem = item;
+                    lst.ScrollIntoView(item);
+                    break;
+                }
+            }
+
+            txt.Text = "";
+            e.Handled = true;
+        }
+
+        private void LstOngGioCot_KeyDown(
+            object sender,
+            WpfKeyEventArgs e)
+        {
+            if (e.Key != WpfKey.Delete)
+                return;
+
+            WpfListBox lst = sender as WpfListBox;
+            if (lst?.SelectedItem == null)
+                return;
+
+            if (lst.Items.Count <= 1)
+                return;
+
+            object selected = lst.SelectedItem;
+            string removed = LayNoiDungItem(selected);
+            lst.Items.Remove(selected);
+
+            if (lst.Name == "LstSizeOngGioACMV" && _ctxACMV != null)
+            {
+                var item = _ctxACMV.Sizes.FirstOrDefault(
+                    x => x.SizeName.Equals(
+                        removed,
+                        StringComparison.OrdinalIgnoreCase));
+
+                if (item != null)
+                    _ctxACMV.Sizes.Remove(item);
+            }
+
+            if (lst.Items.Count > 0)
+                lst.SelectedIndex = 0;
+
+            e.Handled = true;
         }
 
         private void CmbHeThong_SelectionChanged(
@@ -1143,9 +2572,7 @@ namespace ClassLibrary4
 
             var db = doc.Database;
 
-            string size =
-                (ctx?.LstSize?.SelectedItem as PipeSizeItem)
-                    ?.SizeName ?? "";
+            string size = GetSelectedPipeSizeName(ctx);
 
             if (string.IsNullOrEmpty(size))
             {
@@ -1157,7 +2584,8 @@ namespace ClassLibrary4
             }
 
             double plineWidth = LayWidthTuSize(size);
-            string layerName = $"{GetLayerPrefix(ctx)}_{size}";
+            string layerName =
+                $"{GetLayerPrefix(ctx)}_{CleanLayerText(size)}";
             bool isOngGio = CheckIsOngGio(ctx);
 
             using (doc.LockDocument())
@@ -1295,9 +2723,7 @@ namespace ClassLibrary4
             var db = doc.Database;
             var ed = doc.Editor;
 
-            string size =
-                (ctx?.LstSize?.SelectedItem as PipeSizeItem)
-                    ?.SizeName ?? "";
+            string size = GetSelectedPipeSizeName(ctx);
 
             if (string.IsNullOrEmpty(size))
             {
@@ -1309,7 +2735,8 @@ namespace ClassLibrary4
             }
 
             double plineWidth = LayWidthTuSize(size);
-            string layerName = $"{GetLayerPrefix(ctx)}_{size}";
+            string layerName =
+                $"{GetLayerPrefix(ctx)}_{CleanLayerText(size)}";
             string shortSizeLabel = GetShortSizeLabel(size);
             bool isOngGio = CheckIsOngGio(ctx);
 
@@ -6257,6 +7684,710 @@ namespace ClassLibrary4
                 CleanupEvents(_plineWatcherDocument);
         }
 
+        // ==================== VAN ====================
+
+        private void LstLoaiVan_SelectionChanged(
+            object sender,
+            System.Windows.Controls.SelectionChangedEventArgs e)
+        {
+            ValveUiContext ctx = GetValveContext(sender);
+            CapNhatMauVanTheoPrefix(ctx);
+        }
+
+        private void TxtLoaiVanBoSung_KeyDown(
+            object sender,
+            WpfKeyEventArgs e)
+        {
+            if (e.Key != WpfKey.Enter)
+                return;
+
+            ValveUiContext ctx = GetValveContext(sender);
+
+            if (ctx?.TxtLoaiVanThem == null ||
+                ctx.LstLoaiVan == null)
+            {
+                return;
+            }
+
+            string newType = ctx.TxtLoaiVanThem.Text.Trim();
+
+            if (string.IsNullOrWhiteSpace(newType))
+                return;
+
+            bool existed =
+                ctx.LstLoaiVan.Items
+                    .Cast<object>()
+                    .Any(x => LayNoiDungItem(x).Equals(
+                        newType,
+                        StringComparison.OrdinalIgnoreCase));
+
+            if (!existed)
+            {
+                ctx.LstLoaiVan.Items.Add(
+                    new WpfListBoxItem
+                    {
+                        Content = newType.ToUpper()
+                    });
+            }
+
+            foreach (object item in ctx.LstLoaiVan.Items)
+            {
+                if (LayNoiDungItem(item).Equals(
+                    newType,
+                    StringComparison.OrdinalIgnoreCase))
+                {
+                    ctx.LstLoaiVan.SelectedItem = item;
+                    ctx.LstLoaiVan.ScrollIntoView(item);
+                    break;
+                }
+            }
+
+            ctx.TxtLoaiVanThem.Text = "";
+            CapNhatMauVanTheoPrefix(ctx);
+            e.Handled = true;
+        }
+
+        private void LstLoaiVan_KeyDown(
+            object sender,
+            WpfKeyEventArgs e)
+        {
+            if (e.Key != WpfKey.Delete)
+                return;
+
+            ValveUiContext ctx = GetValveContext(sender);
+
+            if (ctx?.LstLoaiVan == null ||
+                ctx.LstLoaiVan.SelectedItem == null)
+            {
+                return;
+            }
+
+            object selected = ctx.LstLoaiVan.SelectedItem;
+            ctx.LstLoaiVan.Items.Remove(selected);
+
+            if (ctx.LstLoaiVan.Items.Count > 0)
+                ctx.LstLoaiVan.SelectedIndex = 0;
+
+            CapNhatMauVanTheoPrefix(ctx);
+            e.Handled = true;
+        }
+
+        private void TxtCustomSizeVan_KeyDown(
+            object sender,
+            WpfKeyEventArgs e)
+        {
+            if (e.Key != WpfKey.Enter)
+                return;
+
+            ValveUiContext ctx = GetValveContext(sender);
+
+            if (ctx?.TxtSizeThem == null)
+                return;
+
+            string newSize = ctx.TxtSizeThem.Text.Trim();
+
+            if (string.IsNullOrWhiteSpace(newSize))
+                return;
+
+            List<string> currentSizes =
+                ctx.Sizes.Select(x => x.SizeName).ToList();
+
+            if (!currentSizes.Contains(
+                newSize,
+                StringComparer.OrdinalIgnoreCase))
+            {
+                currentSizes.Add(newSize);
+            }
+
+            CapNhatVaSapXepDanhSachSizeVan(
+                ctx,
+                currentSizes,
+                newSize);
+
+            ctx.TxtSizeThem.Text = "";
+            e.Handled = true;
+        }
+
+        private void LstSizeVan_KeyDown(
+            object sender,
+            WpfKeyEventArgs e)
+        {
+            if (e.Key != WpfKey.Delete)
+                return;
+
+            ValveUiContext ctx = GetValveContext(sender);
+
+            if (ctx?.LstSize?.SelectedItem is PipeSizeItem selected)
+            {
+                ctx.Sizes.Remove(selected);
+                e.Handled = true;
+            }
+        }
+
+        private void BtnColorVan_Click(
+            object sender,
+            RoutedEventArgs e)
+        {
+            WpfButton btn = sender as WpfButton;
+            PipeSizeItem item = btn?.DataContext as PipeSizeItem;
+
+            if (item == null)
+                return;
+
+            ValveUiContext ctx = GetValveContext(sender);
+            string layerPrefix = GetValveLayerPrefix(ctx);
+            string layerName = $"{layerPrefix}_{item.SizeName}";
+
+            var cd = new Autodesk.AutoCAD.Windows.ColorDialog();
+
+            cd.Color =
+                Autodesk.AutoCAD.Colors.Color.FromColorIndex(
+                    ColorMethod.ByAci,
+                    item.AciColor);
+
+            if (cd.ShowDialog() == WinFormsDialogResult.OK)
+            {
+                short newAci = cd.Color.ColorIndex;
+                _userCustomColors[layerName] = newAci;
+
+                item.AciColor = newAci;
+                item.LayerColorBrush = GetBrushFromAci(newAci);
+
+                var doc =
+                    Autodesk.AutoCAD.ApplicationServices.Core.Application
+                        .DocumentManager
+                        .MdiActiveDocument;
+
+                if (doc != null)
+                {
+                    using (doc.LockDocument())
+                    {
+                        using (Transaction tr =
+                            doc.Database.TransactionManager
+                                .StartTransaction())
+                        {
+                            LayerTable lt =
+                                (LayerTable)tr.GetObject(
+                                    doc.Database.LayerTableId,
+                                    OpenMode.ForRead);
+
+                            if (lt.Has(layerName))
+                            {
+                                LayerTableRecord ltr =
+                                    (LayerTableRecord)tr.GetObject(
+                                        lt[layerName],
+                                        OpenMode.ForWrite);
+
+                                ltr.Color =
+                                    Autodesk.AutoCAD.Colors.Color
+                                        .FromColorIndex(
+                                            ColorMethod.ByAci,
+                                            newAci);
+                            }
+
+                            tr.Commit();
+                        }
+                    }
+
+                    doc.Editor.Regen();
+                }
+            }
+        }
+
+        private void BtnDatVan_Click(
+            object sender,
+            RoutedEventArgs e)
+        {
+            ValveUiContext ctx = GetValveContext(sender);
+
+            var doc =
+                Autodesk.AutoCAD.ApplicationServices.Core.Application
+                    .DocumentManager
+                    .MdiActiveDocument;
+
+            if (doc == null)
+                return;
+
+            var db = doc.Database;
+            var ed = doc.Editor;
+
+            string size =
+                (ctx?.LstSize?.SelectedItem as PipeSizeItem)
+                    ?.SizeName ?? "";
+
+            if (string.IsNullOrEmpty(size))
+            {
+                MessageBox.Show(
+                    "Vui lòng chọn kích thước van trước khi đặt!",
+                    "Cảnh báo");
+                return;
+            }
+
+            string valveType = GetSelectedValveTypeName(ctx);
+            string layerName =
+                $"{GetValveLayerPrefix(ctx)}_{size}";
+            string displayText = $"{valveType} {size}";
+
+            double textHeight = Math.Max(
+                LayWidthTuSize(size) * LabelTextHeightToWidthRatio,
+                MinimumLabelTextHeight);
+
+            Autodesk.AutoCAD.Internal.Utils.SetFocusToDwgView();
+
+            using (doc.LockDocument())
+            {
+                using (Transaction trInit =
+                    db.TransactionManager.StartTransaction())
+                {
+                    EnsureLayerExists(
+                        trInit,
+                        db,
+                        layerName,
+                        false);
+
+                    LayerTable lt =
+                        (LayerTable)trInit.GetObject(
+                            db.LayerTableId,
+                            OpenMode.ForRead);
+
+                    db.Clayer = lt[layerName];
+                    trInit.Commit();
+                }
+            }
+
+            int placedCount = 0;
+
+            ed.WriteMessage(
+                $"\n[ĐẶT VAN] Layer: {layerName} | " +
+                $"Bấm chuột để đặt text, ESC để kết thúc.");
+
+            while (true)
+            {
+                PromptPointOptions ppo =
+                    new PromptPointOptions(
+                        $"\nChọn vị trí đặt van ({displayText}) " +
+                        $"[đã đặt {placedCount}] <ESC kết thúc>: ")
+                    {
+                        AllowNone = true
+                    };
+
+                PromptPointResult ppr = ed.GetPoint(ppo);
+
+                if (ppr.Status != PromptStatus.OK)
+                    break;
+
+                Point3d pt = ppr.Value;
+
+                using (doc.LockDocument())
+                using (Transaction tr =
+                    db.TransactionManager.StartTransaction())
+                {
+                    BlockTableRecord btr =
+                        (BlockTableRecord)tr.GetObject(
+                            db.CurrentSpaceId,
+                            OpenMode.ForWrite);
+
+                    EnsureLayerExists(
+                        tr,
+                        db,
+                        layerName,
+                        false);
+
+                    DBText txt = new DBText();
+                    txt.SetDatabaseDefaults(db);
+                    txt.TextString = displayText;
+                    txt.Height = textHeight;
+                    txt.Layer = layerName;
+                    txt.ColorIndex = 256;
+                    txt.Justify = AttachmentPoint.MiddleCenter;
+                    txt.AlignmentPoint = pt;
+                    txt.Position = pt;
+
+                    btr.AppendEntity(txt);
+                    tr.AddNewlyCreatedDBObject(txt, true);
+                    txt.AdjustAlignment(db);
+
+                    tr.Commit();
+                    placedCount++;
+                }
+
+                ed.Regen();
+            }
+
+            ed.WriteMessage(
+                $"\n[ĐẶT VAN] Đã đặt {placedCount} van " +
+                $"trên Layer: {layerName}");
+        }
+
+        // ==================== THIẾT BỊ ====================
+
+        private void LstLoaiThietBi_SelectionChanged(
+            object sender,
+            System.Windows.Controls.SelectionChangedEventArgs e)
+        {
+            EquipUiContext ctx = GetEquipContext(sender);
+            CapNhatModelTheoLoaiThietBi(ctx);
+        }
+
+        private void TxtLoaiThietBiBoSung_KeyDown(
+            object sender,
+            WpfKeyEventArgs e)
+        {
+            if (e.Key != WpfKey.Enter)
+                return;
+
+            EquipUiContext ctx = GetEquipContext(sender);
+
+            if (ctx?.TxtLoaiThem == null || ctx.LstLoai == null)
+                return;
+
+            string newType = ctx.TxtLoaiThem.Text.Trim();
+
+            if (string.IsNullOrWhiteSpace(newType))
+                return;
+
+            bool existed =
+                ctx.LstLoai.Items
+                    .Cast<object>()
+                    .Any(x => LayNoiDungItem(x).Equals(
+                        newType,
+                        StringComparison.OrdinalIgnoreCase));
+
+            if (!existed)
+            {
+                ctx.LstLoai.Items.Add(
+                    new WpfListBoxItem
+                    {
+                        Content = newType.ToUpper()
+                    });
+            }
+
+            foreach (object item in ctx.LstLoai.Items)
+            {
+                if (LayNoiDungItem(item).Equals(
+                    newType,
+                    StringComparison.OrdinalIgnoreCase))
+                {
+                    ctx.LstLoai.SelectedItem = item;
+                    ctx.LstLoai.ScrollIntoView(item);
+                    break;
+                }
+            }
+
+            ctx.TxtLoaiThem.Text = "";
+            CapNhatModelTheoLoaiThietBi(ctx);
+            e.Handled = true;
+        }
+
+        private void LstLoaiThietBi_KeyDown(
+            object sender,
+            WpfKeyEventArgs e)
+        {
+            if (e.Key != WpfKey.Delete)
+                return;
+
+            EquipUiContext ctx = GetEquipContext(sender);
+
+            if (ctx?.LstLoai == null ||
+                ctx.LstLoai.SelectedItem == null)
+            {
+                return;
+            }
+
+            object selected = ctx.LstLoai.SelectedItem;
+            ctx.LstLoai.Items.Remove(selected);
+
+            if (ctx.LstLoai.Items.Count > 0)
+                ctx.LstLoai.SelectedIndex = 0;
+
+            CapNhatModelTheoLoaiThietBi(ctx);
+            e.Handled = true;
+        }
+
+        private void TxtCustomSizeThietBi_KeyDown(
+            object sender,
+            WpfKeyEventArgs e)
+        {
+            if (e.Key != WpfKey.Enter)
+                return;
+
+            EquipUiContext ctx = GetEquipContext(sender);
+
+            if (ctx?.TxtSizeThem == null)
+                return;
+
+            string newSize = ctx.TxtSizeThem.Text.Trim();
+
+            if (string.IsNullOrWhiteSpace(newSize))
+                return;
+
+            List<string> currentSizes =
+                ctx.Sizes.Select(x => x.SizeName).ToList();
+
+            if (!currentSizes.Contains(
+                newSize,
+                StringComparer.OrdinalIgnoreCase))
+            {
+                currentSizes.Add(newSize);
+            }
+
+            CapNhatVaSapXepDanhSachSizeEquip(
+                ctx,
+                currentSizes,
+                newSize);
+
+            ctx.TxtSizeThem.Text = "";
+            e.Handled = true;
+        }
+
+        private void LstSizeThietBi_KeyDown(
+            object sender,
+            WpfKeyEventArgs e)
+        {
+            if (e.Key != WpfKey.Delete)
+                return;
+
+            EquipUiContext ctx = GetEquipContext(sender);
+
+            if (ctx?.LstSize?.SelectedItem is PipeSizeItem selected)
+            {
+                ctx.Sizes.Remove(selected);
+                e.Handled = true;
+            }
+        }
+
+        private void BtnColorThietBi_Click(
+            object sender,
+            RoutedEventArgs e)
+        {
+            WpfButton btn = sender as WpfButton;
+            PipeSizeItem item = btn?.DataContext as PipeSizeItem;
+
+            if (item == null)
+                return;
+
+            EquipUiContext ctx = GetEquipContext(sender);
+            string layerPrefix = GetEquipLayerPrefix(ctx);
+            string layerName =
+                $"{layerPrefix}_{CleanLayerText(item.SizeName)}";
+
+            var cd = new Autodesk.AutoCAD.Windows.ColorDialog();
+
+            cd.Color =
+                Autodesk.AutoCAD.Colors.Color.FromColorIndex(
+                    ColorMethod.ByAci,
+                    item.AciColor);
+
+            if (cd.ShowDialog() == WinFormsDialogResult.OK)
+            {
+                short newAci = cd.Color.ColorIndex;
+                _userCustomColors[layerName] = newAci;
+
+                item.AciColor = newAci;
+                item.LayerColorBrush = GetBrushFromAci(newAci);
+
+                var doc =
+                    Autodesk.AutoCAD.ApplicationServices.Core.Application
+                        .DocumentManager
+                        .MdiActiveDocument;
+
+                if (doc != null)
+                {
+                    using (doc.LockDocument())
+                    {
+                        using (Transaction tr =
+                            doc.Database.TransactionManager
+                                .StartTransaction())
+                        {
+                            LayerTable lt =
+                                (LayerTable)tr.GetObject(
+                                    doc.Database.LayerTableId,
+                                    OpenMode.ForRead);
+
+                            if (lt.Has(layerName))
+                            {
+                                LayerTableRecord ltr =
+                                    (LayerTableRecord)tr.GetObject(
+                                        lt[layerName],
+                                        OpenMode.ForWrite);
+
+                                ltr.Color =
+                                    Autodesk.AutoCAD.Colors.Color
+                                        .FromColorIndex(
+                                            ColorMethod.ByAci,
+                                            newAci);
+                            }
+
+                            tr.Commit();
+                        }
+                    }
+
+                    doc.Editor.Regen();
+                }
+            }
+        }
+
+        private void BtnDatThietBi_Click(
+            object sender,
+            RoutedEventArgs e)
+        {
+            EquipUiContext ctx = GetEquipContext(sender);
+
+            var doc =
+                Autodesk.AutoCAD.ApplicationServices.Core.Application
+                    .DocumentManager
+                    .MdiActiveDocument;
+
+            if (doc == null)
+                return;
+
+            var db = doc.Database;
+            var ed = doc.Editor;
+
+            string equipType = GetSelectedEquipTypeName(ctx);
+            string loaiKey = (equipType ?? "").ToUpperInvariant();
+            bool isDauPhun =
+                string.IsNullOrEmpty(ctx?.Suffix) &&
+                (loaiKey.Contains("ĐẦU PHUN") ||
+                 loaiKey.Contains("DAU PHUN") ||
+                 loaiKey.Contains("PHUN"));
+
+            bool isMayLanh =
+                ctx?.Suffix == "ACMV" &&
+                (loaiKey.Contains("MÁY LẠNH") ||
+                 loaiKey.Contains("MAY LANH"));
+
+            bool isQuat =
+                ctx?.Suffix == "ACMV" &&
+                (loaiKey.Contains("QUẠT") ||
+                 loaiKey.Contains("QUAT"));
+
+            string model;
+
+            if (isDauPhun)
+            {
+                model = BuildDauPhunModelText();
+            }
+            else if (isMayLanh)
+            {
+                model = BuildMayLanhModelText();
+            }
+            else if (isQuat)
+            {
+                model = BuildQuatModelText();
+            }
+            else
+            {
+                model =
+                    (ctx?.LstSize?.SelectedItem as PipeSizeItem)
+                        ?.SizeName ?? "";
+            }
+
+            if (string.IsNullOrEmpty(model))
+            {
+                MessageBox.Show(
+                    "Vui lòng chọn model/kích thước thiết bị trước khi đặt!",
+                    "Cảnh báo");
+                return;
+            }
+
+            string layerName =
+                $"{GetEquipLayerPrefix(ctx)}_{CleanLayerText(model)}";
+            string displayText = (isDauPhun || isMayLanh || isQuat)
+                ? model
+                : $"{equipType} {model}";
+
+            double textHeight = Math.Max(
+                50.0 * LabelTextHeightToWidthRatio,
+                MinimumLabelTextHeight);
+
+            Autodesk.AutoCAD.Internal.Utils.SetFocusToDwgView();
+
+            using (doc.LockDocument())
+            {
+                using (Transaction trInit =
+                    db.TransactionManager.StartTransaction())
+                {
+                    EnsureLayerExists(
+                        trInit,
+                        db,
+                        layerName,
+                        false);
+
+                    LayerTable lt =
+                        (LayerTable)trInit.GetObject(
+                            db.LayerTableId,
+                            OpenMode.ForRead);
+
+                    db.Clayer = lt[layerName];
+                    trInit.Commit();
+                }
+            }
+
+            int placedCount = 0;
+
+            ed.WriteMessage(
+                $"\n[ĐẶT THIẾT BỊ] Layer: {layerName} | " +
+                $"Bấm chuột để đặt text, ESC để kết thúc.");
+
+            while (true)
+            {
+                PromptPointOptions ppo =
+                    new PromptPointOptions(
+                        $"\nChọn vị trí đặt thiết bị ({displayText}) " +
+                        $"[đã đặt {placedCount}] <ESC kết thúc>: ")
+                    {
+                        AllowNone = true
+                    };
+
+                PromptPointResult ppr = ed.GetPoint(ppo);
+
+                if (ppr.Status != PromptStatus.OK)
+                    break;
+
+                Point3d pt = ppr.Value;
+
+                using (doc.LockDocument())
+                using (Transaction tr =
+                    db.TransactionManager.StartTransaction())
+                {
+                    BlockTableRecord btr =
+                        (BlockTableRecord)tr.GetObject(
+                            db.CurrentSpaceId,
+                            OpenMode.ForWrite);
+
+                    EnsureLayerExists(
+                        tr,
+                        db,
+                        layerName,
+                        false);
+
+                    DBText txt = new DBText();
+                    txt.SetDatabaseDefaults(db);
+                    txt.TextString = displayText;
+                    txt.Height = textHeight;
+                    txt.Layer = layerName;
+                    txt.ColorIndex = 256;
+                    txt.Justify = AttachmentPoint.MiddleCenter;
+                    txt.AlignmentPoint = pt;
+                    txt.Position = pt;
+
+                    btr.AppendEntity(txt);
+                    tr.AddNewlyCreatedDBObject(txt, true);
+                    txt.AdjustAlignment(db);
+
+                    tr.Commit();
+                    placedCount++;
+                }
+
+                ed.Regen();
+            }
+
+            ed.WriteMessage(
+                $"\n[ĐẶT THIẾT BỊ] Đã đặt {placedCount} thiết bị " +
+                $"trên Layer: {layerName}");
+        }
+
         private class PipeUiContext
         {
             public string Suffix { get; set; }
@@ -6265,6 +8396,30 @@ namespace ClassLibrary4
             public WpfComboBox CmbVatLieu { get; set; }
             public WpfListBox LstVatLieu { get; set; }
             public WpfTextBox TxtVatLieuThem { get; set; }
+            public WpfListBox LstSize { get; set; }
+            public WpfTextBox TxtSizeThem { get; set; }
+            public ObservableCollection<PipeSizeItem> Sizes { get; set; }
+        }
+
+        private class ValveUiContext
+        {
+            public string Suffix { get; set; }
+            public string HeThongMacDinh { get; set; }
+            public WpfComboBox CmbHeThong { get; set; }
+            public WpfListBox LstLoaiVan { get; set; }
+            public WpfTextBox TxtLoaiVanThem { get; set; }
+            public WpfListBox LstSize { get; set; }
+            public WpfTextBox TxtSizeThem { get; set; }
+            public ObservableCollection<PipeSizeItem> Sizes { get; set; }
+        }
+
+        private class EquipUiContext
+        {
+            public string Suffix { get; set; }
+            public string HeThongMacDinh { get; set; }
+            public WpfComboBox CmbHeThong { get; set; }
+            public WpfListBox LstLoai { get; set; }
+            public WpfTextBox TxtLoaiThem { get; set; }
             public WpfListBox LstSize { get; set; }
             public WpfTextBox TxtSizeThem { get; set; }
             public ObservableCollection<PipeSizeItem> Sizes { get; set; }
