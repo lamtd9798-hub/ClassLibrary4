@@ -2868,76 +2868,170 @@ namespace ClassLibrary4
             if (e.Key != WpfKey.Enter)
                 return;
 
-            WpfTextBox txt = sender as WpfTextBox;
-            if (txt == null)
-                return;
+            e.Handled = true;
 
-            string value = (txt.Text ?? "").Trim();
-            if (string.IsNullOrWhiteSpace(value))
-                return;
-
-            string name = txt.Name ?? "";
-            string listName = null;
-
-            if (name.Contains("SizeOngGio"))
-                listName = "LstSizeOngGioACMV";
-            else if (name.Contains("CnEi"))
-                listName = "LstCnEiOngGioACMV";
-
-            if (listName == null)
-                return;
-
-            WpfListBox lst = TimListBox(listName);
-            if (lst == null)
-                return;
-
-            bool existed =
-                lst.Items
-                    .Cast<object>()
-                    .Any(x => LayNoiDungItem(x).Equals(
-                        value,
-                        StringComparison.OrdinalIgnoreCase));
-
-            if (!existed)
+            try
             {
-                lst.Items.Add(
-                    new WpfListBoxItem
-                    {
-                        Content = value
-                    });
+                WpfTextBox txt = sender as WpfTextBox;
+                if (txt == null)
+                    return;
 
-                // Nếu là size ống gió → đồng bộ vào ctx.Sizes
-                if (listName == "LstSizeOngGioACMV" && _ctxACMV != null)
+                string value = (txt.Text ?? "").Trim();
+                if (string.IsNullOrWhiteSpace(value))
+                    return;
+
+                string name = txt.Name ?? "";
+
+                if (name.Contains("SizeOngGio"))
                 {
-                    List<string> sizes =
-                        _ctxACMV.Sizes
-                            .Select(x => x.SizeName)
-                            .ToList();
+                    if (_ctxACMV?.Sizes == null)
+                        return;
 
-                    if (!sizes.Contains(
-                        value,
-                        StringComparer.OrdinalIgnoreCase))
+                    PipeSizeItem target =
+                        _ctxACMV.Sizes.FirstOrDefault(
+                            x => x.SizeName.Equals(
+                                value,
+                                StringComparison.OrdinalIgnoreCase));
+
+                    if (target == null)
                     {
-                        sizes.Add(value);
-                        CapNhatVaSapXepDanhSachSize(_ctxACMV, sizes, value);
+                        string layerPrefix = GetLayerPrefix(_ctxACMV);
+                        string layerName = $"{layerPrefix}_{value}";
+                        short aci = GetExpectedAciColor(layerName);
+
+                        target =
+                            new PipeSizeItem
+                            {
+                                SizeName = value,
+                                AciColor = aci,
+                                LayerColorBrush = GetBrushFromAci(aci)
+                            };
+
+                        InsertPipeSizeItemSorted(_ctxACMV.Sizes, target);
                     }
+
+                    WpfListBox lstSize =
+                        TimListBox("LstSizeOngGioACMV");
+
+                    if (lstSize != null)
+                        lstSize.SelectedItem = target;
+
+                    txt.Text = "";
+                    return;
+                }
+
+                if (name.Contains("CnEi"))
+                {
+                    WpfListBox lst =
+                        TimListBox("LstCnEiOngGioACMV");
+                    if (lst == null)
+                        return;
+
+                    bool existed =
+                        lst.Items
+                            .Cast<object>()
+                            .Any(x => LayNoiDungItem(x).Equals(
+                                value,
+                                StringComparison.OrdinalIgnoreCase));
+
+                    if (!existed)
+                    {
+                        lst.Items.Add(
+                            new WpfListBoxItem
+                            {
+                                Content = value
+                            });
+                    }
+
+                    foreach (object item in lst.Items)
+                    {
+                        if (LayNoiDungItem(item).Equals(
+                            value,
+                            StringComparison.OrdinalIgnoreCase))
+                        {
+                            lst.SelectedItem = item;
+                            lst.ScrollIntoView(item);
+                            break;
+                        }
+                    }
+
+                    txt.Text = "";
                 }
             }
-
-            foreach (object item in lst.Items)
+            catch
             {
-                if (LayNoiDungItem(item).Equals(
-                    value,
-                    StringComparison.OrdinalIgnoreCase))
+                // Tránh bật hộp thoại lỗi trong AutoCAD khi đang xử lý KeyDown.
+            }
+        }
+
+        private void InsertPipeSizeItemSorted(
+            ObservableCollection<PipeSizeItem> collection,
+            PipeSizeItem item)
+        {
+            if (collection == null || item == null)
+                return;
+
+            double itemA = GetFirstNumberForSort(item.SizeName);
+            double itemB = GetSecondNumberForSort(item.SizeName);
+
+            int insertIndex = collection.Count;
+            for (int i = 0; i < collection.Count; i++)
+            {
+                PipeSizeItem current = collection[i];
+                double curA = GetFirstNumberForSort(current?.SizeName);
+                double curB = GetSecondNumberForSort(current?.SizeName);
+
+                if (itemA < curA ||
+                    (Math.Abs(itemA - curA) < 1e-9 && itemB < curB) ||
+                    (Math.Abs(itemA - curA) < 1e-9 &&
+                     Math.Abs(itemB - curB) < 1e-9 &&
+                     string.Compare(
+                         item.SizeName,
+                         current?.SizeName,
+                         StringComparison.OrdinalIgnoreCase) < 0))
                 {
-                    lst.SelectedItem = item;
-                    lst.ScrollIntoView(item);
+                    insertIndex = i;
                     break;
                 }
             }
 
-            txt.Text = "";
-            e.Handled = true;
+            collection.Insert(insertIndex, item);
+        }
+
+        private static double GetFirstNumberForSort(string text)
+        {
+            MatchCollection matches =
+                Regex.Matches(text ?? "", @"\d+(\.\d+)?");
+
+            if (matches.Count == 0)
+                return 0.0;
+
+            if (double.TryParse(
+                    matches[0].Value,
+                    NumberStyles.Any,
+                    CultureInfo.InvariantCulture,
+                    out double result))
+                return result;
+
+            return 0.0;
+        }
+
+        private static double GetSecondNumberForSort(string text)
+        {
+            MatchCollection matches =
+                Regex.Matches(text ?? "", @"\d+(\.\d+)?");
+
+            if (matches.Count < 2)
+                return 0.0;
+
+            if (double.TryParse(
+                    matches[1].Value,
+                    NumberStyles.Any,
+                    CultureInfo.InvariantCulture,
+                    out double result))
+                return result;
+
+            return 0.0;
         }
 
         private void LstOngGioCot_KeyDown(
@@ -2956,7 +3050,6 @@ namespace ClassLibrary4
 
             object selected = lst.SelectedItem;
             string removed = LayNoiDungItem(selected);
-            lst.Items.Remove(selected);
 
             if (lst.Name == "LstSizeOngGioACMV" && _ctxACMV != null)
             {
@@ -2967,7 +3060,15 @@ namespace ClassLibrary4
 
                 if (item != null)
                     _ctxACMV.Sizes.Remove(item);
+
+                if (_ctxACMV.Sizes.Count > 0)
+                    lst.SelectedIndex = 0;
+
+                e.Handled = true;
+                return;
             }
+
+            lst.Items.Remove(selected);
 
             if (lst.Items.Count > 0)
                 lst.SelectedIndex = 0;
@@ -6767,7 +6868,6 @@ namespace ClassLibrary4
             object sender,
             RoutedEventArgs e)
         {
-            // Chỉ dùng cho ACMV ống gió
             PipeUiContext ctx = _ctxACMV ?? GetContext(sender);
             if (ctx == null)
                 ctx = _ctxACMV;
@@ -6795,6 +6895,7 @@ namespace ClassLibrary4
                 {
                     new TypedValue((int)DxfCode.Operator, "<OR"),
                     new TypedValue((int)DxfCode.Start, "LINE"),
+                    new TypedValue((int)DxfCode.Start, "ARC"),
                     new TypedValue((int)DxfCode.Start, "LWPOLYLINE"),
                     new TypedValue((int)DxfCode.Start, "POLYLINE"),
                     new TypedValue((int)DxfCode.Start, "TEXT"),
@@ -6810,14 +6911,19 @@ namespace ClassLibrary4
                 return;
 
             var sizeTexts =
-                new List<(Point3d Pos, string Size, double Width, string Ei)>();
+                new List<OngGioSizeTextInfo>();
+            var protectionTexts =
+                new List<OngGioProtectionTextInfo>();
             var ogTypeTexts =
-                new List<(Point3d Pos, string Type)>();
-            var curves = new List<ObjectId>();
+                new List<OngGioTypeTextInfo>();
+            var segments =
+                new List<OngGioSegmentInfo>();
+            var arcs =
+                new List<OngGioArcInfo>();
+            var candidates =
+                new List<OngGioCenterlineCandidate>();
 
-            string layerPrefix = GetLayerPrefix(ctx);
-            if (string.IsNullOrWhiteSpace(layerPrefix))
-                layerPrefix = "ACMV";
+            string layerPrefix = GetOngGioAutoLayerPrefix(ctx);
 
             using (doc.LockDocument())
             using (Transaction tr =
@@ -6842,46 +6948,95 @@ namespace ClassLibrary4
                             pt = dbText.AlignmentPoint;
 
                         if (TryParseOngGioSize(str, out string sz, out double w, out string ei))
-                            sizeTexts.Add((pt, sz, w, ei));
+                        {
+                            sizeTexts.Add(
+                                new OngGioSizeTextInfo
+                                {
+                                    Pos = pt,
+                                    Size = sz,
+                                    Width = w,
+                                    Ei = ei
+                                });
+                        }
+
+                        if (TryParseOngGioProtection(str, out string protect))
+                        {
+                            protectionTexts.Add(
+                                new OngGioProtectionTextInfo
+                                {
+                                    Pos = pt,
+                                    Text = protect
+                                });
+                        }
 
                         if (TryParseOngGioType(str, out string ogType))
-                            ogTypeTexts.Add((pt, ogType));
+                        {
+                            ogTypeTexts.Add(
+                                new OngGioTypeTextInfo
+                                {
+                                    Pos = pt,
+                                    Type = ogType
+                                });
+                        }
                     }
                     else if (ent is MText mText)
                     {
-                        string str = (mText.Contents ?? "")
-                            .Replace("\\P", " ").Trim();
-                        // bỏ format đơn giản
-                        if (str.Contains(";"))
-                        {
-                            int i = str.LastIndexOf(';');
-                            if (i >= 0 && i + 1 < str.Length)
-                                str = str.Substring(i + 1);
-                        }
-                        str = Regex.Replace(str, @"\\[A-Za-z][^;]*;", "");
+                        string str =
+                            LayPlainTextTuMText(mText.Contents);
                         Point3d pt = mText.Location;
 
                         if (TryParseOngGioSize(str, out string sz, out double w, out string ei))
-                            sizeTexts.Add((pt, sz, w, ei));
+                        {
+                            sizeTexts.Add(
+                                new OngGioSizeTextInfo
+                                {
+                                    Pos = pt,
+                                    Size = sz,
+                                    Width = w,
+                                    Ei = ei
+                                });
+                        }
+
+                        if (TryParseOngGioProtection(str, out string protect))
+                        {
+                            protectionTexts.Add(
+                                new OngGioProtectionTextInfo
+                                {
+                                    Pos = pt,
+                                    Text = protect
+                                });
+                        }
 
                         if (TryParseOngGioType(str, out string ogType))
-                            ogTypeTexts.Add((pt, ogType));
+                        {
+                            ogTypeTexts.Add(
+                                new OngGioTypeTextInfo
+                                {
+                                    Pos = pt,
+                                    Type = ogType
+                                });
+                        }
                     }
-                    else if (ent is Curve)
+                    else if (ent is Entity src)
                     {
-                        curves.Add(so.ObjectId);
+                        bool hasClosedCandidate =
+                            TryCreateOngGioCandidateFromRectangle(
+                                src,
+                                out OngGioCenterlineCandidate closedCandidate);
+
+                        if (hasClosedCandidate)
+                        {
+                            candidates.Add(closedCandidate);
+                        }
+
+                        if (!hasClosedCandidate)
+                            AddOngGioSegmentsFromEntity(src, segments);
+
+                        AddOngGioArcFromEntity(src, arcs);
                     }
                 }
 
                 tr.Commit();
-            }
-
-            if (curves.Count == 0)
-            {
-                MessageBox.Show(
-                    "Không tìm thấy đường LINE/POLYLINE trong vùng chọn.",
-                    "Cảnh báo");
-                return;
             }
 
             if (sizeTexts.Count == 0)
@@ -6892,9 +7047,39 @@ namespace ClassLibrary4
                 return;
             }
 
+            candidates.AddRange(
+                CreateOngGioCandidatesFromParallelSegments(segments));
+            candidates.AddRange(
+                CreateReducerCandidatesFromEndSegments(segments));
+            List<OngGioCenterlineCandidate> arcCandidates =
+                CreateOngGioCandidatesFromConcentricArcs(arcs);
+            candidates.AddRange(arcCandidates);
+            candidates =
+                RemoveShortStraightCandidatesNearArcs(
+                    candidates,
+                    arcCandidates);
+
+            candidates =
+                RemoveDuplicateOngGioCandidates(candidates)
+                    .Where(x => x != null && x.Length > 100.0)
+                    .ToList();
+
+            ExtendBranchCandidatesToNearbyMainDucts(candidates);
+
+            if (candidates.Count == 0)
+            {
+                MessageBox.Show(
+                    "Không nhận diện được khung ống gió hình chữ nhật trong vùng chọn.\n" +
+                    "Hãy quét gồm 4 cạnh LINE/POLYLINE hoặc closed polyline của ống gió, kèm chữ size dạng 500x200.",
+                    "Cảnh báo");
+                return;
+            }
+
             int converted = 0;
             string defaultOg =
-                ogTypeTexts.Count > 0 ? ogTypeTexts[0].Type : "OG THẢI";
+                ogTypeTexts.Count > 0
+                    ? ogTypeTexts[0].Type
+                    : "OG THẢI";
 
             using (doc.LockDocument())
             using (Transaction tr =
@@ -6904,56 +7089,57 @@ namespace ClassLibrary4
                     (BlockTableRecord)tr.GetObject(
                         db.CurrentSpaceId, OpenMode.ForWrite);
 
-                foreach (ObjectId cid in curves)
+                foreach (OngGioCenterlineCandidate candidate in candidates)
                 {
-                    Entity src =
-                        tr.GetObject(cid, OpenMode.ForRead)
-                            as Entity;
-                    if (src == null) continue;
-
-                    // Bỏ đường bao hình chữ nhật (outline ống gió 2D)
-                    // — chỉ lấy đường tâm (mở, đủ dài)
-                    if (LaDuongBaoOngGio(src))
+                    if (candidate == null ||
+                        candidate.Length <= 100.0)
                         continue;
 
-                    Point3d mid = LayDiemDaiDien(src);
+                    if (IsOngGioCandidateBlockedByInternalMark(
+                            candidate,
+                            segments))
+                        continue;
 
-                    // Size gần nhất
-                    string size = sizeTexts[0].Size;
-                    double width = sizeTexts[0].Width;
-                    string eiPart = sizeTexts[0].Ei;
-                    double best = double.MaxValue;
-                    foreach (var st in sizeTexts)
-                    {
-                        double d = mid.DistanceTo(st.Pos);
-                        if (d < best)
-                        {
-                            best = d;
-                            size = st.Size;
-                            width = st.Width;
-                            eiPart = st.Ei;
-                        }
-                    }
+                    OngGioSizeTextInfo sizeInfo =
+                        FindNearestOngGioSizeText(
+                            candidate,
+                            sizeTexts);
 
-                    // Tên OG gần nhất
-                    string ogType = defaultOg;
-                    best = double.MaxValue;
-                    foreach (var ot in ogTypeTexts)
+                    if (sizeInfo == null)
+                        continue;
+
+                    string size = sizeInfo.Size;
+                    double width = sizeInfo.Width;
+                    string eiPart = sizeInfo.Ei;
+
+                    if (string.IsNullOrWhiteSpace(eiPart))
                     {
-                        double d = mid.DistanceTo(ot.Pos);
-                        if (d < best)
-                        {
-                            best = d;
-                            ogType = ot.Type;
-                        }
+                        OngGioProtectionTextInfo protectInfo =
+                            FindNearestOngGioProtectionText(
+                                candidate,
+                                protectionTexts);
+                        if (protectInfo != null)
+                            eiPart = protectInfo.Text;
                     }
 
                     if (width <= 0)
                         width = LayWidthTuSize(size);
                     if (width <= 0)
-                        width = 100;
+                        width = candidate.DuctWidth;
+                    if (width <= 0)
+                        width = 100.0;
 
-                    // Layer: ACMV_OG THẢI_900x300_EI30
+                    string ogType = defaultOg;
+                    OngGioTypeTextInfo typeInfo =
+                        FindNearestOngGioTypeText(
+                            candidate,
+                            ogTypeTexts);
+                    if (typeInfo != null &&
+                        !string.IsNullOrWhiteSpace(typeInfo.Type))
+                    {
+                        ogType = typeInfo.Type;
+                    }
+
                     string sizeForLayer = size;
                     if (!string.IsNullOrWhiteSpace(eiPart))
                         sizeForLayer = size + "_" + eiPart;
@@ -6963,54 +7149,50 @@ namespace ClassLibrary4
 
                     EnsureLayerExists(tr, db, layerName, true);
 
-                    Polyline newPl = TaoPolylineTuCurve(src);
-                    if (newPl == null)
-                        continue;
-
-                    // Bỏ polyline quá ngắn sau khi copy
-                    try
+                    if (candidate.IsReducer)
                     {
-                        if (newPl.Length < width * 0.3 && newPl.Closed)
-                        {
-                            newPl.Dispose();
+                        converted += DrawReducerCandidate(
+                            tr,
+                            db,
+                            btr,
+                            candidate,
+                            sizeTexts,
+                            protectionTexts,
+                            candidates,
+                            ogType,
+                            layerPrefix);
+                    }
+                    else
+                    {
+                        Polyline newPl =
+                            CreatePolylineFromOngGioCandidate(candidate);
+                        if (newPl == null)
                             continue;
+
+                        newPl.SetDatabaseDefaults(db);
+                        newPl.Layer = layerName;
+                        newPl.ColorIndex = 256;
+                        newPl.ConstantWidth = width;
+
+                        btr.AppendEntity(newPl);
+                        tr.AddNewlyCreatedDBObject(newPl, true);
+
+                        if (candidate.Length >=
+                            Math.Max(width * 2.0, 1500.0))
+                        {
+                            AddOngGioLabel(
+                                tr,
+                                db,
+                                btr,
+                                layerName,
+                                BuildOngGioDisplayText(size, eiPart),
+                                width,
+                                candidate.Mid,
+                                candidate.Direction);
                         }
+
+                        converted++;
                     }
-                    catch { }
-
-                    newPl.SetDatabaseDefaults(db);
-                    newPl.Layer = layerName;
-                    newPl.ColorIndex = 256;
-                    // ConstantWidth = cạnh lớn của WxH
-                    newPl.ConstantWidth = width;
-
-                    btr.AppendEntity(newPl);
-                    tr.AddNewlyCreatedDBObject(newPl, true);
-
-                    // Text size giữa đường
-                    try
-                    {
-                        Point3d textPt = LayDiemGiuaPolyline(newPl);
-                        DBText label = new DBText();
-                        label.SetDatabaseDefaults(db);
-                        label.TextStyleId = db.Textstyle;
-                        label.TextString = size;
-                        label.Height = Math.Max(
-                            MinimumLabelTextHeight,
-                            width * 0.15);
-                        label.WidthFactor = 1.0;
-                        label.Layer = layerName;
-                        label.ColorIndex = 256;
-                        label.Justify = AttachmentPoint.MiddleCenter;
-                        label.AlignmentPoint = textPt;
-                        label.Position = textPt;
-                        btr.AppendEntity(label);
-                        tr.AddNewlyCreatedDBObject(label, true);
-                        try { label.AdjustAlignment(db); } catch { }
-                    }
-                    catch { }
-
-                    converted++;
                 }
 
                 tr.Commit();
@@ -7018,8 +7200,100 @@ namespace ClassLibrary4
 
             ed.Regen();
             ed.WriteMessage(
-                $"\n[VẼ OG TỰ ĐỘNG] Đã tạo {converted} ống gió " +
-                $"(size nhận diện từ bản vẽ, tên OG: {defaultOg} / theo text gần nhất).");
+                $"\n[VẼ OG TỰ ĐỘNG] Đã tạo {converted} đường tâm ống gió " +
+                $"từ khung chữ nhật. Độ dày = cạnh lớn nhất của size, layer gốc: {layerPrefix}.");
+        }
+
+        private class OngGioSizeTextInfo
+        {
+            public Point3d Pos { get; set; }
+            public string Size { get; set; }
+            public double Width { get; set; }
+            public string Ei { get; set; }
+        }
+
+        private class OngGioProtectionTextInfo
+        {
+            public Point3d Pos { get; set; }
+            public string Text { get; set; }
+        }
+
+        private class OngGioTypeTextInfo
+        {
+            public Point3d Pos { get; set; }
+            public string Type { get; set; }
+        }
+
+        private class OngGioSegmentInfo
+        {
+            public Point3d Start { get; set; }
+            public Point3d End { get; set; }
+            public Point3d Mid { get; set; }
+            public Vector3d Direction { get; set; }
+            public double Length { get; set; }
+            public string SourceKey { get; set; }
+        }
+
+        private class OngGioArcInfo
+        {
+            public Point3d Center { get; set; }
+            public double Radius { get; set; }
+            public double StartAngle { get; set; }
+            public double EndAngle { get; set; }
+            public double IncludedAngle { get; set; }
+            public Point3d Start { get; set; }
+            public Point3d End { get; set; }
+        }
+
+        private class OngGioCenterlineCandidate
+        {
+            public Point3d Start { get; set; }
+            public Point3d End { get; set; }
+            public Point3d Mid { get; set; }
+            public Vector3d Direction { get; set; }
+            public double Length { get; set; }
+            public double DuctWidth { get; set; }
+            public string Source { get; set; }
+            public bool IsArc { get; set; }
+            public Point3d ArcCenter { get; set; }
+            public double ArcRadius { get; set; }
+            public double ArcStartAngle { get; set; }
+            public double ArcEndAngle { get; set; }
+            public double ArcIncludedAngle { get; set; }
+            public bool IsReducer { get; set; }
+            public double StartDuctWidth { get; set; }
+            public double EndDuctWidth { get; set; }
+            public List<Point3d> Vertices { get; set; }
+        }
+
+        private string GetOngGioAutoLayerPrefix(PipeUiContext ctx)
+        {
+            string systemCode = CleanLayerText(GetSystemCode(ctx));
+            if (string.IsNullOrWhiteSpace(systemCode))
+                systemCode = "ACMV";
+
+            string viTri = GetViTriText("ACMV");
+            if (!string.IsNullOrWhiteSpace(viTri))
+                return $"{systemCode}_{viTri}";
+
+            return systemCode;
+        }
+
+        private static string LayPlainTextTuMText(string contents)
+        {
+            string str = contents ?? "";
+            str = str.Replace("\\P", " ");
+            str = Regex.Replace(str, @"\\[A-Za-z][^;]*;", "");
+            str = Regex.Replace(str, @"[{}]", "");
+            str = str.Replace("\r", " ").Replace("\n", " ");
+
+            if (str.Contains(";"))
+            {
+                string[] parts = str.Split(';');
+                str = parts.Length > 0 ? parts[parts.Length - 1] : str;
+            }
+
+            return Regex.Replace(str, @"\s+", " ").Trim();
         }
 
         private bool TryParseOngGioSize(
@@ -7041,7 +7315,7 @@ namespace ClassLibrary4
 
             Match m = Regex.Match(
                 n,
-                @"(?<![A-Z0-9])(?<A>\d{2,4}(?:\.\d+)?)\s*[xX/\-]\s*(?<B>\d{2,4}(?:\.\d+)?)(?![A-Z0-9])");
+                @"(?<![A-Z0-9])(?<A>\d{2,4}(?:\.\d+)?)\s*[xX×*/\/\-]\s*(?<B>\d{2,4}(?:\.\d+)?)(?![A-Z0-9])");
 
             if (!m.Success)
                 return false;
@@ -7066,52 +7340,1788 @@ namespace ClassLibrary4
             // Bề rộng nét = cạnh LỚN (900x300 → 900)
             width = Math.Max(a, b);
 
-            // EI đi kèm: "900x300, ei30" / "900x300 EI30"
             Match ei = Regex.Match(
                 n,
-                @"\bEI\s*(?<E>\d{1,3})\b");
+                @"\b(?<K>EI|CN)\s*(?<E>\d{0,3})\b");
             if (ei.Success)
-                eiText = "EI" + ei.Groups["E"].Value;
+                eiText =
+                    ei.Groups["K"].Value +
+                    ei.Groups["E"].Value;
 
             return true;
         }
 
-        /// <summary>
-        /// Đường bao hình hộp ống gió (closed, gần chữ nhật, chu vi nhỏ)
-        /// — không dùng làm đường tâm.
-        /// </summary>
-        private static bool LaDuongBaoOngGio(Entity src)
+        private bool TryParseOngGioProtection(
+            string source,
+            out string protectionText)
         {
+            protectionText = "";
+
+            if (string.IsNullOrWhiteSpace(source))
+                return false;
+
+            string n = source.ToUpperInvariant()
+                .Replace("\r", " ")
+                .Replace("\n", " ");
+
+            Match m = Regex.Match(
+                n,
+                @"\b(?<K>EI|CN)\s*(?<E>\d{0,3})\b");
+
+            if (!m.Success)
+                return false;
+
+            protectionText =
+                m.Groups["K"].Value +
+                m.Groups["E"].Value;
+
+            return !string.IsNullOrWhiteSpace(protectionText);
+        }
+
+        private bool TryCreateOngGioCandidateFromRectangle(
+            Entity src,
+            out OngGioCenterlineCandidate candidate)
+        {
+            candidate = null;
+
             try
             {
                 if (src is Polyline pl)
                 {
-                    if (pl.Closed)
-                        return true;
+                    List<Point3d> pts =
+                        GetPolylineVerticesForOngGio(pl);
 
-                    // 4-5 đỉnh ngắn: có thể là khung
-                    if (pl.NumberOfVertices >= 4 &&
-                        pl.NumberOfVertices <= 6 &&
-                        pl.Length < 5000)
-                    {
-                        // Kiểm tra gần khép kín
-                        Point2d a = pl.GetPoint2dAt(0);
-                        Point2d b = pl.GetPoint2dAt(pl.NumberOfVertices - 1);
-                        if (a.GetDistanceTo(b) < 50)
-                            return true;
-                    }
-                }
-
-                if (src is Line line)
-                {
-                    // Đoạn rất ngắn — bỏ
-                    if (line.Length < 100)
-                        return true;
+                    return TryCreateOngGioCandidateFromPointLoop(
+                        pts,
+                        "RECT-PL",
+                        out candidate);
                 }
             }
             catch { }
 
             return false;
+        }
+
+        private static List<Point3d> GetPolylineVerticesForOngGio(
+            Polyline pl)
+        {
+            var pts = new List<Point3d>();
+            if (pl == null)
+                return pts;
+
+            for (int i = 0; i < pl.NumberOfVertices; i++)
+            {
+                Point3d p = pl.GetPoint3dAt(i);
+                if (pts.Count == 0 ||
+                    pts[pts.Count - 1].DistanceTo(p) > 1e-6)
+                {
+                    pts.Add(p);
+                }
+            }
+
+            if (pts.Count > 1 &&
+                pts[0].DistanceTo(pts[pts.Count - 1]) < 50.0)
+            {
+                pts.RemoveAt(pts.Count - 1);
+            }
+
+            if (!pl.Closed &&
+                pts.Count >= 2 &&
+                pts[0].DistanceTo(pts[pts.Count - 1]) >= 50.0)
+            {
+                pts.Clear();
+            }
+
+            return pts;
+        }
+
+        private bool TryCreateOngGioCandidateFromPointLoop(
+            List<Point3d> pts,
+            string source,
+            out OngGioCenterlineCandidate candidate)
+        {
+            candidate = null;
+
+            if (pts == null || pts.Count != 4)
+                return false;
+
+            double[] len = new double[4];
+            Vector3d[] dir = new Vector3d[4];
+
+            for (int i = 0; i < 4; i++)
+            {
+                Point3d a = pts[i];
+                Point3d b = pts[(i + 1) % 4];
+                Vector3d v = b - a;
+                len[i] = v.Length;
+
+                if (len[i] < 50.0)
+                    return false;
+
+                dir[i] = v.GetNormal();
+            }
+
+            double avg02 = (len[0] + len[2]) / 2.0;
+            double avg13 = (len[1] + len[3]) / 2.0;
+
+            bool pair02Parallel = AreParallel(dir[0], dir[2], 15.0);
+            bool pair13Parallel = AreParallel(dir[1], dir[3], 15.0);
+
+            if (!pair02Parallel && !pair13Parallel)
+                return false;
+
+            Point3d start;
+            Point3d end;
+            double ductWidth;
+            double startWidth;
+            double endWidth;
+
+            bool use02AsEnds =
+                pair02Parallel &&
+                (!pair13Parallel || avg02 <= avg13);
+
+            if (use02AsEnds)
+            {
+                start = MidPoint(pts[0], pts[1]);
+                end = MidPoint(pts[2], pts[3]);
+                ductWidth = avg02;
+                startWidth = len[0];
+                endWidth = len[2];
+            }
+            else
+            {
+                start = MidPoint(pts[1], pts[2]);
+                end = MidPoint(pts[3], pts[0]);
+                ductWidth = avg13;
+                startWidth = len[1];
+                endWidth = len[3];
+            }
+
+            bool ok = TryCreateOngGioCenterlineCandidate(
+                start,
+                end,
+                ductWidth,
+                source,
+                out candidate);
+
+            if (!ok || candidate == null)
+                return false;
+
+            candidate.StartDuctWidth = startWidth;
+            candidate.EndDuctWidth = endWidth;
+            candidate.IsReducer =
+                Math.Abs(startWidth - endWidth) >
+                Math.Max(80.0, Math.Max(startWidth, endWidth) * 0.12);
+
+            return true;
+        }
+
+        private void AddOngGioSegmentsFromEntity(
+            Entity src,
+            List<OngGioSegmentInfo> segments)
+        {
+            if (src == null || segments == null)
+                return;
+
+            try
+            {
+                if (src is Arc)
+                    return;
+
+                string key = src.ObjectId.IsNull
+                    ? Guid.NewGuid().ToString()
+                    : src.ObjectId.ToString();
+
+                if (src is Line line)
+                {
+                    AddOngGioSegment(
+                        line.StartPoint,
+                        line.EndPoint,
+                        key,
+                        segments);
+                    return;
+                }
+
+                if (src is Polyline pl)
+                {
+                    for (int i = 0; i < pl.NumberOfVertices - 1; i++)
+                    {
+                        AddOngGioSegment(
+                            pl.GetPoint3dAt(i),
+                            pl.GetPoint3dAt(i + 1),
+                            key,
+                            segments);
+                    }
+
+                    if (pl.Closed && pl.NumberOfVertices > 2)
+                    {
+                        AddOngGioSegment(
+                            pl.GetPoint3dAt(pl.NumberOfVertices - 1),
+                            pl.GetPoint3dAt(0),
+                            key,
+                            segments);
+                    }
+
+                    return;
+                }
+
+                if (src is Curve cv)
+                {
+                    AddOngGioSegment(
+                        cv.StartPoint,
+                        cv.EndPoint,
+                        key,
+                        segments);
+                }
+            }
+            catch { }
+        }
+
+        private void AddOngGioArcFromEntity(
+            Entity src,
+            List<OngGioArcInfo> arcs)
+        {
+            if (src == null || arcs == null)
+                return;
+
+            try
+            {
+                if (!(src is Arc arc))
+                    return;
+
+                double included =
+                    NormalizeSignedAngle(
+                        arc.EndAngle - arc.StartAngle);
+
+                if (Math.Abs(included) < Math.PI / 6.0 ||
+                    Math.Abs(included) > Math.PI * 0.75)
+                    return;
+
+                if (arc.Radius < 50.0)
+                    return;
+
+                arcs.Add(
+                    new OngGioArcInfo
+                    {
+                        Center = arc.Center,
+                        Radius = arc.Radius,
+                        StartAngle = arc.StartAngle,
+                        EndAngle = arc.EndAngle,
+                        IncludedAngle = included,
+                        Start = arc.StartPoint,
+                        End = arc.EndPoint
+                    });
+            }
+            catch { }
+        }
+
+        private static void AddOngGioSegment(
+            Point3d start,
+            Point3d end,
+            string sourceKey,
+            List<OngGioSegmentInfo> segments)
+        {
+            Vector3d v = end - start;
+            double len = v.Length;
+
+            if (len < 100.0)
+                return;
+
+            Vector3d dir = v.GetNormal();
+
+            segments.Add(
+                new OngGioSegmentInfo
+                {
+                    Start = start,
+                    End = end,
+                    Mid = MidPoint(start, end),
+                    Direction = dir,
+                    Length = len,
+                    SourceKey = sourceKey
+                });
+        }
+
+        private List<OngGioCenterlineCandidate> CreateOngGioCandidatesFromParallelSegments(
+            List<OngGioSegmentInfo> segments)
+        {
+            var result = new List<OngGioCenterlineCandidate>();
+
+            if (segments == null || segments.Count < 2)
+                return result;
+
+            for (int i = 0; i < segments.Count; i++)
+            {
+                for (int j = i + 1; j < segments.Count; j++)
+                {
+                    OngGioSegmentInfo a = segments[i];
+                    OngGioSegmentInfo b = segments[j];
+
+                    if (a == null || b == null)
+                        continue;
+
+                    if (!AreParallel(a.Direction, b.Direction, 10.0))
+                        continue;
+
+                    if (!AreSimilarLength(a.Length, b.Length, 0.35))
+                        continue;
+
+                    double gap =
+                        DistancePointToInfiniteLine(
+                            b.Mid,
+                            a.Start,
+                            a.Direction);
+
+                    if (gap < 50.0 || gap > 5000.0)
+                        continue;
+
+                    if (gap > Math.Min(a.Length, b.Length) * 0.75)
+                        continue;
+
+                    Vector3d u = a.Direction;
+
+                    double a0 = DotPoint(a.Start, u);
+                    double a1 = DotPoint(a.End, u);
+                    double b0 = DotPoint(b.Start, u);
+                    double b1 = DotPoint(b.End, u);
+
+                    if (a0 > a1)
+                        Swap(ref a0, ref a1);
+                    if (b0 > b1)
+                        Swap(ref b0, ref b1);
+
+                    double startT = Math.Max(a0, b0);
+                    double endT = Math.Min(a1, b1);
+                    double overlap = endT - startT;
+
+                    if (overlap < Math.Max(200.0, Math.Min(a.Length, b.Length) * 0.35))
+                        continue;
+
+                    Point3d aStart = PointOnSegmentProjection(a, startT, u);
+                    Point3d aEnd = PointOnSegmentProjection(a, endT, u);
+                    Point3d bStart = PointOnSegmentProjection(b, startT, u);
+                    Point3d bEnd = PointOnSegmentProjection(b, endT, u);
+
+                    if (aStart.DistanceTo(bStart) < 50.0 ||
+                        aEnd.DistanceTo(bEnd) < 50.0)
+                        continue;
+
+                    Point3d centerStart = MidPoint(aStart, bStart);
+                    Point3d centerEnd = MidPoint(aEnd, bEnd);
+
+                    if (TryCreateOngGioCenterlineCandidate(
+                            centerStart,
+                            centerEnd,
+                            gap,
+                            "RECT-LINES",
+                            out OngGioCenterlineCandidate candidate))
+                    {
+                        result.Add(candidate);
+                    }
+                }
+            }
+
+            return result;
+        }
+
+        private List<OngGioCenterlineCandidate> CreateReducerCandidatesFromEndSegments(
+            List<OngGioSegmentInfo> segments)
+        {
+            var result = new List<OngGioCenterlineCandidate>();
+
+            if (segments == null || segments.Count < 2)
+                return result;
+
+            for (int i = 0; i < segments.Count; i++)
+            {
+                for (int j = i + 1; j < segments.Count; j++)
+                {
+                    OngGioSegmentInfo a = segments[i];
+                    OngGioSegmentInfo b = segments[j];
+
+                    if (a == null || b == null)
+                        continue;
+
+                    if (!AreParallel(a.Direction, b.Direction, 12.0))
+                        continue;
+
+                    double maxLen = Math.Max(a.Length, b.Length);
+                    double minLen = Math.Min(a.Length, b.Length);
+
+                    if (maxLen < 80.0 || maxLen > 5000.0)
+                        continue;
+
+                    if (minLen / maxLen < 0.25)
+                        continue;
+
+                    if (Math.Abs(a.Length - b.Length) <=
+                        Math.Max(80.0, maxLen * 0.12))
+                        continue;
+
+                    Vector3d centerVector = b.Mid - a.Mid;
+                    double centerDistance = centerVector.Length;
+
+                    if (centerDistance < 100.0 ||
+                        centerDistance > maxLen * 4.0)
+                        continue;
+
+                    Vector3d centerDirection =
+                        centerVector.GetNormal();
+
+                    double dot =
+                        Math.Abs(
+                            centerDirection.DotProduct(
+                                a.Direction.GetNormal()));
+
+                    if (dot > Math.Sin(Math.PI / 9.0))
+                        continue;
+
+                    if (!TryCreateOngGioCenterlineCandidate(
+                            a.Mid,
+                            b.Mid,
+                            (a.Length + b.Length) / 2.0,
+                            "REDUCER-END-LINES",
+                            out OngGioCenterlineCandidate candidate))
+                        continue;
+
+                    candidate.IsReducer = true;
+                    candidate.StartDuctWidth = a.Length;
+                    candidate.EndDuctWidth = b.Length;
+
+                    result.Add(candidate);
+                }
+            }
+
+            return result;
+        }
+
+        private List<OngGioCenterlineCandidate> CreateOngGioCandidatesFromConcentricArcs(
+            List<OngGioArcInfo> arcs)
+        {
+            var result = new List<OngGioCenterlineCandidate>();
+
+            if (arcs == null || arcs.Count == 0)
+                return result;
+
+            var used = new HashSet<int>();
+
+            for (int i = 0; i < arcs.Count; i++)
+            {
+                if (used.Contains(i))
+                    continue;
+
+                OngGioArcInfo a = arcs[i];
+                int bestIndex = -1;
+                double bestScore = double.MaxValue;
+
+                for (int j = i + 1; j < arcs.Count; j++)
+                {
+                    if (used.Contains(j))
+                        continue;
+
+                    OngGioArcInfo b = arcs[j];
+
+                    if (a.Center.DistanceTo(b.Center) > 80.0)
+                        continue;
+
+                    if (Math.Abs(a.IncludedAngle - b.IncludedAngle) >
+                        Math.PI / 10.0)
+                        continue;
+
+                    double radiusGap =
+                        Math.Abs(a.Radius - b.Radius);
+                    if (radiusGap < 50.0 || radiusGap > 5000.0)
+                        continue;
+
+                    double angleScore =
+                        Math.Abs(NormalizeSignedAngle(a.StartAngle - b.StartAngle)) +
+                        Math.Abs(NormalizeSignedAngle(a.EndAngle - b.EndAngle));
+
+                    if (angleScore > Math.PI / 4.0)
+                        continue;
+
+                    double score = radiusGap + angleScore * 1000.0;
+                    if (score < bestScore)
+                    {
+                        bestScore = score;
+                        bestIndex = j;
+                    }
+                }
+
+                if (bestIndex >= 0)
+                {
+                    OngGioArcInfo b = arcs[bestIndex];
+                    used.Add(i);
+                    used.Add(bestIndex);
+
+                    double radius = (a.Radius + b.Radius) / 2.0;
+                    double startAngle =
+                        AverageAngle(a.StartAngle, b.StartAngle);
+                    double endAngle =
+                        AverageAngle(a.EndAngle, b.EndAngle);
+                    double included =
+                        NormalizeSignedAngle(endAngle - startAngle);
+
+                    result.Add(
+                        CreateArcCandidate(
+                            a.Center,
+                            radius,
+                            startAngle,
+                            endAngle,
+                            included,
+                            Math.Abs(a.Radius - b.Radius),
+                            "ELBOW-ARC-PAIR"));
+                }
+                else
+                {
+                    used.Add(i);
+                }
+            }
+
+            return result.Where(x => x != null).ToList();
+        }
+
+        private OngGioCenterlineCandidate CreateArcCandidate(
+            Point3d center,
+            double radius,
+            double startAngle,
+            double endAngle,
+            double includedAngle,
+            double ductWidth,
+            string source)
+        {
+            Point3d start = PointAtAngle(center, radius, startAngle);
+            Point3d end = PointAtAngle(center, radius, endAngle);
+            double midAngle = startAngle + includedAngle / 2.0;
+            Point3d mid = PointAtAngle(center, radius, midAngle);
+
+            Vector3d tangent =
+                new Vector3d(
+                    -Math.Sin(midAngle),
+                    Math.Cos(midAngle),
+                    0.0);
+
+            return new OngGioCenterlineCandidate
+            {
+                Start = start,
+                End = end,
+                Mid = mid,
+                Direction = tangent.GetNormal(),
+                Length = Math.Abs(radius * includedAngle),
+                DuctWidth = ductWidth,
+                Source = source,
+                IsArc = true,
+                ArcCenter = center,
+                ArcRadius = radius,
+                ArcStartAngle = startAngle,
+                ArcEndAngle = endAngle,
+                ArcIncludedAngle = includedAngle
+            };
+        }
+
+        private static Point3d PointOnSegmentProjection(
+            OngGioSegmentInfo seg,
+            double targetT,
+            Vector3d direction)
+        {
+            double startT = DotPoint(seg.Start, direction);
+            return seg.Start + direction * (targetT - startT);
+        }
+
+        private static bool TryCreateOngGioCenterlineCandidate(
+            Point3d start,
+            Point3d end,
+            double ductWidth,
+            string source,
+            out OngGioCenterlineCandidate candidate)
+        {
+            candidate = null;
+
+            Vector3d v = end - start;
+            double len = v.Length;
+
+            if (len < 100.0)
+                return false;
+
+            candidate =
+                new OngGioCenterlineCandidate
+                {
+                    Start = start,
+                    End = end,
+                    Mid = MidPoint(start, end),
+                    Direction = v.GetNormal(),
+                    Length = len,
+                    DuctWidth = ductWidth,
+                    Source = source
+                };
+
+            return true;
+        }
+
+        private static List<OngGioCenterlineCandidate> RemoveDuplicateOngGioCandidates(
+            List<OngGioCenterlineCandidate> candidates)
+        {
+            var result = new List<OngGioCenterlineCandidate>();
+
+            foreach (OngGioCenterlineCandidate candidate in
+                     (candidates ?? new List<OngGioCenterlineCandidate>())
+                     .Where(x => x != null)
+                     .OrderByDescending(x => x.Length))
+            {
+                bool duplicate = false;
+
+                foreach (OngGioCenterlineCandidate existing in result)
+                {
+                    if (IsDuplicateOngGioCandidate(existing, candidate))
+                    {
+                        duplicate = true;
+                        break;
+                    }
+                }
+
+                if (!duplicate)
+                    result.Add(candidate);
+            }
+
+            return result;
+        }
+
+        private static bool IsDuplicateOngGioCandidate(
+            OngGioCenterlineCandidate a,
+            OngGioCenterlineCandidate b)
+        {
+            if (a == null || b == null)
+                return false;
+
+            if (!AreParallel(a.Direction, b.Direction, 8.0))
+                return false;
+
+            double tol = Math.Max(
+                120.0,
+                Math.Min(
+                    Math.Max(a.DuctWidth, 0.0),
+                    Math.Max(b.DuctWidth, 0.0)) * 0.35);
+
+            bool sameEnds =
+                a.Start.DistanceTo(b.Start) <= tol &&
+                a.End.DistanceTo(b.End) <= tol;
+
+            bool reverseEnds =
+                a.Start.DistanceTo(b.End) <= tol &&
+                a.End.DistanceTo(b.Start) <= tol;
+
+            bool sameMiddle =
+                a.Mid.DistanceTo(b.Mid) <= tol &&
+                Math.Abs(a.Length - b.Length) <=
+                Math.Max(200.0, Math.Min(a.Length, b.Length) * 0.2);
+
+            return sameEnds || reverseEnds || sameMiddle;
+        }
+
+        private List<OngGioCenterlineCandidate> RemoveShortStraightCandidatesNearArcs(
+            List<OngGioCenterlineCandidate> candidates,
+            List<OngGioCenterlineCandidate> arcCandidates)
+        {
+            if (candidates == null ||
+                arcCandidates == null ||
+                arcCandidates.Count == 0)
+                return candidates ?? new List<OngGioCenterlineCandidate>();
+
+            var result = new List<OngGioCenterlineCandidate>();
+
+            foreach (OngGioCenterlineCandidate candidate in candidates)
+            {
+                if (candidate == null)
+                    continue;
+
+                if (candidate.IsArc ||
+                    candidate.IsReducer)
+                {
+                    result.Add(candidate);
+                    continue;
+                }
+
+                bool nearArc = false;
+
+                foreach (OngGioCenterlineCandidate arc in arcCandidates)
+                {
+                    if (arc == null || !arc.IsArc)
+                        continue;
+
+                    double d1 =
+                        candidate.Mid.DistanceTo(arc.Mid);
+                    double d2 =
+                        Math.Min(
+                            candidate.Start.DistanceTo(arc.Start),
+                            candidate.End.DistanceTo(arc.End));
+
+                    double tol =
+                        Math.Max(
+                            500.0,
+                            Math.Max(candidate.DuctWidth, arc.DuctWidth));
+
+                    if ((d1 <= tol || d2 <= tol) &&
+                        candidate.Length <= arc.Length * 0.85)
+                    {
+                        nearArc = true;
+                        break;
+                    }
+                }
+
+                if (!nearArc)
+                    result.Add(candidate);
+            }
+
+            return result;
+        }
+
+        private List<OngGioCenterlineCandidate> MergeMiterStraightCandidates(
+            List<OngGioCenterlineCandidate> candidates)
+        {
+            if (candidates == null || candidates.Count < 2)
+                return candidates ?? new List<OngGioCenterlineCandidate>();
+
+            var used = new HashSet<int>();
+            var result = new List<OngGioCenterlineCandidate>();
+
+            for (int i = 0; i < candidates.Count; i++)
+            {
+                if (used.Contains(i))
+                    continue;
+
+                OngGioCenterlineCandidate a = candidates[i];
+                if (a == null ||
+                    a.IsArc ||
+                    a.IsReducer ||
+                    a.DuctWidth <= 0.0)
+                {
+                    if (a != null)
+                        result.Add(a);
+                    continue;
+                }
+
+                int bestIndex = -1;
+                Point3d jointA = Point3d.Origin;
+                Point3d jointB = Point3d.Origin;
+                Point3d farA = Point3d.Origin;
+                Point3d farB = Point3d.Origin;
+                double bestScore = double.MaxValue;
+
+                for (int j = i + 1; j < candidates.Count; j++)
+                {
+                    if (used.Contains(j))
+                        continue;
+
+                    OngGioCenterlineCandidate b = candidates[j];
+                    if (b == null ||
+                        b.IsArc ||
+                        b.IsReducer ||
+                        b.DuctWidth <= 0.0)
+                        continue;
+
+                    if (Math.Abs(a.DuctWidth - b.DuctWidth) >
+                        Math.Max(100.0, Math.Max(a.DuctWidth, b.DuctWidth) * 0.2))
+                        continue;
+
+                    if (AreParallel(a.Direction, b.Direction, 18.0))
+                        continue;
+
+                    Point3d ja;
+                    Point3d jb;
+                    Point3d fa;
+                    Point3d fb;
+                    double d =
+                        ClosestEndpointPair(
+                            a,
+                            b,
+                            out ja,
+                            out jb,
+                            out fa,
+                            out fb);
+
+                    double tol =
+                        Math.Max(250.0, Math.Max(a.DuctWidth, b.DuctWidth) * 0.75);
+
+                    if (d > tol)
+                        continue;
+
+                    double score = d + Math.Abs(a.Length - b.Length) * 0.05;
+                    if (score < bestScore)
+                    {
+                        bestScore = score;
+                        bestIndex = j;
+                        jointA = ja;
+                        jointB = jb;
+                        farA = fa;
+                        farB = fb;
+                    }
+                }
+
+                if (bestIndex < 0)
+                {
+                    result.Add(a);
+                    continue;
+                }
+
+                OngGioCenterlineCandidate other = candidates[bestIndex];
+                Point3d joint = MidPoint(jointA, jointB);
+                var vertices = new List<Point3d> { farA, joint, farB };
+
+                OngGioCenterlineCandidate merged =
+                    new OngGioCenterlineCandidate
+                    {
+                        Start = farA,
+                        End = farB,
+                        Mid = joint,
+                        Direction = (joint - farA).GetNormal(),
+                        Length = farA.DistanceTo(joint) + joint.DistanceTo(farB),
+                        DuctWidth = (a.DuctWidth + other.DuctWidth) / 2.0,
+                        Source = "MITER",
+                        Vertices = vertices
+                    };
+
+                result.Add(merged);
+                used.Add(i);
+                used.Add(bestIndex);
+            }
+
+            return result;
+        }
+
+        private static double ClosestEndpointPair(
+            OngGioCenterlineCandidate a,
+            OngGioCenterlineCandidate b,
+            out Point3d jointA,
+            out Point3d jointB,
+            out Point3d farA,
+            out Point3d farB)
+        {
+            jointA = a.Start;
+            jointB = b.Start;
+            farA = a.End;
+            farB = b.End;
+
+            double best = a.Start.DistanceTo(b.Start);
+
+            double d = a.Start.DistanceTo(b.End);
+            if (d < best)
+            {
+                best = d;
+                jointA = a.Start;
+                jointB = b.End;
+                farA = a.End;
+                farB = b.Start;
+            }
+
+            d = a.End.DistanceTo(b.Start);
+            if (d < best)
+            {
+                best = d;
+                jointA = a.End;
+                jointB = b.Start;
+                farA = a.Start;
+                farB = b.End;
+            }
+
+            d = a.End.DistanceTo(b.End);
+            if (d < best)
+            {
+                best = d;
+                jointA = a.End;
+                jointB = b.End;
+                farA = a.Start;
+                farB = b.Start;
+            }
+
+            return best;
+        }
+
+        private void ExtendBranchCandidatesToNearbyMainDucts(
+            List<OngGioCenterlineCandidate> candidates)
+        {
+            if (candidates == null || candidates.Count < 2)
+                return;
+
+            foreach (OngGioCenterlineCandidate branch in candidates)
+            {
+                if (branch == null ||
+                    branch.IsArc ||
+                    branch.IsReducer ||
+                    branch.DuctWidth <= 0.0)
+                    continue;
+
+                foreach (bool useStart in new[] { true, false })
+                {
+                    Point3d endPoint =
+                        useStart ? branch.Start : branch.End;
+
+                    OngGioCenterlineCandidate bestMain = null;
+                    Point3d bestPoint = Point3d.Origin;
+                    double bestScore = double.MaxValue;
+
+                    foreach (OngGioCenterlineCandidate main in candidates)
+                    {
+                        if (main == null ||
+                            ReferenceEquals(main, branch) ||
+                            main.IsArc ||
+                            main.IsReducer ||
+                            main.DuctWidth <= branch.DuctWidth * 1.15)
+                            continue;
+
+                        if (AreParallel(
+                                branch.Direction,
+                                main.Direction,
+                                18.0))
+                            continue;
+
+                        double t;
+                        double d =
+                            DistancePointToSegment(
+                                endPoint,
+                                main.Start,
+                                main.End,
+                                out t);
+
+                        if (t < -0.1 || t > 1.1)
+                            continue;
+
+                        double tol =
+                            Math.Max(
+                                300.0,
+                                (branch.DuctWidth + main.DuctWidth) * 0.6);
+
+                        if (d > tol)
+                            continue;
+
+                        if (d < bestScore)
+                        {
+                            bestScore = d;
+                            bestMain = main;
+                            Point3d projected =
+                                ProjectPointToSegment(
+                                    endPoint,
+                                    main.Start,
+                                    main.End);
+                            Vector3d edgeDirection =
+                                endPoint - projected;
+                            if (edgeDirection.Length < 1e-9)
+                            {
+                                edgeDirection =
+                                    branch.Direction.RotateBy(
+                                        Math.PI / 2.0,
+                                        Vector3d.ZAxis);
+                            }
+
+                            edgeDirection = edgeDirection.GetNormal();
+                            bestPoint =
+                                projected +
+                                edgeDirection *
+                                (main.DuctWidth / 2.0);
+                        }
+                    }
+
+                    if (bestMain == null)
+                        continue;
+
+                    if (useStart)
+                        branch.Start = bestPoint;
+                    else
+                        branch.End = bestPoint;
+
+                    RefreshOngGioCandidateGeometry(branch);
+                }
+            }
+        }
+
+        private bool IsOngGioCandidateBlockedByInternalMark(
+            OngGioCenterlineCandidate candidate,
+            List<OngGioSegmentInfo> segments)
+        {
+            if (candidate == null ||
+                candidate.IsArc ||
+                candidate.IsReducer ||
+                segments == null ||
+                segments.Count == 0 ||
+                candidate.DuctWidth <= 0.0)
+                return false;
+
+            int perpendicularInsideCount = 0;
+            double halfWidth =
+                Math.Max(candidate.DuctWidth / 2.0, 50.0);
+
+            foreach (OngGioSegmentInfo seg in segments)
+            {
+                if (seg == null || seg.Length < 80.0)
+                    continue;
+
+                double t;
+                double centerDist =
+                    DistancePointToSegment(
+                        seg.Mid,
+                        candidate.Start,
+                        candidate.End,
+                        out t);
+
+                if (t < 0.08 || t > 0.92)
+                    continue;
+
+                if (centerDist > halfWidth + 80.0)
+                    continue;
+
+                double axisDot =
+                    Math.Abs(
+                        seg.Direction.GetNormal()
+                            .DotProduct(candidate.Direction.GetNormal()));
+
+                bool isParallelToDuct = axisDot > Math.Cos(Math.PI / 12.0);
+                bool isPerpendicularToDuct = axisDot < Math.Sin(Math.PI / 12.0);
+
+                if (isParallelToDuct)
+                    continue;
+
+                if (isPerpendicularToDuct)
+                {
+                    perpendicularInsideCount++;
+                    continue;
+                }
+
+                if (seg.Length >= Math.Min(candidate.Length * 0.25, halfWidth * 0.8))
+                    return true;
+            }
+
+            return perpendicularInsideCount >= 2;
+        }
+
+        private OngGioSizeTextInfo FindNearestOngGioSizeText(
+            OngGioCenterlineCandidate candidate,
+            List<OngGioSizeTextInfo> texts)
+        {
+            if (candidate == null || texts == null || texts.Count == 0)
+                return null;
+
+            OngGioSizeTextInfo best = null;
+            double bestScore = double.MaxValue;
+
+            foreach (OngGioSizeTextInfo text in texts)
+            {
+                if (text == null)
+                    continue;
+
+                double dLine =
+                    DistancePointToSegment(
+                        text.Pos,
+                        candidate.Start,
+                        candidate.End,
+                        out double t);
+
+                double outsidePenalty = 0.0;
+                if (t < 0.0)
+                    outsidePenalty = -t * candidate.Length;
+                else if (t > 1.0)
+                    outsidePenalty = (t - 1.0) * candidate.Length;
+
+                double dMid =
+                    text.Pos.DistanceTo(candidate.Mid);
+                double widthPenalty = 0.0;
+                if (candidate.DuctWidth > 0.0 &&
+                    text.Width > 0.0)
+                {
+                    widthPenalty =
+                        Math.Abs(text.Width - candidate.DuctWidth) * 0.9;
+                }
+
+                double score =
+                    dLine +
+                    outsidePenalty * 0.5 +
+                    dMid * 0.05 +
+                    widthPenalty;
+
+                if (score < bestScore)
+                {
+                    bestScore = score;
+                    best = text;
+                }
+            }
+
+            return best;
+        }
+
+        private OngGioProtectionTextInfo FindNearestOngGioProtectionText(
+            OngGioCenterlineCandidate candidate,
+            List<OngGioProtectionTextInfo> texts)
+        {
+            if (candidate == null || texts == null || texts.Count == 0)
+                return null;
+
+            OngGioProtectionTextInfo best = null;
+            double bestScore = double.MaxValue;
+
+            foreach (OngGioProtectionTextInfo text in texts)
+            {
+                if (text == null)
+                    continue;
+
+                double dLine =
+                    DistancePointToSegment(
+                        text.Pos,
+                        candidate.Start,
+                        candidate.End,
+                        out double t);
+
+                double outsidePenalty = 0.0;
+                if (t < 0.0)
+                    outsidePenalty = -t * candidate.Length;
+                else if (t > 1.0)
+                    outsidePenalty = (t - 1.0) * candidate.Length;
+
+                double score =
+                    dLine +
+                    outsidePenalty * 0.5 +
+                    text.Pos.DistanceTo(candidate.Mid) * 0.05;
+
+                if (score < bestScore)
+                {
+                    bestScore = score;
+                    best = text;
+                }
+            }
+
+            return best;
+        }
+
+        private OngGioTypeTextInfo FindNearestOngGioTypeText(
+            OngGioCenterlineCandidate candidate,
+            List<OngGioTypeTextInfo> texts)
+        {
+            if (candidate == null || texts == null || texts.Count == 0)
+                return null;
+
+            OngGioTypeTextInfo best = null;
+            double bestScore = double.MaxValue;
+
+            foreach (OngGioTypeTextInfo text in texts)
+            {
+                if (text == null)
+                    continue;
+
+                double dLine =
+                    DistancePointToSegment(
+                        text.Pos,
+                        candidate.Start,
+                        candidate.End,
+                        out double t);
+
+                double outsidePenalty = 0.0;
+                if (t < 0.0)
+                    outsidePenalty = -t * candidate.Length;
+                else if (t > 1.0)
+                    outsidePenalty = (t - 1.0) * candidate.Length;
+
+                double score =
+                    dLine +
+                    outsidePenalty * 0.5 +
+                    text.Pos.DistanceTo(candidate.Mid) * 0.05;
+
+                if (score < bestScore)
+                {
+                    bestScore = score;
+                    best = text;
+                }
+            }
+
+            return best;
+        }
+
+        private int DrawReducerCandidate(
+            Transaction tr,
+            Database db,
+            BlockTableRecord btr,
+            OngGioCenterlineCandidate candidate,
+            List<OngGioSizeTextInfo> sizeTexts,
+            List<OngGioProtectionTextInfo> protectionTexts,
+            List<OngGioCenterlineCandidate> allCandidates,
+            string ogType,
+            string layerPrefix)
+        {
+            if (candidate == null ||
+                sizeTexts == null ||
+                sizeTexts.Count == 0)
+                return 0;
+
+            Point3d split = candidate.Mid;
+
+            OngGioSizeTextInfo startSize =
+                FindBestReducerSizeForWidth(
+                    candidate.Start,
+                    candidate.StartDuctWidth,
+                    sizeTexts);
+
+            OngGioSizeTextInfo endSize =
+                FindBestReducerSizeForWidth(
+                    candidate.End,
+                    candidate.EndDuctWidth,
+                    sizeTexts);
+
+            if (startSize == null)
+                startSize = FindNearestOngGioSizeText(candidate, sizeTexts);
+            if (endSize == null)
+                endSize = startSize;
+
+            int count = 0;
+            double halfLength = candidate.Length / 2.0;
+            Vector3d startDirection =
+                FindReducerExtensionDirection(
+                    candidate.Start,
+                    candidate.Mid,
+                    candidate,
+                    allCandidates);
+            Vector3d endDirection =
+                FindReducerExtensionDirection(
+                    candidate.End,
+                    candidate.Mid,
+                    candidate,
+                    allCandidates);
+
+            Point3d startEnd =
+                candidate.Start + startDirection * halfLength;
+            Point3d endEnd =
+                candidate.End + endDirection * halfLength;
+
+            count += DrawStraightOngGioPart(
+                tr,
+                db,
+                btr,
+                candidate.Start,
+                startEnd,
+                startDirection,
+                startSize,
+                FindNearestProtectionTextToPoint(
+                    candidate.Start,
+                    protectionTexts),
+                ogType,
+                layerPrefix,
+                false);
+
+            count += DrawStraightOngGioPart(
+                tr,
+                db,
+                btr,
+                candidate.End,
+                endEnd,
+                endDirection,
+                endSize,
+                FindNearestProtectionTextToPoint(
+                    candidate.End,
+                    protectionTexts),
+                ogType,
+                layerPrefix,
+                false);
+
+            return count;
+        }
+
+        private int DrawStraightOngGioPart(
+            Transaction tr,
+            Database db,
+            BlockTableRecord btr,
+            Point3d start,
+            Point3d end,
+            Vector3d direction,
+            OngGioSizeTextInfo sizeInfo,
+            OngGioProtectionTextInfo protectionInfo,
+            string ogType,
+            string layerPrefix,
+            bool showLabel)
+        {
+            if (sizeInfo == null)
+                return 0;
+
+            Vector3d v = end - start;
+            if (v.Length < 100.0)
+                return 0;
+
+            string size = sizeInfo.Size;
+            string eiPart = sizeInfo.Ei;
+
+            if (string.IsNullOrWhiteSpace(eiPart) &&
+                protectionInfo != null)
+            {
+                eiPart = protectionInfo.Text;
+            }
+
+            double width = sizeInfo.Width;
+            if (width <= 0.0)
+                width = LayWidthTuSize(size);
+            if (width <= 0.0)
+                width = 100.0;
+
+            string layerName =
+                BuildOngGioLayerName(
+                    layerPrefix,
+                    ogType,
+                    size,
+                    eiPart);
+
+            EnsureLayerExists(tr, db, layerName, true);
+
+            Polyline pl = new Polyline();
+            pl.SetDatabaseDefaults(db);
+            pl.AddVertexAt(
+                0,
+                new Point2d(start.X, start.Y),
+                0, 0, 0);
+            pl.AddVertexAt(
+                1,
+                new Point2d(end.X, end.Y),
+                0, 0, 0);
+            pl.Layer = layerName;
+            pl.ColorIndex = 256;
+            pl.ConstantWidth = width;
+
+            btr.AppendEntity(pl);
+            tr.AddNewlyCreatedDBObject(pl, true);
+
+            if (showLabel)
+            {
+                AddOngGioLabel(
+                    tr,
+                    db,
+                    btr,
+                    layerName,
+                    BuildOngGioDisplayText(size, eiPart),
+                    width,
+                    MidPoint(start, end),
+                    v.GetNormal());
+            }
+
+            return 1;
+        }
+
+        private OngGioSizeTextInfo FindBestReducerSizeForWidth(
+            Point3d point,
+            double targetWidth,
+            List<OngGioSizeTextInfo> texts)
+        {
+            if (texts == null || texts.Count == 0)
+                return null;
+
+            OngGioSizeTextInfo best = null;
+            double bestDist = double.MaxValue;
+
+            foreach (OngGioSizeTextInfo text in texts)
+            {
+                if (text == null)
+                    continue;
+
+                double widthPenalty = 0.0;
+                if (targetWidth > 0.0 && text.Width > 0.0)
+                {
+                    widthPenalty =
+                        Math.Abs(text.Width - targetWidth) * 1.5;
+                }
+
+                double d =
+                    point.DistanceTo(text.Pos) * 0.12 +
+                    widthPenalty;
+
+                if (d < bestDist)
+                {
+                    bestDist = d;
+                    best = text;
+                }
+            }
+
+            return best;
+        }
+
+        private OngGioProtectionTextInfo FindNearestProtectionTextToPoint(
+            Point3d point,
+            List<OngGioProtectionTextInfo> texts)
+        {
+            if (texts == null || texts.Count == 0)
+                return null;
+
+            OngGioProtectionTextInfo best = null;
+            double bestDist = double.MaxValue;
+
+            foreach (OngGioProtectionTextInfo text in texts)
+            {
+                if (text == null)
+                    continue;
+
+                double d = point.DistanceTo(text.Pos);
+                if (d < bestDist)
+                {
+                    bestDist = d;
+                    best = text;
+                }
+            }
+
+            return best;
+        }
+
+        private Vector3d FindReducerExtensionDirection(
+            Point3d reducerEnd,
+            Point3d reducerMiddle,
+            OngGioCenterlineCandidate reducer,
+            List<OngGioCenterlineCandidate> allCandidates)
+        {
+            Vector3d fallback = reducerMiddle - reducerEnd;
+            if (fallback.Length < 1e-9)
+                fallback = reducer.Direction;
+            fallback = fallback.GetNormal();
+
+            if (allCandidates == null)
+                return fallback;
+
+            OngGioCenterlineCandidate best = null;
+            double bestScore = double.MaxValue;
+
+            foreach (OngGioCenterlineCandidate candidate in allCandidates)
+            {
+                if (candidate == null ||
+                    ReferenceEquals(candidate, reducer) ||
+                    candidate.IsArc ||
+                    candidate.IsReducer)
+                    continue;
+
+                double t;
+                double d =
+                    DistancePointToSegment(
+                        reducerEnd,
+                        candidate.Start,
+                        candidate.End,
+                        out t);
+
+                if (d > Math.Max(500.0, candidate.DuctWidth * 0.75))
+                    continue;
+
+                double score =
+                    d +
+                    (1.0 -
+                     Math.Abs(
+                         candidate.Direction.GetNormal()
+                             .DotProduct(fallback))) * 100.0;
+
+                if (score < bestScore)
+                {
+                    bestScore = score;
+                    best = candidate;
+                }
+            }
+
+            if (best == null)
+                return fallback;
+
+            Vector3d dir = best.Direction.GetNormal();
+            if (dir.DotProduct(fallback) < 0.0)
+                dir = dir.Negate();
+
+            return dir;
+        }
+
+        private Polyline CreatePolylineFromOngGioCandidate(
+            OngGioCenterlineCandidate candidate)
+        {
+            if (candidate == null)
+                return null;
+
+            Polyline pl = new Polyline();
+
+            if (candidate.Vertices != null &&
+                candidate.Vertices.Count >= 2)
+            {
+                for (int i = 0; i < candidate.Vertices.Count; i++)
+                {
+                    Point3d p = candidate.Vertices[i];
+                    pl.AddVertexAt(
+                        i,
+                        new Point2d(p.X, p.Y),
+                        0, 0, 0);
+                }
+            }
+            else if (candidate.IsArc)
+            {
+                double bulge =
+                    Math.Tan(candidate.ArcIncludedAngle / 4.0);
+
+                pl.AddVertexAt(
+                    0,
+                    new Point2d(
+                        candidate.Start.X,
+                        candidate.Start.Y),
+                    bulge,
+                    0, 0);
+                pl.AddVertexAt(
+                    1,
+                    new Point2d(
+                        candidate.End.X,
+                        candidate.End.Y),
+                    0,
+                    0, 0);
+            }
+            else
+            {
+                pl.AddVertexAt(
+                    0,
+                    new Point2d(
+                        candidate.Start.X,
+                        candidate.Start.Y),
+                    0, 0, 0);
+                pl.AddVertexAt(
+                    1,
+                    new Point2d(
+                        candidate.End.X,
+                        candidate.End.Y),
+                    0, 0, 0);
+            }
+
+            return pl;
+        }
+
+        private void AddOngGioLabel(
+            Transaction tr,
+            Database db,
+            BlockTableRecord btr,
+            string layerName,
+            string labelText,
+            double width,
+            Point3d textPt,
+            Vector3d direction)
+        {
+            try
+            {
+                DBText label = new DBText();
+                label.SetDatabaseDefaults(db);
+                label.TextStyleId = db.Textstyle;
+                label.TextString = labelText;
+                label.Height = Math.Max(
+                    MinimumLabelTextHeight,
+                    width * 0.15);
+                label.WidthFactor = 1.0;
+                label.Layer = layerName;
+                label.ColorIndex = 256;
+                label.Rotation =
+                    GetReadableRotation(direction);
+                label.Justify = AttachmentPoint.MiddleCenter;
+                label.AlignmentPoint = textPt;
+                label.Position = textPt;
+
+                btr.AppendEntity(label);
+                tr.AddNewlyCreatedDBObject(label, true);
+
+                try { label.AdjustAlignment(db); } catch { }
+            }
+            catch { }
+        }
+
+        private string BuildOngGioLayerName(
+            string layerPrefix,
+            string ogType,
+            string size,
+            string protection)
+        {
+            string sizeForLayer = size;
+            if (!string.IsNullOrWhiteSpace(protection))
+                sizeForLayer = size + "_" + protection;
+
+            return
+                $"{layerPrefix}_{CleanLayerText(ogType)}_{CleanLayerText(sizeForLayer)}";
+        }
+
+        private static string BuildOngGioDisplayText(
+            string size,
+            string protection)
+        {
+            if (string.IsNullOrWhiteSpace(protection))
+                return size;
+
+            return (size + " " + protection).Trim();
+        }
+
+        private static Point3d PointAtAngle(
+            Point3d center,
+            double radius,
+            double angle)
+        {
+            return new Point3d(
+                center.X + Math.Cos(angle) * radius,
+                center.Y + Math.Sin(angle) * radius,
+                center.Z);
+        }
+
+        private static double NormalizePositiveAngle(double angle)
+        {
+            while (angle < 0.0)
+                angle += Math.PI * 2.0;
+            while (angle >= Math.PI * 2.0)
+                angle -= Math.PI * 2.0;
+            return angle;
+        }
+
+        private static double NormalizeSignedAngle(double angle)
+        {
+            while (angle <= -Math.PI)
+                angle += Math.PI * 2.0;
+            while (angle > Math.PI)
+                angle -= Math.PI * 2.0;
+            return angle;
+        }
+
+        private static double AverageAngle(
+            double a,
+            double b)
+        {
+            double x = Math.Cos(a) + Math.Cos(b);
+            double y = Math.Sin(a) + Math.Sin(b);
+
+            if (Math.Abs(x) < 1e-9 &&
+                Math.Abs(y) < 1e-9)
+                return a;
+
+            return Math.Atan2(y, x);
+        }
+
+        private static bool AreParallel(
+            Vector3d a,
+            Vector3d b,
+            double angleToleranceDegrees)
+        {
+            if (a.Length < 1e-9 || b.Length < 1e-9)
+                return false;
+
+            Vector3d na = a.GetNormal();
+            Vector3d nb = b.GetNormal();
+            double dot = Math.Abs(na.DotProduct(nb));
+            double cos =
+                Math.Cos(
+                    angleToleranceDegrees *
+                    Math.PI / 180.0);
+
+            return dot >= cos;
+        }
+
+        private static bool AreSimilarLength(
+            double a,
+            double b,
+            double toleranceRatio)
+        {
+            double max = Math.Max(Math.Abs(a), Math.Abs(b));
+            if (max < 1e-9)
+                return false;
+
+            return Math.Abs(a - b) / max <= toleranceRatio;
+        }
+
+        private static double DistancePointToInfiniteLine(
+            Point3d p,
+            Point3d linePoint,
+            Vector3d unitDirection)
+        {
+            Vector3d v = p - linePoint;
+            Vector3d perpendicular =
+                v - unitDirection * v.DotProduct(unitDirection);
+
+            return perpendicular.Length;
+        }
+
+        private static double DistancePointToSegment(
+            Point3d p,
+            Point3d a,
+            Point3d b,
+            out double t)
+        {
+            Vector3d ab = b - a;
+            double len2 = ab.DotProduct(ab);
+
+            if (len2 < 1e-9)
+            {
+                t = 0.0;
+                return p.DistanceTo(a);
+            }
+
+            t = ((p - a).DotProduct(ab)) / len2;
+            double tc = Math.Max(0.0, Math.Min(1.0, t));
+            Point3d closest = a + ab * tc;
+
+            return p.DistanceTo(closest);
+        }
+
+        private static Point3d ProjectPointToSegment(
+            Point3d p,
+            Point3d a,
+            Point3d b)
+        {
+            double t;
+            DistancePointToSegment(p, a, b, out t);
+            t = Math.Max(0.0, Math.Min(1.0, t));
+            Vector3d ab = b - a;
+            return a + ab * t;
+        }
+
+        private static void RefreshOngGioCandidateGeometry(
+            OngGioCenterlineCandidate candidate)
+        {
+            if (candidate == null)
+                return;
+
+            Vector3d v = candidate.End - candidate.Start;
+            double len = v.Length;
+
+            if (len < 1e-9)
+                return;
+
+            candidate.Length = len;
+            candidate.Direction = v.GetNormal();
+            candidate.Mid =
+                MidPoint(candidate.Start, candidate.End);
+        }
+
+        private static Point3d MidPoint(
+            Point3d a,
+            Point3d b)
+        {
+            return new Point3d(
+                (a.X + b.X) / 2.0,
+                (a.Y + b.Y) / 2.0,
+                (a.Z + b.Z) / 2.0);
+        }
+
+        private static double DotPoint(
+            Point3d p,
+            Vector3d direction)
+        {
+            return p.X * direction.X +
+                   p.Y * direction.Y +
+                   p.Z * direction.Z;
+        }
+
+        private static void Swap(
+            ref double a,
+            ref double b)
+        {
+            double t = a;
+            a = b;
+            b = t;
+        }
+
+        private static double GetReadableRotation(
+            Vector3d direction)
+        {
+            double angle =
+                Math.Atan2(direction.Y, direction.X);
+
+            while (angle < 0.0)
+                angle += Math.PI * 2.0;
+            while (angle >= Math.PI * 2.0)
+                angle -= Math.PI * 2.0;
+
+            if (angle > Math.PI / 2.0 &&
+                angle <= Math.PI * 3.0 / 2.0)
+            {
+                angle -= Math.PI;
+            }
+
+            return angle;
         }
 
         private bool TryParseOngGioType(
@@ -7167,61 +9177,6 @@ namespace ClassLibrary4
             }
 
             return false;
-        }
-
-        private Polyline TaoPolylineTuCurve(Entity src)
-        {
-            try
-            {
-                if (src is Polyline pl)
-                {
-                    Polyline copy = new Polyline();
-                    for (int i = 0; i < pl.NumberOfVertices; i++)
-                    {
-                        copy.AddVertexAt(
-                            i,
-                            pl.GetPoint2dAt(i),
-                            pl.GetBulgeAt(i),
-                            0, 0);
-                    }
-                    copy.Closed = pl.Closed;
-                    return copy;
-                }
-
-                if (src is Line line)
-                {
-                    Polyline copy = new Polyline();
-                    copy.AddVertexAt(
-                        0,
-                        new Point2d(line.StartPoint.X, line.StartPoint.Y),
-                        0, 0, 0);
-                    copy.AddVertexAt(
-                        1,
-                        new Point2d(line.EndPoint.X, line.EndPoint.Y),
-                        0, 0, 0);
-                    return copy;
-                }
-
-                if (src is Autodesk.AutoCAD.DatabaseServices.Polyline2d ||
-                    src is Autodesk.AutoCAD.DatabaseServices.Polyline3d)
-                {
-                    // Lấy điểm gần đúng qua Curve
-                    if (src is Curve cv)
-                    {
-                        Polyline copy = new Polyline();
-                        Point3d sp = cv.StartPoint;
-                        Point3d ep = cv.EndPoint;
-                        copy.AddVertexAt(
-                            0, new Point2d(sp.X, sp.Y), 0, 0, 0);
-                        copy.AddVertexAt(
-                            1, new Point2d(ep.X, ep.Y), 0, 0, 0);
-                        return copy;
-                    }
-                }
-            }
-            catch { }
-
-            return null;
         }
 
         private void BtnAutoConvertPipe_Click(

@@ -629,34 +629,45 @@
                                                     <ColumnDefinition Width="6"/>
                                                     <ColumnDefinition Width="*"/>
                                                 </Grid.ColumnDefinitions>
+                                                <Grid.RowDefinitions>
+                                                    <RowDefinition Height="126"/>
+                                                    <RowDefinition Height="24"/>
+                                                </Grid.RowDefinitions>
 
                                                 <!-- Cột Size -->
-                                                <ListBox x:Name="LstSizeOngGioACMV" Grid.Column="0"
-                                                         MinHeight="100" MaxHeight="160" FontSize="12"
-                                                         ScrollViewer.VerticalScrollBarVisibility="Auto"
-                                                         BorderBrush="#FFCCCCCC"
-                                                         KeyDown="LstSizeOng_KeyDown"
-                                                         HorizontalContentAlignment="Stretch">
-                                                    <ListBox.ItemTemplate>
-                                                        <DataTemplate>
-                                                            <Grid>
-                                                                <Grid.ColumnDefinitions>
-                                                                    <ColumnDefinition Width="*"/>
-                                                                    <ColumnDefinition Width="Auto"/>
-                                                                </Grid.ColumnDefinitions>
-                                                                <TextBlock Text="{Binding SizeName}" VerticalAlignment="Center"/>
-                                                                <Button Grid.Column="1" Width="18" Height="18"
-                                                                        Background="{Binding LayerColorBrush}"
-                                                                        Cursor="Hand" Click="BtnColor_Click"
-                                                                        ToolTip="Kích để chọn lại màu Layer"
-                                                                        BorderThickness="1" BorderBrush="Gray" Padding="0"/>
-                                                            </Grid>
-                                                        </DataTemplate>
-                                                    </ListBox.ItemTemplate>
-                                                </ListBox>
+                                                <StackPanel Grid.Row="0" Grid.Column="0">
+                                                    <ListBox x:Name="LstSizeOngGioACMV"
+                                                             Height="122" FontSize="12"
+                                                             ScrollViewer.VerticalScrollBarVisibility="Auto"
+                                                             BorderBrush="#FFCCCCCC"
+                                                             KeyDown="LstSizeOng_KeyDown"
+                                                             HorizontalContentAlignment="Stretch">
+                                                        <ListBox.ItemTemplate>
+                                                            <DataTemplate>
+                                                                <Grid>
+                                                                    <Grid.ColumnDefinitions>
+                                                                        <ColumnDefinition Width="*"/>
+                                                                        <ColumnDefinition Width="Auto"/>
+                                                                    </Grid.ColumnDefinitions>
+                                                                    <TextBlock Text="{Binding SizeName}" VerticalAlignment="Center"/>
+                                                                    <Button Grid.Column="1" Width="18" Height="18"
+                                                                            Background="{Binding LayerColorBrush}"
+                                                                            Cursor="Hand" Click="BtnColor_Click"
+                                                                            ToolTip="Kích để chọn lại màu Layer"
+                                                                            BorderThickness="1" BorderBrush="Gray" Padding="0"/>
+                                                                </Grid>
+                                                            </DataTemplate>
+                                                        </ListBox.ItemTemplate>
+                                                    </ListBox>
+                                                </StackPanel>
+                                                <TextBox x:Name="TxtCustomSizeOngGioACMV" Grid.Row="1" Grid.Column="0"
+                                                         Height="24" FontSize="11"
+                                                         Padding="3" Margin="0,0,0,0"
+                                                         ToolTip="Nhập kích thước WxH rồi nhấn Enter"
+                                                         KeyDown="TxtOngGioCotThem_KeyDown"/>
 
                                                 <!-- Cột EI / CN -->
-                                                <StackPanel Grid.Column="2">
+                                                <StackPanel Grid.Row="0" Grid.Column="2">
                                                     <StackPanel Orientation="Horizontal" Margin="0,0,0,3">
                                                         <CheckBox x:Name="ChkDungCnEi" IsChecked="False"
                                                                   VerticalAlignment="Center" Margin="0,0,4,0"
@@ -665,7 +676,7 @@
                                                                    VerticalAlignment="Center"/>
                                                     </StackPanel>
                                                     <ListBox x:Name="LstCnEiOngGioACMV"
-                                                             MinHeight="100" MaxHeight="140" FontSize="11"
+                                                             Height="101" FontSize="11"
                                                              BorderBrush="#FFCCCCCC"
                                                              IsEnabled="False" Opacity="0.45"
                                                              ScrollViewer.VerticalScrollBarVisibility="Auto">
@@ -677,14 +688,14 @@
                                                         <ListBoxItem Content="CN30"/>
                                                         <ListBoxItem Content="CN35"/>
                                                     </ListBox>
-                                                    <TextBox x:Name="TxtCnEiOngGioACMVThem" Height="24" FontSize="11"
-                                                             Padding="3" Margin="0,3,0,0"
-                                                             IsEnabled="False" Opacity="0.45"
-                                                             ToolTip="Nhập CN/EI mới rồi Enter"/>
                                                 </StackPanel>
+                                                <TextBox x:Name="TxtCnEiOngGioACMVThem" Grid.Row="1" Grid.Column="2"
+                                                         Height="24" FontSize="11"
+                                                         Padding="3" Margin="0,0,0,0"
+                                                         IsEnabled="False" Opacity="0.45"
+                                                         ToolTip="Nhập CN/EI mới rồi Enter"
+                                                         KeyDown="TxtOngGioCotThem_KeyDown"/>
                                             </Grid>
-                                            <TextBox x:Name="TxtCustomSizeOngGioACMV" Height="28" FontSize="12" Padding="4"
-                                                     ToolTip="Nhập kích thước WxH rồi nhấn Enter" KeyDown="TxtCustomSize_KeyDown"/>
                                         </StackPanel>
 
                                         <Grid Margin="0,8,0,0">
@@ -719,7 +730,7 @@
                                             <Button.ToolTip>
                                                 <ToolTip>
                                                     <TextBlock MaxWidth="280" TextWrapping="Wrap"
-                                                               Text="VẼ OG TỰ ĐỘNG: Quét chọn vùng có đường ống gió + chữ kích thước (500x200) + tên OG. Tool nhận diện size/tên và tạo ống gió đúng layer + độ dày."/>
+                                                               Text="VẼ OG TỰ ĐỘNG: Quét vùng có ống gió + phụ kiện + chữ size/tên OG. Tool bỏ hình chữ nhật có dấu X/gạch chéo, tự vẽ tâm ống, reducer chia 50/50, co 90 vẽ cong và thêm EI/CN vào layer + chữ."/>
                                                 </ToolTip>
                                             </Button.ToolTip>
                                         </Button>
