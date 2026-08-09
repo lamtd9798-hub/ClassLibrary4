@@ -61,7 +61,7 @@ namespace ClassLibrary4
         private const double TemplateDuplicateTolerance = 100.0;
 
         // SHOP thông minh: gom các đầu/điểm giao thành nút rồi mới quyết định phụ kiện.
-        private const string ShopSmartBuild = "SHOP-SMART-20260809-21-TOUCHGAP";
+        private const string ShopSmartBuild = "SHOP-SMART-20260809-26-CLEAN-WARNINGS";
         private const double ShopJointTolerance = 150.0;
         private const double ShopDuplicateNodeTolerance = 100.0;
         private const double ShopStraightAngleToleranceDeg = 12.0;
@@ -2140,6 +2140,12 @@ namespace ClassLibrary4
         {
             public Point3d Joint { get; set; }
             public double HalfLength { get; set; }
+
+            // FIX23:
+            // Reducer cũ vẫn để Direction = 0, SizeText = "" => hành vi y như code gốc.
+            // Co/Tê mới ghi thêm hướng + DN để mỗi ống chỉ rút đúng tới cổng của nó.
+            public Vector3d Direction { get; set; }
+            public string SizeText { get; set; }
         }
 
         // Hình học cổng nối của block phụ kiện thư viện.
@@ -13206,42 +13212,36 @@ namespace ClassLibrary4
                 "FF_SHOP_CO90_DAUPHUN_" +
                 CleanLayerText(arm.SizeText);
 
-            EnsureShopLayerExists(tr, db, layerName);
+            EnsureShopLayerExists(
+                tr,
+                db,
+                layerName);
 
-            // Direction arm: từ nút đi VÀO trong ống
-            Vector3d intoPipe = arm.Direction;
+            // Direction arm = từ node đầu phun đi ngược vào tuyến ống.
+            Vector3d intoPipe =
+                new Vector3d(
+                    arm.Direction.X,
+                    arm.Direction.Y,
+                    0.0);
+
             if (intoPipe.Length < 1e-9)
                 return 0;
-            intoPipe = intoPipe.GetNormal();
 
-            // Hướng xuống (mặt bằng: -Y)
-            Vector3d down = new Vector3d(0, -1, 0);
+            intoPipe =
+                intoPipe.GetNormal();
 
-            // Block co: +X = nhánh 1, +Y = nhánh 2
-            // Gán +X theo ống, +Y theo hướng xuống (mirror nếu cần)
+            // FIX24:
+            // Co tại đầu phun là CO ĐI XUỐNG theo Z, KHÔNG phải co 90
+            // quay một chân xuống -Y trên mặt bằng.
+            // Chỉ xoay đầu nối ngang của block theo hướng tuyến ống.
             double rotation =
-                Math.Atan2(intoPipe.Y, intoPipe.X);
+                Math.Atan2(
+                    intoPipe.Y,
+                    intoPipe.X);
 
-            // +Y sau xoay (không mirror) = vuông góc trái của intoPipe
-            Vector3d plusY =
-                new Vector3d(-intoPipe.Y, intoPipe.X, 0.0);
-            Vector3d plusYMirror =
-                new Vector3d(intoPipe.Y, -intoPipe.X, 0.0);
-
-            bool mirrorY =
-                plusYMirror.DotProduct(down) >
-                plusY.DotProduct(down);
-
-            // Nếu cả hai đều không hướng xuống rõ (ống gần như đứng),
-            // ép mirror để nhánh 2 nghiêng về -Y.
-            if (Math.Abs(intoPipe.DotProduct(down)) > 0.9)
-            {
-                // Ống gần như thẳng đứng — co ngang không dùng ở cuối đầu phun
-                // Vẫn giữ orientation có thành phần xuống tối đa
-                mirrorY =
-                    plusYMirror.DotProduct(down) >=
-                    plusY.DotProduct(down);
-            }
+            // Tuyệt đối không mirror Y ở co đầu phun.
+            // Hướng xuống sẽ do Visibility/Lookup của Dynamic Block quyết định.
+            bool mirrorY = false;
 
             if (!TryInsertShopLibraryFitting(
                     tr,
@@ -13260,13 +13260,228 @@ namespace ClassLibrary4
                 return 0;
             }
 
-            // Ép dynamic block sang trạng thái "xuống" nếu có
-            TrySetShopElbowDropVisibility(
-                tr,
-                btr,
-                nodePoint);
-
             return 1;
+        }
+
+        /// <summary>
+        /// FIX24: đổi trạng thái Dynamic Block trên ĐÚNG reference vừa chèn.
+        /// Không tìm "block gần nhất" vì gần đầu phun còn có block sprinkler,
+        /// dễ chọn nhầm đối tượng.
+        /// </summary>
+        private bool TrySetShopFittingVisibilityOnReference(
+            BlockReference br,
+            bool preferDown,
+            bool preferHorizontal)
+        {
+            if (br == null ||
+                br.IsErased ||
+                !br.IsDynamicBlock)
+            {
+                return false;
+            }
+
+            try
+            {
+                DynamicBlockReferencePropertyCollection props =
+                    br.DynamicBlockReferencePropertyCollection;
+
+                if (props == null)
+                    return false;
+
+                bool changed = false;
+
+                foreach (DynamicBlockReferenceProperty prop in props)
+                {
+                    if (prop == null ||
+                        prop.ReadOnly)
+                    {
+                        continue;
+                    }
+
+                    string pname =
+                        NormalizeShopKey(
+                            prop.PropertyName ?? "");
+
+                    // Chỉ xét property kiểu Visibility / Lookup / State / Hướng.
+                    bool possibleState =
+                        pname.Contains("VISIBILITY") ||
+                        pname.Contains("VISIBLE") ||
+                        pname.Contains("STATE") ||
+                        pname.Contains("TRANGTHAI") ||
+                        pname.Contains("HUONG") ||
+                        pname.Contains("ORIENT") ||
+                        pname.Contains("TYPE") ||
+                        pname.Contains("KIEU") ||
+                        pname.Contains("VIEW") ||
+                        pname.Contains("LOOKUP") ||
+                        pname.Contains("CHIEU") ||
+                        pname.Contains("DIRECTION");
+
+                    if (pname.Contains("FLIP") ||
+                        pname.Contains("MIRROR"))
+                    {
+                        continue;
+                    }
+
+                    object[] values = null;
+
+                    try
+                    {
+                        values =
+                            prop.GetAllowedValues();
+                    }
+                    catch
+                    {
+                        continue;
+                    }
+
+                    if (values == null ||
+                        values.Length == 0)
+                    {
+                        continue;
+                    }
+
+                    // Nếu property có các giá trị chuỗi rõ nghĩa thì vẫn xét
+                    // ngay cả khi tên property chung chung.
+                    bool anyNamedState =
+                        values.Any(v =>
+                        {
+                            string k =
+                                NormalizeShopKey(
+                                    (v ?? "").ToString());
+
+                            return
+                                k.Contains("XUONG") ||
+                                k.Contains("DOWN") ||
+                                k.Contains("DROP") ||
+                                k.Contains("VERT") ||
+                                k.Contains("NGANG") ||
+                                k.Contains("HORIZ") ||
+                                k.Contains("PLAN") ||
+                                k.Contains("UP") ||
+                                k.Contains("LEN");
+                        });
+
+                    if (!possibleState &&
+                        !anyNamedState)
+                    {
+                        continue;
+                    }
+
+                    object bestValue = null;
+                    int bestScore =
+                        int.MinValue;
+
+                    foreach (object value
+                        in values)
+                    {
+                        string raw =
+                            (value ?? "")
+                                .ToString();
+
+                        string k =
+                            NormalizeShopKey(
+                                raw);
+
+                        int score = 0;
+
+                        bool isDown =
+                            k.Contains("HUONGXUONG") ||
+                            k.Contains("XUONG") ||
+                            k.Contains("DOWN") ||
+                            k.Contains("DROP") ||
+                            k.Contains("DIXUONG") ||
+                            k.Contains("BOTTOM") ||
+                            k.Contains("VERTDOWN");
+
+                        bool isUp =
+                            k.Contains("HUONGLEN") ||
+                            k.Contains("LEN") ||
+                            k.Contains("TOP") ||
+                            k == "UP" ||
+                            k.Contains("VERTUP");
+
+                        bool isHorizontal =
+                            k.Contains("NGANG") ||
+                            k.Contains("HORIZ") ||
+                            k.Contains("PLAN") ||
+                            k.Contains("FLAT") ||
+                            k.Contains("SIDE");
+
+                        if (preferDown)
+                        {
+                            if (isDown)
+                                score += 1000;
+
+                            if (isHorizontal)
+                                score -= 500;
+
+                            if (isUp)
+                                score -= 300;
+                        }
+                        else if (preferHorizontal)
+                        {
+                            if (isHorizontal)
+                                score += 1000;
+
+                            if (isDown ||
+                                isUp)
+                            {
+                                score -= 500;
+                            }
+                        }
+
+                        if (score >
+                            bestScore)
+                        {
+                            bestScore = score;
+                            bestValue = value;
+                        }
+                    }
+
+                    if (bestValue != null &&
+                        bestScore > 0)
+                    {
+                        try
+                        {
+                            prop.Value =
+                                bestValue;
+
+                            changed = true;
+
+                            var doc =
+                                Autodesk.AutoCAD.ApplicationServices.Core.Application
+                                    .DocumentManager
+                                    .MdiActiveDocument;
+
+                            doc?.Editor.WriteMessage(
+                                $"\n[SHOP FIX24] Dynamic state: " +
+                                $"{prop.PropertyName} = {bestValue}");
+                        }
+                        catch
+                        {
+                        }
+                    }
+                }
+
+                if (changed)
+                {
+                    try
+                    {
+                        br.RecordGraphicsModified(
+                            true);
+                    }
+                    catch
+                    {
+                    }
+                }
+
+                return changed;
+            }
+            catch
+            {
+                return false;
+            }
         }
 
         /// <summary>
@@ -13652,13 +13867,6 @@ namespace ClassLibrary4
                     mirrorY,
                     fittingGaps))
             {
-                // Co góc mặt bằng: visibility NGANG (không dùng trạng thái đi xuống)
-                TrySetShopFittingVisibility(
-                    tr,
-                    btr,
-                    nodePoint,
-                    preferDown: false,
-                    preferHorizontal: true);
                 return 1;
             }
 
@@ -13770,15 +13978,18 @@ namespace ClassLibrary4
             ShopJointArm main2 = arms[mainB];
             ShopJointArm branch = arms[branchIndex];
 
+            // Hai đầu đường chính của Tê phải cùng DN.
+            // Nếu khác DN thì không được ép thành Tê thường.
+            if (Math.Abs(main1.Width - main2.Width) >= 0.5)
+                return 0;
+
             ShopJointArm main =
                 main1.Width >= main2.Width
                     ? main1
                     : main2;
 
             string mainSize =
-                main.Width >= branch.Width
-                    ? main.SizeText
-                    : branch.SizeText;
+                main.SizeText;
             string branchSize =
                 branch.SizeText;
 
@@ -13802,17 +14013,18 @@ namespace ClassLibrary4
             else
                 branchDir = new Vector3d(-mainDir.Y, mainDir.X, 0.0);
 
-            // Thư viện SCREW/WELD-TEE: trục chính thường dọc theo Y, nhánh theo X
-            // (xem preview block). Tính rotation để:
-            //   trục chính block → mainDir (ống lớn nằm ngang/đúng hướng)
-            //   nhánh block     → branchDir
-            double rotation;
-            bool mirrorY;
-            ComputeShopTeeTransform(
-                mainDir,
-                branchDir,
-                out rotation,
-                out mirrorY);
+            // FIX23: rotation truyền xuống là HƯỚNG ĐƯỜNG CHÍNH THỰC TẾ.
+            // TryInsert sẽ tự đọc 3 port của block và map chúng vào
+            // main / -main / branch. Không giả định block gốc nằm theo X hay Y.
+            double rotation =
+                Math.Atan2(
+                    mainDir.Y,
+                    mainDir.X);
+
+            bool mirrorY =
+                ShopCross(
+                    mainDir,
+                    branchDir) < 0.0;
 
             if (TryInsertShopLibraryFitting(
                     tr,
@@ -13828,13 +14040,6 @@ namespace ClassLibrary4
                     mirrorY,
                     fittingGaps))
             {
-                // Ép visibility tê nếu block động
-                TrySetShopFittingVisibility(
-                    tr,
-                    btr,
-                    nodePoint,
-                    preferDown: false,
-                    preferHorizontal: true);
                 return 1;
             }
 
@@ -14421,27 +14626,182 @@ namespace ClassLibrary4
             Point3d joint,
             double half)
         {
+            // GIỮ NGUYÊN hành vi cũ cho REDUCER:
+            // không hướng, không DN => áp cho hai đầu giảm như trước.
+            RecordShopFittingGapDirectional(
+                fittingGaps,
+                joint,
+                half,
+                new Vector3d(0.0, 0.0, 0.0),
+                "");
+        }
+
+        private void RecordShopFittingGapDirectional(
+            List<ShopFittingGapInfo> fittingGaps,
+            Point3d joint,
+            double half,
+            Vector3d direction,
+            string sizeText)
+        {
             if (fittingGaps == null || half <= 1.0)
                 return;
 
-            // Cập nhật nếu đã có nút gần
+            Vector3d dir =
+                new Vector3d(
+                    direction.X,
+                    direction.Y,
+                    0.0);
+
+            if (dir.Length > 1e-9)
+                dir = dir.GetNormal();
+
+            string sizeKey =
+                CleanLayerText(sizeText ?? "");
+
             for (int i = 0; i < fittingGaps.Count; i++)
             {
-                if (fittingGaps[i].Joint.DistanceTo(joint) <=
-                    ShopDuplicateNodeTolerance)
+                ShopFittingGapInfo oldGap =
+                    fittingGaps[i];
+
+                if (oldGap == null ||
+                    oldGap.Joint.DistanceTo(joint) >
+                        ShopDuplicateNodeTolerance)
                 {
-                    if (half > fittingGaps[i].HalfLength)
-                        fittingGaps[i].HalfLength = half;
+                    continue;
+                }
+
+                // Gap legacy của REDUCER: chỉ gộp với legacy khác.
+                bool oldDirectional =
+                    oldGap.Direction.Length > 1e-9 ||
+                    !string.IsNullOrWhiteSpace(
+                        oldGap.SizeText);
+
+                bool newDirectional =
+                    dir.Length > 1e-9 ||
+                    !string.IsNullOrWhiteSpace(
+                        sizeKey);
+
+                if (oldDirectional != newDirectional)
+                    continue;
+
+                if (!newDirectional)
+                {
+                    if (half > oldGap.HalfLength)
+                        oldGap.HalfLength = half;
                     return;
                 }
+
+                string oldSize =
+                    CleanLayerText(
+                        oldGap.SizeText ?? "");
+
+                if (!string.Equals(
+                        oldSize,
+                        sizeKey,
+                        StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                if (oldGap.Direction.Length < 1e-9 ||
+                    dir.Length < 1e-9)
+                {
+                    continue;
+                }
+
+                double angle =
+                    GetShopAngleDegrees(
+                        oldGap.Direction,
+                        dir);
+
+                // Cùng chân/cùng hướng mới gộp.
+                if (angle > 8.0)
+                    continue;
+
+                if (half > oldGap.HalfLength)
+                    oldGap.HalfLength = half;
+
+                return;
             }
 
             fittingGaps.Add(
                 new ShopFittingGapInfo
                 {
                     Joint = joint,
-                    HalfLength = half
+                    HalfLength = half,
+                    Direction = dir,
+                    SizeText = sizeText ?? ""
                 });
+        }
+
+        private bool ShopFittingGapAppliesToPipe(
+            ShopFittingGapInfo gap,
+            ShopPipeCandidate pipe,
+            Vector3d pipeDirection)
+        {
+            if (gap == null ||
+                pipe == null ||
+                gap.HalfLength <= 1.0)
+            {
+                return false;
+            }
+
+            // Legacy gap = reducer cũ => GIỮ NGUYÊN, áp như code đang chạy tốt.
+            bool directional =
+                gap.Direction.Length > 1e-9 ||
+                !string.IsNullOrWhiteSpace(
+                    gap.SizeText);
+
+            if (!directional)
+                return true;
+
+            string gapSize =
+                CleanLayerText(
+                    gap.SizeText ?? "");
+            string pipeSize =
+                CleanLayerText(
+                    pipe.SizeText ?? "");
+
+            if (!string.IsNullOrWhiteSpace(gapSize) &&
+                !string.IsNullOrWhiteSpace(pipeSize) &&
+                !string.Equals(
+                    gapSize,
+                    pipeSize,
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            Vector3d pd =
+                new Vector3d(
+                    pipeDirection.X,
+                    pipeDirection.Y,
+                    0.0);
+
+            if (gap.Direction.Length < 1e-9 ||
+                pd.Length < 1e-9)
+            {
+                return true;
+            }
+
+            pd = pd.GetNormal();
+
+            double angle =
+                GetShopAngleDegrees(
+                    gap.Direction,
+                    pd);
+
+            // Pipe có thể đang duyệt theo chiều ngược lại:
+            // so theo TRỤC, không bắt dấu vector.
+            double axisError =
+                Math.Min(
+                    angle,
+                    Math.Abs(180.0 - angle));
+
+            return axisError <=
+                Math.Max(
+                    10.0,
+                    ShopStraightAngleToleranceDeg);
         }
 
         private int DrawShopParallelPipeWithGaps(
@@ -14481,8 +14841,13 @@ namespace ClassLibrary4
 
                     foreach (ShopFittingGapInfo g in fittingGaps)
                     {
-                        if (g == null || g.HalfLength <= 1.0)
+                        if (!ShopFittingGapAppliesToPipe(
+                                g,
+                                pipe,
+                                dir))
+                        {
                             continue;
+                        }
 
                         Vector3d toJ = g.Joint - start;
                         double along = toJ.DotProduct(dir);
@@ -14727,8 +15092,13 @@ namespace ClassLibrary4
 
                         foreach (ShopFittingGapInfo g in fittingGaps)
                         {
-                            if (g == null || g.HalfLength <= 1.0)
+                            if (!ShopFittingGapAppliesToPipe(
+                                    g,
+                                    pipe,
+                                    dir))
+                            {
                                 continue;
+                            }
 
                             Vector3d toJ = g.Joint - a;
                             double along = toJ.DotProduct(dir);
@@ -15744,7 +16114,21 @@ namespace ClassLibrary4
                     toSize);
 
             if (string.IsNullOrWhiteSpace(blockName))
+            {
+                try
+                {
+                    Autodesk.AutoCAD.ApplicationServices.Core.Application
+                        .DocumentManager
+                        .MdiActiveDocument?
+                        .Editor
+                        .WriteMessage(
+                            $"\n[SHOP {ShopSmartBuild}] KHÔNG TÌM BLOCK " +
+                            $"{fittingType} {fromSize}->{toSize}");
+                }
+                catch { }
+
                 return false;
+            }
 
             ObjectId blockId =
                 EnsureExternalBlockImported(
@@ -15823,39 +16207,87 @@ namespace ClassLibrary4
             }
             else if (isElbowOrTee)
             {
-                // Base point block = điểm nút trên giao tâm ống
-                basePoint = insertPoint;
+                // FIX23 chỉ sửa CO/TÊ.
+                // Reducer ở nhánh phía trên GIỮ NGUYÊN hoàn toàn.
 
-                double legGap = EstimateShopElbowLegGap(tr, blockId);
-
-                if (legGap < 1.0)
+                if (placement != null &&
+                    placement.Ports != null &&
+                    placement.Ports.Count >= 2 &&
+                    TryResolveShopFittingTransform(
+                        fittingType,
+                        placement,
+                        desiredPrimaryAngle,
+                        mirrorY,
+                        out finalRotation,
+                        out finalMirrorY))
                 {
-                    Point3d localCenter;
-                    double halfAlong;
-                    if (TryGetShopBlockLocalCenter(
+                    Vector3d localAnchor =
+                        new Vector3d(
+                            placement.Anchor.X,
+                            placement.Anchor.Y * finalMirrorY,
+                            placement.Anchor.Z);
+
+                    Vector3d transformedAnchor =
+                        localAnchor.RotateBy(
+                            finalRotation,
+                            Vector3d.ZAxis);
+
+                    // Đưa giao tâm thật của các port vào đúng node mạng ống.
+                    basePoint =
+                        insertPoint -
+                        transformedAnchor;
+
+                }
+                else
+                {
+                    // Fallback đúng code cũ nếu block không phân tích được.
+                    basePoint = insertPoint;
+
+                    double legGap =
+                        EstimateShopElbowLegGap(
                             tr,
-                            blockId,
-                            out localCenter,
-                            out halfAlong))
+                            blockId);
+
+                    if (legGap < 1.0)
                     {
-                        legGap = halfAlong;
+                        Point3d localCenter;
+                        double halfAlong;
+
+                        if (TryGetShopBlockLocalCenter(
+                                tr,
+                                blockId,
+                                out localCenter,
+                                out halfAlong))
+                        {
+                            legGap = halfAlong;
+                        }
                     }
-                }
 
-                // Chỉ khi đo block thất bại mới ước theo DN (nhỏ, sát mặt)
-                if (legGap < 1.0)
-                {
-                    double dn = Math.Max(
-                        ParseShopDnNumber(NormalizeShopDnToken(fromSize)),
-                        ParseShopDnNumber(NormalizeShopDnToken(toSize)));
-                    if (dn <= 0) dn = 25;
-                    legGap = Math.Max(8.0, dn * 0.40);
-                }
+                    if (legGap < 1.0)
+                    {
+                        double dn =
+                            Math.Max(
+                                ParseShopDnNumber(
+                                    NormalizeShopDnToken(
+                                        fromSize)),
+                                ParseShopDnNumber(
+                                    NormalizeShopDnToken(
+                                        toSize)));
 
-                RecordShopFittingGap(
-                    fittingGaps,
-                    insertPoint,
-                    legGap);
+                        if (dn <= 0)
+                            dn = 25;
+
+                        legGap =
+                            Math.Max(
+                                8.0,
+                                dn * 0.40);
+                    }
+
+                    RecordShopFittingGap(
+                        fittingGaps,
+                        insertPoint,
+                        legGap);
+                }
             }
             else if (placement != null &&
                      placement.Ports.Count > 0 &&
@@ -15946,14 +16378,161 @@ namespace ClassLibrary4
             btr.AppendEntity(br);
             tr.AddNewlyCreatedDBObject(br, true);
 
-            // Fallback gap nếu chưa ghi ở nhánh simple-center
+            // FIX24: riêng co cuối đầu phun, đổi CHÍNH block vừa chèn
+            // sang trạng thái "đi xuống". Không dùng mirror mặt bằng.
+            bool isSprinklerDropElbow =
+                layerName != null &&
+                layerName.StartsWith(
+                    "FF_SHOP_CO90_DAUPHUN_",
+                    StringComparison.OrdinalIgnoreCase);
+
+            if (isSprinklerDropElbow)
+            {
+                TrySetShopFittingVisibilityOnReference(
+                    br,
+                    preferDown: true,
+                    preferHorizontal: false);
+            }
+
+            // FIX23: CO/TÊ rút từng ống đúng tới mặt cổng thật.
+            // REDUCER không đi qua đoạn này => giữ nguyên cơ chế đang chạy tốt.
+            if (isElbowOrTee &&
+                !isSprinklerDropElbow &&
+                placement != null &&
+                placement.Ports != null &&
+                placement.Ports.Count >= 2 &&
+                fittingGaps != null)
+            {
+                string typeKey =
+                    NormalizeShopKey(
+                        fittingType ?? "");
+
+                for (int portIndex = 0;
+                    portIndex < placement.Ports.Count;
+                    portIndex++)
+                {
+                    ShopFittingPortInfo port =
+                        placement.Ports[portIndex];
+
+                    if (port == null)
+                        continue;
+
+                    Point3d worldPort;
+
+                    try
+                    {
+                        worldPort =
+                            port.Center.TransformBy(
+                                br.BlockTransform);
+                    }
+                    catch
+                    {
+                        continue;
+                    }
+
+                    Vector3d portDir =
+                        new Vector3d(
+                            worldPort.X - insertPoint.X,
+                            worldPort.Y - insertPoint.Y,
+                            0.0);
+
+                    double portGap =
+                        portDir.Length;
+
+                    if (portGap <= 1.0)
+                        continue;
+
+                    portDir =
+                        portDir.GetNormal();
+
+                    string portSize =
+                        fromSize;
+
+                    if (IsTeeKey(typeKey) &&
+                        placement.Ports.Count >= 3)
+                    {
+                        // AnalyzeShopTeePorts luôn xếp:
+                        // 0,1 = main ; 2 = branch.
+                        portSize =
+                            portIndex == 2
+                                ? toSize
+                                : fromSize;
+                    }
+
+                    // Trừ 0.5 để 2 nét ống chạm/đè cực nhẹ vào mặt phụ kiện,
+                    // không tạo khe trắng do regen.
+                    RecordShopFittingGapDirectional(
+                        fittingGaps,
+                        insertPoint,
+                        Math.Max(
+                            1.0,
+                            portGap - 0.5),
+                        portDir,
+                        portSize);
+                }
+            }
+
+            // Co đầu phun: chỉ cần rút ống ngang tới thân co.
+            // Chân còn lại đi xuống Z nên không tạo gap thứ hai trên mặt bằng.
+            if (isSprinklerDropElbow &&
+                fittingGaps != null)
+            {
+                double legGap =
+                    EstimateShopElbowLegGap(
+                        tr,
+                        blockId);
+
+                if (legGap < 1.0)
+                {
+                    double dn =
+                        ParseShopDnNumber(
+                            NormalizeShopDnToken(
+                                fromSize));
+
+                    if (dn <= 0)
+                        dn = 25.0;
+
+                    legGap =
+                        Math.Max(
+                            8.0,
+                            dn * 0.40);
+                }
+
+                Vector3d inletDir =
+                    new Vector3d(
+                        Math.Cos(rotation),
+                        Math.Sin(rotation),
+                        0.0);
+
+                RecordShopFittingGapDirectional(
+                    fittingGaps,
+                    insertPoint,
+                    Math.Max(
+                        1.0,
+                        legGap),
+                    inletDir,
+                    fromSize);
+            }
+
+            // Fallback gap:
+            // - REDUCER: giữ nguyên logic cũ.
+            // - CO/TÊ: chỉ fallback nếu thực sự không có directional port gap.
             if (fittingGaps != null)
             {
                 bool already = false;
+
                 foreach (ShopFittingGapInfo g in fittingGaps)
                 {
-                    if (g.Joint.DistanceTo(insertPoint) <=
-                        ShopDuplicateNodeTolerance)
+                    if (g == null ||
+                        g.Joint.DistanceTo(insertPoint) >
+                            ShopDuplicateNodeTolerance)
+                    {
+                        continue;
+                    }
+
+                    if (!isElbowOrTee ||
+                        isSprinklerDropElbow ||
+                        g.Direction.Length > 1e-9)
                     {
                         already = true;
                         break;
@@ -15962,12 +16541,13 @@ namespace ClassLibrary4
 
                 if (!already)
                 {
-                    double half = EstimateShopFittingHalfLength(
-                        tr,
-                        blockId,
-                        placement,
-                        fromSize,
-                        toSize);
+                    double half =
+                        EstimateShopFittingHalfLength(
+                            tr,
+                            blockId,
+                            placement,
+                            fromSize,
+                            toSize);
 
                     RecordShopFittingGap(
                         fittingGaps,
@@ -18522,6 +19102,713 @@ namespace ClassLibrary4
 
             return false;
         }
+
+
+        // ============================================================
+        // THỐNG KÊ PHỤ KIỆN VẼ SHOP CHỮA CHÁY
+        // Chỉ đọc BlockReference nằm trên các layer FF_SHOP_* phụ kiện.
+        // Không can thiệp vào logic VẼ SHOP / chèn reducer / co / tê.
+        // ============================================================
+
+        private class ShopFittingStatRow
+        {
+            public int STT { get; set; }
+            public string Loai { get; set; }
+            public string KichThuoc { get; set; }
+            public string KieuNoi { get; set; }
+            public double SoLuong { get; set; }
+            public int LoaiSort { get; set; }
+            public double KichThuocSort { get; set; }
+        }
+
+        private void BtnThongKePhuKienShop_Click(
+            object sender,
+            RoutedEventArgs e)
+        {
+            var doc =
+                Autodesk.AutoCAD.ApplicationServices.Core.Application
+                    .DocumentManager
+                    .MdiActiveDocument;
+
+            if (doc == null)
+                return;
+
+            var ed = doc.Editor;
+            var db = doc.Database;
+
+            Autodesk.AutoCAD.Internal.Utils.SetFocusToDwgView();
+
+            using (doc.LockDocument())
+            {
+                PromptSelectionOptions pso =
+                    new PromptSelectionOptions();
+
+                pso.MessageForAdding =
+                    "\n[THỐNG KÊ PHỤ KIỆN SHOP] " +
+                    "Quét chọn khu vực có Co / Tê / Giảm cần thống kê: ";
+
+                SelectionFilter filter =
+                    new SelectionFilter(
+                        new TypedValue[]
+                        {
+                            new TypedValue(
+                                (int)DxfCode.Start,
+                                "INSERT")
+                        });
+
+                PromptSelectionResult psr =
+                    ed.GetSelection(
+                        pso,
+                        filter);
+
+                if (psr.Status != PromptStatus.OK ||
+                    psr.Value == null ||
+                    psr.Value.Count == 0)
+                {
+                    return;
+                }
+
+                Dictionary<string, ShopFittingStatRow> dict =
+                    new Dictionary<string, ShopFittingStatRow>(
+                        StringComparer.OrdinalIgnoreCase);
+
+                using (Transaction tr =
+                    db.TransactionManager.StartTransaction())
+                {
+                    foreach (SelectedObject so in psr.Value)
+                    {
+                        if (so == null ||
+                            so.ObjectId.IsNull)
+                        {
+                            continue;
+                        }
+
+                        BlockReference br =
+                            tr.GetObject(
+                                so.ObjectId,
+                                OpenMode.ForRead,
+                                false) as BlockReference;
+
+                        if (br == null ||
+                            br.IsErased)
+                        {
+                            continue;
+                        }
+
+                        string layer =
+                            br.Layer ?? "";
+
+                        if (!TryGetShopFittingStatIdentity(
+                                tr,
+                                br,
+                                layer,
+                                out string loai,
+                                out string kichThuoc,
+                                out string kieuNoi,
+                                out int loaiSort,
+                                out double sizeSort))
+                        {
+                            continue;
+                        }
+
+                        string key =
+                            loai + "|" +
+                            kichThuoc + "|" +
+                            kieuNoi;
+
+                        if (!dict.TryGetValue(
+                                key,
+                                out ShopFittingStatRow row))
+                        {
+                            row =
+                                new ShopFittingStatRow
+                                {
+                                    Loai = loai,
+                                    KichThuoc = kichThuoc,
+                                    KieuNoi = kieuNoi,
+                                    SoLuong = 0.0,
+                                    LoaiSort = loaiSort,
+                                    KichThuocSort = sizeSort
+                                };
+
+                            dict[key] = row;
+                        }
+
+                        row.SoLuong += 1.0;
+                    }
+
+                    tr.Commit();
+                }
+
+                if (dict.Count == 0)
+                {
+                    MessageBox.Show(
+                        "Không tìm thấy phụ kiện SHOP trong vùng chọn.\n\n" +
+                        "Chỉ đếm block trên các layer:\n" +
+                        "FF_SHOP_CO90_...\n" +
+                        "FF_SHOP_COLOI45_...\n" +
+                        "FF_SHOP_TE_...\n" +
+                        "FF_SHOP_GIAM_...",
+                        "THỐNG KÊ PHỤ KIỆN SHOP");
+                    return;
+                }
+
+                List<ShopFittingStatRow> data =
+                    dict.Values
+                        .OrderBy(x => x.LoaiSort)
+                        .ThenByDescending(x => x.KichThuocSort)
+                        .ThenBy(x => x.KichThuoc)
+                        .ThenBy(x => x.KieuNoi)
+                        .ToList();
+
+                for (int i = 0; i < data.Count; i++)
+                    data[i].STT = i + 1;
+
+                double tong =
+                    data.Sum(x => x.SoLuong);
+
+                ed.WriteMessage(
+                    $"\n[THỐNG KÊ PHỤ KIỆN SHOP] " +
+                    $"Tìm thấy {FormatSoThongKe(tong)} phụ kiện, " +
+                    $"{data.Count} chủng loại/kích thước.");
+
+                XuatBangThongKePhuKienShop(
+                    data);
+            }
+        }
+
+        private bool TryGetShopFittingStatIdentity(
+            Transaction tr,
+            BlockReference br,
+            string layer,
+            out string loai,
+            out string kichThuoc,
+            out string kieuNoi,
+            out int loaiSort,
+            out double sizeSort)
+        {
+            loai = "";
+            kichThuoc = "";
+            kieuNoi = "";
+            loaiSort = 999;
+            sizeSort = 0.0;
+
+            if (tr == null ||
+                br == null)
+            {
+                return false;
+            }
+
+            string layerUpper =
+                (layer ?? "")
+                    .Trim()
+                    .ToUpperInvariant();
+
+            // Chỉ nhận đúng phụ kiện do VẼ SHOP tạo.
+            // Thứ tự phải kiểm tra CO90_DAUPHUN trước CO90 thường.
+            if (layerUpper.StartsWith(
+                    "FF_SHOP_CO90_DAUPHUN_",
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                loai = "CO 90 ĐẦU PHUN";
+                loaiSort = 11;
+                kichThuoc =
+                    ExtractShopStatSingleSize(
+                        layer,
+                        "FF_SHOP_CO90_DAUPHUN_");
+            }
+            else if (layerUpper.StartsWith(
+                         "FF_SHOP_CO90_",
+                         StringComparison.OrdinalIgnoreCase))
+            {
+                loai = "CO 90";
+                loaiSort = 10;
+                kichThuoc =
+                    ExtractShopStatSingleSize(
+                        layer,
+                        "FF_SHOP_CO90_");
+            }
+            else if (layerUpper.StartsWith(
+                         "FF_SHOP_COLOI45_",
+                         StringComparison.OrdinalIgnoreCase))
+            {
+                loai = "CO 45 / CO LƠI";
+                loaiSort = 20;
+                kichThuoc =
+                    ExtractShopStatSingleSize(
+                        layer,
+                        "FF_SHOP_COLOI45_");
+            }
+            else if (layerUpper.StartsWith(
+                         "FF_SHOP_TE_",
+                         StringComparison.OrdinalIgnoreCase))
+            {
+                loai = "TÊ";
+                loaiSort = 30;
+                kichThuoc =
+                    ExtractShopStatPairSize(
+                        layer,
+                        "FF_SHOP_TE_");
+            }
+            else if (layerUpper.StartsWith(
+                         "FF_SHOP_GIAM_",
+                         StringComparison.OrdinalIgnoreCase))
+            {
+                loai = "GIẢM";
+                loaiSort = 40;
+                kichThuoc =
+                    ExtractShopStatPairSize(
+                        layer,
+                        "FF_SHOP_GIAM_");
+            }
+            else
+            {
+                return false;
+            }
+
+            string blockName =
+                GetShopStatBlockName(
+                    tr,
+                    br);
+
+            kieuNoi =
+                GetShopStatConnectionType(
+                    blockName);
+
+            // Nếu layer cũ thiếu size, lấy lại từ tên block.
+            if (string.IsNullOrWhiteSpace(kichThuoc))
+            {
+                kichThuoc =
+                    ExtractShopStatSizeFromBlockName(
+                        blockName,
+                        loai);
+            }
+
+            if (string.IsNullOrWhiteSpace(kichThuoc))
+                kichThuoc = "-";
+
+            sizeSort =
+                GetShopStatSortSize(
+                    kichThuoc);
+
+            return true;
+        }
+
+        private string GetShopStatBlockName(
+            Transaction tr,
+            BlockReference br)
+        {
+            if (tr == null ||
+                br == null)
+            {
+                return "";
+            }
+
+            try
+            {
+                ObjectId defId =
+                    br.BlockTableRecord;
+
+                if (br.IsDynamicBlock &&
+                    !br.DynamicBlockTableRecord.IsNull &&
+                    br.DynamicBlockTableRecord.IsValid)
+                {
+                    defId =
+                        br.DynamicBlockTableRecord;
+                }
+
+                BlockTableRecord rec =
+                    tr.GetObject(
+                        defId,
+                        OpenMode.ForRead,
+                        false) as BlockTableRecord;
+
+                return rec?.Name ?? "";
+            }
+            catch
+            {
+                return "";
+            }
+        }
+
+        private static string GetShopStatConnectionType(
+            string blockName)
+        {
+            string key =
+                NormalizeShopKey(
+                    blockName ?? "");
+
+            if (key.Contains("SCREW"))
+                return "SCREW";
+
+            if (key.Contains("WELD"))
+                return "WELD";
+
+            if (key.Contains("PPR"))
+                return "PPR";
+
+            if (key.Contains("UPVC") ||
+                key.Contains("PVC"))
+            {
+                return "uPVC";
+            }
+
+            return "-";
+        }
+
+        private string ExtractShopStatSingleSize(
+            string layer,
+            string prefix)
+        {
+            if (string.IsNullOrWhiteSpace(layer) ||
+                string.IsNullOrWhiteSpace(prefix))
+            {
+                return "";
+            }
+
+            string tail =
+                layer.Length >= prefix.Length
+                    ? layer.Substring(prefix.Length)
+                    : "";
+
+            Match m =
+                Regex.Match(
+                    tail,
+                    @"DN\s*(\d{1,4}(?:[.,]\d+)?)",
+                    RegexOptions.IgnoreCase);
+
+            if (!m.Success)
+            {
+                m =
+                    Regex.Match(
+                        tail,
+                        @"(\d{1,4}(?:[.,]\d+)?)");
+            }
+
+            if (!m.Success)
+                return "";
+
+            return "DN" +
+                m.Groups[1]
+                    .Value
+                    .Replace(',', '.');
+        }
+
+        private string ExtractShopStatPairSize(
+            string layer,
+            string prefix)
+        {
+            if (string.IsNullOrWhiteSpace(layer) ||
+                string.IsNullOrWhiteSpace(prefix))
+            {
+                return "";
+            }
+
+            string tail =
+                layer.Length >= prefix.Length
+                    ? layer.Substring(prefix.Length)
+                    : "";
+
+            MatchCollection ms =
+                Regex.Matches(
+                    tail,
+                    @"(?:DN\s*)?(\d{1,4}(?:[.,]\d+)?)",
+                    RegexOptions.IgnoreCase);
+
+            if (ms.Count < 2)
+                return "";
+
+            string a =
+                ms[0].Groups[1]
+                    .Value
+                    .Replace(',', '.');
+
+            string b =
+                ms[1].Groups[1]
+                    .Value
+                    .Replace(',', '.');
+
+            return "DN" + a + "x" + b;
+        }
+
+        private string ExtractShopStatSizeFromBlockName(
+            string blockName,
+            string loai)
+        {
+            if (string.IsNullOrWhiteSpace(blockName))
+                return "";
+
+            string raw =
+                blockName
+                    .Replace('_', '-')
+                    .ToUpperInvariant();
+
+            bool isPair =
+                string.Equals(
+                    loai,
+                    "TÊ",
+                    StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(
+                    loai,
+                    "GIẢM",
+                    StringComparison.OrdinalIgnoreCase);
+
+            if (isPair)
+            {
+                Match pair =
+                    Regex.Match(
+                        raw,
+                        @"DN\s*(\d{1,4}(?:[.,]\d+)?)\s*[xX×]\s*(?:DN\s*)?(\d{1,4}(?:[.,]\d+)?)",
+                        RegexOptions.IgnoreCase);
+
+                if (pair.Success)
+                {
+                    return "DN" +
+                        pair.Groups[1].Value.Replace(',', '.') +
+                        "x" +
+                        pair.Groups[2].Value.Replace(',', '.');
+                }
+            }
+
+            Match one =
+                Regex.Match(
+                    raw,
+                    @"DN\s*(\d{1,4}(?:[.,]\d+)?)",
+                    RegexOptions.IgnoreCase);
+
+            if (one.Success)
+            {
+                return "DN" +
+                    one.Groups[1]
+                        .Value
+                        .Replace(',', '.');
+            }
+
+            return "";
+        }
+
+        private static double GetShopStatSortSize(
+            string size)
+        {
+            if (string.IsNullOrWhiteSpace(size))
+                return 0.0;
+
+            MatchCollection ms =
+                Regex.Matches(
+                    size,
+                    @"\d+(?:[.,]\d+)?");
+
+            double max = 0.0;
+
+            foreach (Match m in ms)
+            {
+                if (double.TryParse(
+                        m.Value.Replace(',', '.'),
+                        NumberStyles.Any,
+                        CultureInfo.InvariantCulture,
+                        out double value))
+                {
+                    if (value > max)
+                        max = value;
+                }
+            }
+
+            return max;
+        }
+
+        private void XuatBangThongKePhuKienShop(
+            List<ShopFittingStatRow> data)
+        {
+            if (data == null ||
+                data.Count == 0)
+            {
+                return;
+            }
+
+            var doc =
+                Autodesk.AutoCAD.ApplicationServices.Core.Application
+                    .DocumentManager
+                    .MdiActiveDocument;
+
+            if (doc == null)
+                return;
+
+            var db = doc.Database;
+            var ed = doc.Editor;
+
+            PromptPointResult ppr =
+                ed.GetPoint(
+                    new PromptPointOptions(
+                        "\nKích chọn vị trí đặt BẢNG THỐNG KÊ PHỤ KIỆN SHOP: "));
+
+            if (ppr.Status != PromptStatus.OK)
+                return;
+
+            using (Transaction tr =
+                db.TransactionManager.StartTransaction())
+            {
+                BlockTableRecord btr =
+                    (BlockTableRecord)tr.GetObject(
+                        db.CurrentSpaceId,
+                        OpenMode.ForWrite);
+
+                Table tb =
+                    new Table
+                    {
+                        TableStyle = db.Tablestyle,
+                        Position = ppr.Value
+                    };
+
+                tb.Color =
+                    Autodesk.AutoCAD.Colors.Color.FromColorIndex(
+                        ColorMethod.ByAci,
+                        2);
+
+                const int soCot = 5;
+                int soDong =
+                    data.Count + 3;
+
+                tb.SetSize(
+                    soDong,
+                    soCot);
+
+                // Tỷ lệ tương thích bản vẽ mm nhưng nhỏ gọn hơn bảng tổng hợp cũ.
+                double sf = 4.0;
+                double textH = 120.0 * sf;
+
+                for (int r = 0;
+                    r < tb.Rows.Count;
+                    r++)
+                {
+                    tb.Rows[r].Height =
+                        (r == 0 ? 360.0 : 260.0) * sf;
+
+                    for (int c = 0;
+                        c < tb.Columns.Count;
+                        c++)
+                    {
+                        tb.Cells[r, c].TextStyleId =
+                            db.Textstyle;
+
+                        tb.Cells[r, c].TextHeight =
+                            textH;
+                    }
+                }
+
+                tb.Columns[0].Width = 700.0 * sf;
+                tb.Columns[1].Width = 2500.0 * sf;
+                tb.Columns[2].Width = 2200.0 * sf;
+                tb.Columns[3].Width = 1800.0 * sf;
+                tb.Columns[4].Width = 1800.0 * sf;
+
+                try
+                {
+                    tb.MergeCells(
+                        CellRange.Create(
+                            tb,
+                            0,
+                            0,
+                            0,
+                            soCot - 1));
+                }
+                catch
+                {
+                }
+
+                tb.Cells[0, 0].TextString =
+                    "BẢNG THỐNG KÊ PHỤ KIỆN SHOP CHỮA CHÁY";
+
+                tb.Cells[0, 0].Alignment =
+                    CellAlignment.MiddleCenter;
+
+                tb.Cells[1, 0].TextString = "STT";
+                tb.Cells[1, 1].TextString = "LOẠI PHỤ KIỆN";
+                tb.Cells[1, 2].TextString = "KÍCH THƯỚC";
+                tb.Cells[1, 3].TextString = "KIỂU NỐI";
+                tb.Cells[1, 4].TextString = "SỐ LƯỢNG (cái)";
+
+                for (int c = 0; c < soCot; c++)
+                {
+                    tb.Cells[1, c].Alignment =
+                        CellAlignment.MiddleCenter;
+                }
+
+                int rowIndex = 2;
+
+                foreach (ShopFittingStatRow item in data)
+                {
+                    tb.Cells[rowIndex, 0].TextString =
+                        item.STT.ToString();
+
+                    tb.Cells[rowIndex, 1].TextString =
+                        item.Loai ?? "";
+
+                    tb.Cells[rowIndex, 2].TextString =
+                        item.KichThuoc ?? "";
+
+                    tb.Cells[rowIndex, 3].TextString =
+                        item.KieuNoi ?? "";
+
+                    tb.Cells[rowIndex, 4].TextString =
+                        FormatSoThongKe(
+                            item.SoLuong);
+
+                    tb.Cells[rowIndex, 0].Alignment =
+                        CellAlignment.MiddleCenter;
+
+                    tb.Cells[rowIndex, 1].Alignment =
+                        CellAlignment.MiddleLeft;
+
+                    tb.Cells[rowIndex, 2].Alignment =
+                        CellAlignment.MiddleCenter;
+
+                    tb.Cells[rowIndex, 3].Alignment =
+                        CellAlignment.MiddleCenter;
+
+                    tb.Cells[rowIndex, 4].Alignment =
+                        CellAlignment.MiddleCenter;
+
+                    rowIndex++;
+                }
+
+                try
+                {
+                    tb.MergeCells(
+                        CellRange.Create(
+                            tb,
+                            rowIndex,
+                            0,
+                            rowIndex,
+                            3));
+                }
+                catch
+                {
+                }
+
+                tb.Cells[rowIndex, 0].TextString =
+                    "TỔNG";
+
+                tb.Cells[rowIndex, 0].Alignment =
+                    CellAlignment.MiddleCenter;
+
+                tb.Cells[rowIndex, 4].TextString =
+                    FormatSoThongKe(
+                        data.Sum(x => x.SoLuong));
+
+                tb.Cells[rowIndex, 4].Alignment =
+                    CellAlignment.MiddleCenter;
+
+                tb.GenerateLayout();
+
+                btr.AppendEntity(tb);
+                tr.AddNewlyCreatedDBObject(
+                    tb,
+                    true);
+
+                tr.Commit();
+            }
+        }
+
 
         private void BtnThongKeOng_Click(
             object sender,
