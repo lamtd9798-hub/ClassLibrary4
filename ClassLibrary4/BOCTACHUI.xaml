@@ -1415,13 +1415,24 @@
                                 </Button.ToolTip>
                             </Button>
 
-                            <Button Content="TÌM ĐỐI TƯỢNG" Height="42" FontSize="14" FontWeight="Bold"
+                            <Button Content="TÌM ĐỐI TƯỢNG ĐƯỜNG THẲNG" Height="40" FontSize="12" FontWeight="Bold"
                                     Background="#FFE67E22" Foreground="White" Margin="0,0,0,10" Cursor="Hand"
                                     Click="BtnTimDoiTuongThongKe_Click">
                                 <Button.ToolTip>
                                     <ToolTip>
                                         <TextBlock MaxWidth="280" TextWrapping="Wrap"
-                                                   Text="TÌM ĐỐI TƯỢNG: Click vào tên Layer trên bảng thống kê. Tool vẽ đường thẳng từ ô đó tới các đối tượng cùng Layer trên bản vẽ. ESC/Enter để xóa đường và kết thúc."/>
+                                                   Text="TÌM ĐỐI TƯỢNG ĐƯỜNG THẲNG: Click vào tên Layer trên bảng thống kê. Tool vẽ đường thẳng từ ô đó tới các đối tượng cùng Layer trên bản vẽ. ESC/Enter để xóa đường và kết thúc."/>
+                                    </ToolTip>
+                                </Button.ToolTip>
+                            </Button>
+
+                            <Button Content="TÌM ĐỐI TƯỢNG KHOANH TRÒN" Height="40" FontSize="12" FontWeight="Bold"
+                                    Background="#FF9B59B6" Foreground="White" Margin="0,0,0,10" Cursor="Hand"
+                                    Click="BtnTimDoiTuongKhoanhTron_Click">
+                                <Button.ToolTip>
+                                    <ToolTip>
+                                        <TextBlock MaxWidth="280" TextWrapping="Wrap"
+                                                   Text="TÌM ĐỐI TƯỢNG KHOANH TRÒN: Click vào tên Layer trên bảng thống kê. Tool đổi chữ/đối tượng cùng Layer sang màu vàng, các đối tượng khác sang màu xám, và vẽ vòng tròn tạm bao quanh chữ để nhìn vị trí nhanh hơn. ESC/Enter để xóa khoanh tròn và kết thúc."/>
                                     </ToolTip>
                                 </Button.ToolTip>
                             </Button>
@@ -1430,7 +1441,7 @@
                                 <StackPanel>
                                     <TextBlock Text="Hướng dẫn nhanh" FontWeight="Bold" FontSize="12" Margin="0,0,0,4"/>
                                     <TextBlock TextWrapping="Wrap" FontSize="11" Foreground="#FF444444"
-                                               Text="1. Thống kê ống / thiết bị+van → quét vùng → đặt bảng&#10;2. Tìm đối tượng → click tên Layer trên bảng → xem đường chỉ&#10;3. ESC/Enter để xóa đường chỉ"/>
+                                               Text="1. Thống kê ống / thiết bị+van → quét vùng → đặt bảng&#10;2. Tìm đường thẳng → click tên Layer → xem đường chỉ&#10;3. Tìm khoanh tròn → click tên Layer → khoanh chữ target&#10;4. ESC/Enter để xóa dấu tạm"/>
                                 </StackPanel>
                             </Border>
                         </StackPanel>
