@@ -61,7 +61,7 @@ namespace ClassLibrary4
         private const double TemplateDuplicateTolerance = 100.0;
 
         // SHOP thông minh: gom các đầu/điểm giao thành nút rồi mới quyết định phụ kiện.
-        private const string ShopSmartBuild = "SHOP-SMART-20260809-39-FIX-BROKEN-LOG-STRINGS";
+        private const string ShopSmartBuild = "SHOP-SMART-20260809-40-PIPE-STATS-SHOP-LINE";
         private const double ShopJointTolerance = 150.0;
         private const double ShopDuplicateNodeTolerance = 100.0;
         private const double ShopStraightAngleToleranceDeg = 12.0;
@@ -21598,12 +21598,18 @@ namespace ClassLibrary4
 
             using (doc.LockDocument())
             {
+                // FIX40:
+                // Trước đây chỉ chọn LWPOLYLINE nên:
+                // - ống vẽ bằng LINE không thống kê được;
+                // - ống SHOP cũng không thống kê được vì SHOP chủ yếu là LINE.
+                //
+                // Mở rộng cho LINE / LWPOLYLINE / ARC.
                 TypedValue[] tvs =
                     new TypedValue[]
                     {
                         new TypedValue(
                             (int)DxfCode.Start,
-                            "LWPOLYLINE")
+                            "LINE,LWPOLYLINE,ARC")
                     };
 
                 SelectionFilter filter =
@@ -21613,46 +21619,143 @@ namespace ClassLibrary4
                     new PromptSelectionOptions();
 
                 pso.MessageForAdding =
-                    "\nQuét chọn khu vực ống cần thống kê: ";
+                    "\nQuét chọn khu vực ống cần thống kê " +
+                    "(hỗ trợ ống thường + ống SHOP): ";
 
                 PromptSelectionResult psr =
-                    ed.GetSelection(pso, filter);
+                    ed.GetSelection(
+                        pso,
+                        filter);
 
-                if (psr.Status != PromptStatus.OK)
+                if (psr.Status != PromptStatus.OK ||
+                    psr.Value == null ||
+                    psr.Value.Count == 0)
+                {
                     return;
+                }
 
                 Dictionary<string, double> dictChieuDai =
-                    new Dictionary<string, double>();
+                    new Dictionary<string, double>(
+                        StringComparer.OrdinalIgnoreCase);
+
+                int shopCenterCount = 0;
+                int normalPipeCount = 0;
 
                 using (Transaction tr =
                     db.TransactionManager.StartTransaction())
                 {
                     foreach (SelectedObject so in psr.Value)
                     {
-                        Polyline pline =
+                        if (so == null ||
+                            so.ObjectId.IsNull)
+                        {
+                            continue;
+                        }
+
+                        Entity ent =
                             tr.GetObject(
                                 so.ObjectId,
-                                OpenMode.ForRead)
-                                as Polyline;
+                                OpenMode.ForRead,
+                                false) as Entity;
 
-                        if (pline != null)
+                        if (ent == null ||
+                            ent.IsErased)
                         {
-                            // Chỉ thống kê layer do tool tạo
-                            if (!LaLayerCuaTool(pline.Layer))
+                            continue;
+                        }
+
+                        Curve curve =
+                            ent as Curve;
+
+                        if (curve == null)
+                            continue;
+
+                        string layer =
+                            (ent.Layer ?? "")
+                                .Trim();
+
+                        if (string.IsNullOrWhiteSpace(layer))
+                            continue;
+
+                        // Chỉ thống kê layer do tool tạo.
+                        if (!LaLayerCuaTool(layer))
+                            continue;
+
+                        // ==================================================
+                        // ỐNG SHOP
+                        // ==================================================
+                        // Khi VẼ SHOP, mỗi đoạn có:
+                        // 1) hai nét biên: FF_SHOP_DNxx
+                        // 2) một nét tâm: FF_SHOP_TAM_DNxx
+                        //
+                        // Nếu cộng hai nét biên => chiều dài x2.
+                        // Vì vậy CHỈ lấy FF_SHOP_TAM_* để thống kê.
+                        if (LaLayerTamOngShop(layer))
+                        {
+                            string outputLayer =
+                                LayTenLayerOngShopTuLayerTam(
+                                    layer);
+
+                            if (string.IsNullOrWhiteSpace(outputLayer))
                                 continue;
 
-                            if (!dictChieuDai.ContainsKey(
-                                pline.Layer))
-                            {
-                                dictChieuDai[pline.Layer] = 0;
-                            }
+                            double length =
+                                LayChieuDaiCurveThongKe(
+                                    curve);
 
-                            dictChieuDai[pline.Layer] +=
-                                pline.Length;
+                            if (length <= 1e-9)
+                                continue;
+
+                            if (!dictChieuDai.ContainsKey(outputLayer))
+                                dictChieuDai[outputLayer] = 0.0;
+
+                            dictChieuDai[outputLayer] += length;
+                            shopCenterCount++;
+                            continue;
                         }
+
+                        // Hai nét biên SHOP không tính, vì đã có đường tâm.
+                        if (LaLayerBienOngShop(layer))
+                            continue;
+
+                        // Bỏ các layer phụ kiện SHOP / layer tạm SHOP.
+                        if (LaLayerPhuKienHoacTamShop(layer))
+                            continue;
+
+                        // ==================================================
+                        // ỐNG THƯỜNG
+                        // ==================================================
+                        // Giữ logic cũ nhưng cho phép cả LINE + ARC.
+                        if (!LaLayerOng(layer))
+                            continue;
+
+                        double normalLength =
+                            LayChieuDaiCurveThongKe(
+                                curve);
+
+                        if (normalLength <= 1e-9)
+                            continue;
+
+                        if (!dictChieuDai.ContainsKey(layer))
+                            dictChieuDai[layer] = 0.0;
+
+                        dictChieuDai[layer] += normalLength;
+                        normalPipeCount++;
                     }
 
                     tr.Commit();
+                }
+
+                if (dictChieuDai.Count == 0)
+                {
+                    MessageBox.Show(
+                        "Không tìm thấy ống hợp lệ trong vùng chọn.\n\n" +
+                        "Hỗ trợ:\n" +
+                        "• Ống thường: LINE / POLYLINE / ARC trên layer ống của tool.\n" +
+                        "• Ống SHOP: tự lấy đường tâm FF_SHOP_TAM_DN... " +
+                        "để không bị nhân đôi chiều dài.",
+                        "THỐNG KÊ ỐNG");
+                    return;
                 }
 
                 List<ThongKeOng> danhSachThongKe =
@@ -21660,9 +21763,9 @@ namespace ClassLibrary4
 
                 foreach (var item in dictChieuDai)
                 {
-                    double kichThuoc = 0;
+                    double kichThuoc = 0.0;
 
-                    var match =
+                    Match match =
                         Regex.Match(
                             item.Key,
                             @"\d+(\.\d+)?");
@@ -21676,32 +21779,60 @@ namespace ClassLibrary4
                             out kichThuoc);
                     }
 
+                    string heThongSort =
+                        item.Key;
+
+                    if (heThongSort.StartsWith(
+                            "FF_SHOP_",
+                            StringComparison.OrdinalIgnoreCase))
+                    {
+                        heThongSort = "FF_SHOP";
+                    }
+                    else if (heThongSort.Contains("_"))
+                    {
+                        heThongSort =
+                            heThongSort.Split('_')[0];
+                    }
+
+                    double lengthM =
+                        item.Value / 1000.0;
+
                     danhSachThongKe.Add(
                         new ThongKeOng
                         {
                             TenLayer = item.Key,
                             SoLuong =
                                 Math.Round(
-                                    item.Value / 1000.0,
+                                    lengthM,
                                     2),
+
+                            // Ống SHOP tròn không tính M2 bằng công thức ống gió.
+                            // Các layer ống thường vẫn giữ nguyên logic cũ.
                             M2 =
-                                Math.Round(
-                                    TinhM2OngGioTuLayer(
-                                        item.Key,
-                                        item.Value / 1000.0),
-                                    2),
+                                item.Key.StartsWith(
+                                    "FF_SHOP_",
+                                    StringComparison.OrdinalIgnoreCase)
+                                    ? 0.0
+                                    : Math.Round(
+                                        TinhM2OngGioTuLayer(
+                                            item.Key,
+                                            lengthM),
+                                        2),
+
                             HeThongSort =
-                                item.Key.Split('_')[0],
+                                heThongSort,
+
                             KichThuocSort =
                                 kichThuoc
                         });
                 }
 
-                var danhSachDaSapXep =
+                List<ThongKeOng> danhSachDaSapXep =
                     danhSachThongKe
                         .OrderBy(x => x.HeThongSort)
                         .ThenByDescending(
                             x => x.KichThuocSort)
+                        .ThenBy(x => x.TenLayer)
                         .ToList();
 
                 for (int i = 0;
@@ -21711,6 +21842,12 @@ namespace ClassLibrary4
                     danhSachDaSapXep[i].STT = i + 1;
                 }
 
+                ed.WriteMessage(
+                    $"\n[THỐNG KÊ ỐNG FIX40] " +
+                    $"Ống thường={normalPipeCount} entity | " +
+                    $"SHOP tâm={shopCenterCount} entity | " +
+                    $"Chủng loại={danhSachDaSapXep.Count}");
+
                 XuatBangRaCad(
                     danhSachDaSapXep,
                     "BẢNG THỐNG KÊ KHỐI LƯỢNG ỐNG",
@@ -21718,6 +21855,130 @@ namespace ClassLibrary4
                     true);
             }
         }
+
+        private static bool LaLayerTamOngShop(
+            string layerName)
+        {
+            if (string.IsNullOrWhiteSpace(layerName))
+                return false;
+
+            return layerName
+                .Trim()
+                .StartsWith(
+                    "FF_SHOP_TAM_",
+                    StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static bool LaLayerBienOngShop(
+            string layerName)
+        {
+            if (string.IsNullOrWhiteSpace(layerName))
+                return false;
+
+            string u =
+                layerName
+                    .Trim()
+                    .ToUpperInvariant();
+
+            if (!u.StartsWith("FF_SHOP_"))
+                return false;
+
+            // Không coi layer tâm/phụ kiện là biên ống.
+            if (u.StartsWith("FF_SHOP_TAM_") ||
+                u.StartsWith("FF_SHOP_CO90_") ||
+                u.StartsWith("FF_SHOP_COLOI45_") ||
+                u.StartsWith("FF_SHOP_TE_") ||
+                u.StartsWith("FF_SHOP_GIAM_"))
+            {
+                return false;
+            }
+
+            // Layer biên ống SHOP hiện tại có dạng:
+            // FF_SHOP_DN25 / FF_SHOP_DN50 / ...
+            return Regex.IsMatch(
+                u,
+                @"^FF_SHOP_DN\s*\d+(?:[.,]\d+)?$",
+                RegexOptions.IgnoreCase);
+        }
+
+        private static bool LaLayerPhuKienHoacTamShop(
+            string layerName)
+        {
+            if (string.IsNullOrWhiteSpace(layerName))
+                return false;
+
+            string u =
+                layerName
+                    .Trim()
+                    .ToUpperInvariant();
+
+            return
+                u.StartsWith("FF_SHOP_CO90_") ||
+                u.StartsWith("FF_SHOP_COLOI45_") ||
+                u.StartsWith("FF_SHOP_TE_") ||
+                u.StartsWith("FF_SHOP_GIAM_") ||
+                u.StartsWith("FF_SHOP_TAM_");
+        }
+
+        private static string LayTenLayerOngShopTuLayerTam(
+            string centerLayer)
+        {
+            if (!LaLayerTamOngShop(centerLayer))
+                return "";
+
+            string tail =
+                centerLayer
+                    .Trim()
+                    .Substring(
+                        "FF_SHOP_TAM_".Length)
+                    .Trim();
+
+            if (string.IsNullOrWhiteSpace(tail))
+                return "";
+
+            // Bảng hiển thị gọn:
+            // FF_SHOP_TAM_DN25 -> FF_SHOP_DN25
+            return "FF_SHOP_" + tail;
+        }
+
+        private static double LayChieuDaiCurveThongKe(
+            Curve curve)
+        {
+            if (curve == null)
+                return 0.0;
+
+            try
+            {
+                if (curve is Line ln)
+                    return ln.Length;
+
+                if (curve is Polyline pl)
+                    return pl.Length;
+
+                if (curve is Arc arc)
+                    return arc.Length;
+
+                // Fallback cho Curve khác nếu sau này mở rộng.
+                double endParam =
+                    curve.EndParam;
+
+                return curve.GetDistanceAtParameter(
+                    endParam);
+            }
+            catch
+            {
+                try
+                {
+                    return curve.StartPoint.DistanceTo(
+                        curve.EndPoint);
+                }
+                catch
+                {
+                    return 0.0;
+                }
+            }
+        }
+
 
         private void BtnThongKeThietBiVan_Click(
             object sender,
@@ -22136,10 +22397,9 @@ namespace ClassLibrary4
                                 if (o == null)
                                     continue;
 
-                                if (!string.Equals(
-                                        o.Layer,
+                                if (!LayerThongKeOngMatchesEntity(
                                         layerName,
-                                        StringComparison.OrdinalIgnoreCase))
+                                        o.Layer))
                                 {
                                     continue;
                                 }
@@ -22466,6 +22726,58 @@ namespace ClassLibrary4
                 (b ?? "").Trim(),
                 StringComparison.OrdinalIgnoreCase);
         }
+
+        private static bool LayerThongKeOngMatchesEntity(
+            string tableLayer,
+            string entityLayer)
+        {
+            string a =
+                (tableLayer ?? "")
+                    .Trim();
+
+            string b =
+                (entityLayer ?? "")
+                    .Trim();
+
+            if (string.Equals(
+                    a,
+                    b,
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+
+            // FIX40:
+            // Bảng thống kê SHOP hiển thị FF_SHOP_DN25,
+            // còn chiều dài thật lấy từ FF_SHOP_TAM_DN25.
+            // Khi dùng nút tìm đối tượng, coi cả hai là cùng một tuyến SHOP.
+            if (a.StartsWith(
+                    "FF_SHOP_",
+                    StringComparison.OrdinalIgnoreCase) &&
+                !a.StartsWith(
+                    "FF_SHOP_TAM_",
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                string tail =
+                    a.Substring(
+                        "FF_SHOP_".Length);
+
+                string center =
+                    "FF_SHOP_TAM_" +
+                    tail;
+
+                if (string.Equals(
+                        center,
+                        b,
+                        StringComparison.OrdinalIgnoreCase))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
 
         private static void KhoiPhucMauVaXoaDuong(
             Document doc,
