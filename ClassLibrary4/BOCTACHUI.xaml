@@ -152,7 +152,7 @@
                             <RadioButton x:Name="RbDuongOng" Content="ĐƯỜNG ỐNG" GroupName="TabChuaChay" IsChecked="True" Style="{StaticResource TabNgangStyle}"/>
                             <RadioButton x:Name="RbVan" Content="VAN" GroupName="TabChuaChay" Style="{StaticResource TabNgangStyle}"/>
                             <RadioButton x:Name="RbThietBi" Content="THIẾT BỊ" GroupName="TabChuaChay" Style="{StaticResource TabNgangStyle}"/>
-                            <RadioButton x:Name="RbThongKe" Content="THỐNG KÊ" GroupName="TabChuaChay" Style="{StaticResource TabNgangStyle}"/>
+                            <RadioButton x:Name="RbThongKe" Content="VẼ SHOP" GroupName="TabChuaChay" Style="{StaticResource TabNgangStyle}"/>
                         </UniformGrid>
 
                         <ScrollViewer Grid.Row="2" Margin="2,4,2,2" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" CanContentScroll="False">
@@ -479,7 +479,7 @@
                                     </StackPanel>
                                 </Grid>
 
-                                <!-- THỐNG KÊ -->
+                                <!-- VẼ SHOP -->
                                 <Grid VerticalAlignment="Top">
                                     <Grid.Style>
                                         <Style TargetType="Grid">
@@ -492,9 +492,26 @@
                                         </Style>
                                     </Grid.Style>
                                     <StackPanel>
-                                        <TextBlock Text="THỐNG KÊ CHỮA CHÁY" FontWeight="Bold" FontSize="13" Foreground="#FF0078D7" Margin="0,0,0,10"/>
-                                        <TextBlock TextWrapping="Wrap" Foreground="Gray" FontSize="12"
-                                                   Text="Chức năng thống kê đã chuyển sang tab &#10;6. THỐNG KÊ (bên phải)."/>
+                                        <TextBlock Text="VẼ SHOP CHỮA CHÁY" FontWeight="Bold" FontSize="13" Foreground="#FF0078D7" Margin="0,0,0,10"/>
+                                        <TextBlock TextWrapping="Wrap" Foreground="#FF555555" FontSize="11" Margin="0,0,0,12"
+                                                   Text="Quét chọn tuyến ống + chữ DN. Tool vẽ thêm 2 đường song song theo đường kính DN và nối côn giảm tại chỗ đổi size."/>
+
+                                        <Button x:Name="BtnVeShopOngChuaChay"
+                                                Content="VẼ SHOP ỐNG"
+                                                Height="38"
+                                                FontSize="14"
+                                                FontWeight="Bold"
+                                                Background="#FF0078D7"
+                                                Foreground="White"
+                                                Cursor="Hand"
+                                                Click="BtnVeShopOngChuaChay_Click">
+                                            <Button.ToolTip>
+                                                <ToolTip>
+                                                    <TextBlock MaxWidth="260" TextWrapping="Wrap"
+                                                               Text="VẼ SHOP ỐNG: Quét chọn line/polyline tuyến ống và text DN. Tool nhận DN từ chữ/layer, vẽ hai đường song song cách nhau theo DN mm. Nếu hai tuyến nối nhau khác DN thì vẽ thêm côn giảm nối hai mép."/>
+                                                </ToolTip>
+                                            </Button.ToolTip>
+                                        </Button>
                                     </StackPanel>
                                 </Grid>
                             </Grid>

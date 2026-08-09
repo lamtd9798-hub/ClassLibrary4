@@ -5,6 +5,8 @@ using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Globalization;
 using System.Linq;
+using System.IO;
+using System.Reflection;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Windows;
@@ -2076,6 +2078,20 @@ namespace ClassLibrary4
             public Point3d Center { get; set; }
             public Point3d PointOnCurve { get; set; }
             public double PlanDistance { get; set; }
+        }
+
+        private class ShopPipeCandidate
+        {
+            public Curve Curve { get; set; }
+            public string SizeText { get; set; }
+            public double Width { get; set; }
+            public string LayerName { get; set; }
+            public Point3d Start { get; set; }
+            public Point3d End { get; set; }
+            public Point3d StartLeft { get; set; }
+            public Point3d StartRight { get; set; }
+            public Point3d EndLeft { get; set; }
+            public Point3d EndRight { get; set; }
         }
 
         private class TemplateBranchMatchData
@@ -12045,6 +12061,1652 @@ namespace ClassLibrary4
             }
         }
 
+
+        private void BtnVeShopOngChuaChay_Click(
+            object sender,
+            RoutedEventArgs e)
+        {
+            PipeUiContext ctx = GetContext(sender) ?? _ctxFF;
+
+            var doc =
+                Autodesk.AutoCAD.ApplicationServices.Core.Application
+                    .DocumentManager
+                    .MdiActiveDocument;
+
+            if (doc == null)
+                return;
+
+            var ed = doc.Editor;
+            var db = doc.Database;
+
+            Autodesk.AutoCAD.Internal.Utils.SetFocusToDwgView();
+
+            PromptSelectionOptions pso =
+                new PromptSelectionOptions();
+
+            pso.MessageForAdding =
+                "\n[VẼ SHOP ỐNG] Quét chọn line/polyline tuyến ống và chữ DN: ";
+
+            TypedValue[] tvs =
+                new TypedValue[]
+                {
+                    new TypedValue((int)DxfCode.Operator, "<OR"),
+                    new TypedValue((int)DxfCode.Start, "LINE"),
+                    new TypedValue((int)DxfCode.Start, "LWPOLYLINE"),
+                    new TypedValue((int)DxfCode.Start, "POLYLINE"),
+                    new TypedValue((int)DxfCode.Start, "ARC"),
+                    new TypedValue((int)DxfCode.Start, "TEXT"),
+                    new TypedValue((int)DxfCode.Start, "MTEXT"),
+                    new TypedValue((int)DxfCode.Start, "INSERT"),
+                    new TypedValue((int)DxfCode.Operator, "OR>")
+                };
+
+            PromptSelectionResult psr =
+                ed.GetSelection(
+                    pso,
+                    new SelectionFilter(tvs));
+
+            if (psr.Status != PromptStatus.OK ||
+                psr.Value == null ||
+                psr.Value.Count == 0)
+                return;
+
+            using (doc.LockDocument())
+            using (Transaction tr =
+                db.TransactionManager.StartTransaction())
+            {
+                BlockTableRecord btr =
+                    (BlockTableRecord)tr.GetObject(
+                        db.CurrentSpaceId,
+                        OpenMode.ForWrite);
+
+                List<Curve> curves =
+                    new List<Curve>();
+                List<ObjectId> sourceCurveIds =
+                    new List<ObjectId>();
+                List<TextData> texts =
+                    new List<TextData>();
+
+                foreach (SelectedObject so in psr.Value)
+                {
+                    if (so == null || so.ObjectId.IsNull)
+                        continue;
+
+                    Entity ent =
+                        tr.GetObject(
+                            so.ObjectId,
+                            OpenMode.ForRead) as Entity;
+
+                    if (ent == null)
+                        continue;
+
+                    if ((ent is Line ||
+                         ent is Polyline ||
+                         ent is Polyline2d ||
+                         ent is Polyline3d ||
+                         ent is Arc) &&
+                        ent is Curve curveEnt)
+                    {
+                        curves.Add(curveEnt);
+                        sourceCurveIds.Add(so.ObjectId);
+                    }
+                    else if (ent is DBText dbText)
+                    {
+                        Point3d pt =
+                            (dbText.Justify !=
+                                AttachmentPoint.BaseLeft &&
+                             (dbText.AlignmentPoint.X != 0 ||
+                              dbText.AlignmentPoint.Y != 0))
+                                ? dbText.AlignmentPoint
+                                : dbText.Position;
+
+                        TryAddShopPipeSizeText(
+                            ctx,
+                            dbText.TextString,
+                            pt,
+                            dbText.Rotation,
+                            texts);
+                    }
+                    else if (ent is MText mText)
+                    {
+                        TryAddShopPipeSizeText(
+                            ctx,
+                            mText.Text,
+                            mText.Location,
+                            mText.Rotation,
+                            texts);
+                    }
+                    else if (ent is BlockReference blockRef)
+                    {
+                        foreach (ObjectId attId
+                            in blockRef.AttributeCollection)
+                        {
+                            AttributeReference att =
+                                tr.GetObject(
+                                    attId,
+                                    OpenMode.ForRead)
+                                    as AttributeReference;
+
+                            if (att == null)
+                                continue;
+
+                            TryAddShopPipeSizeText(
+                                ctx,
+                                att.TextString,
+                                att.Position,
+                                att.Rotation,
+                                texts);
+                        }
+                    }
+                }
+
+                if (curves.Count == 0)
+                {
+                    MessageBox.Show(
+                        "Phải quét trúng ít nhất 1 line/polyline tuyến ống.",
+                        "VẼ SHOP ỐNG");
+                    return;
+                }
+
+                Dictionary<Curve, List<TextProjectionData>>
+                    textMap =
+                        MapTextsToOriginalCurves(
+                            curves,
+                            texts);
+
+                List<ShopPipeCandidate> shopPipes =
+                    new List<ShopPipeCandidate>();
+
+                foreach (Curve curve in curves)
+                {
+                    string sizeText = "";
+                    double width = 0.0;
+                    List<TextProjectionData> projections = null;
+
+                    if (textMap.TryGetValue(
+                            curve,
+                            out projections) &&
+                        projections.Count > 0)
+                    {
+                        List<ShopPipeCandidate> splitCandidates =
+                            CreateShopSplitCandidatesFromTexts(
+                                curve,
+                                projections);
+
+                        if (splitCandidates.Count > 0)
+                        {
+                            shopPipes.AddRange(splitCandidates);
+                            continue;
+                        }
+
+                        TextProjectionData best =
+                            projections
+                                .OrderBy(x => x.MatchScore)
+                                .ThenBy(x => x.DistanceAlongCurve)
+                                .First();
+
+                        sizeText = best.Text.TextString;
+                        width = best.Text.Width;
+                    }
+
+                    if (string.IsNullOrWhiteSpace(sizeText) &&
+                        TryParseAutomaticPipeSize(
+                            ctx,
+                            curve.Layer,
+                            out string layerSize,
+                            out double layerWidth))
+                    {
+                        sizeText = layerSize;
+                        width = layerWidth;
+                    }
+
+                    if (string.IsNullOrWhiteSpace(sizeText) ||
+                        width <= 0.0)
+                        continue;
+
+                    ShopPipeCandidate candidate =
+                        CreateShopPipeCandidate(
+                            curve,
+                            sizeText,
+                            width);
+
+                    if (candidate != null)
+                        shopPipes.Add(candidate);
+                }
+
+                if (shopPipes.Count == 0)
+                {
+                    MessageBox.Show(
+                        "Không nhận được DN nào. Hãy quét thêm chữ DN gần tuyến ống hoặc layer có DN.",
+                        "VẼ SHOP ỐNG");
+                    return;
+                }
+
+                string shopMaterial =
+                    GetSelectedPipeMaterialName(ctx);
+
+                string shopLibraryPath =
+                    FindShopFittingLibraryPath(
+                        shopMaterial,
+                        db);
+
+                int edgeCount = 0;
+                int reducerCount = 0;
+                HashSet<string> reducerJointKeys =
+                    new HashSet<string>(
+                        StringComparer.OrdinalIgnoreCase);
+
+                foreach (ShopPipeCandidate pipe in shopPipes)
+                {
+                    EnsureShopLayerExists(
+                        tr,
+                        db,
+                        pipe.LayerName);
+
+                    edgeCount += DrawShopParallelPipe(
+                        tr,
+                        db,
+                        btr,
+                        pipe);
+                }
+
+                for (int i = 0; i < shopPipes.Count; i++)
+                {
+                    for (int j = i + 1; j < shopPipes.Count; j++)
+                    {
+                        reducerCount += TryDrawShopReducer(
+                            tr,
+                            db,
+                            btr,
+                            shopPipes[i],
+                            shopPipes[j],
+                            shopLibraryPath,
+                            reducerJointKeys);
+                    }
+                }
+
+                int erasedSourceCount =
+                    EraseShopSourceCurves(
+                        tr,
+                        sourceCurveIds);
+
+                tr.Commit();
+
+                try
+                {
+                    ed.Regen();
+                }
+                catch { }
+
+                ed.WriteMessage(
+                    $"\n[VẼ SHOP ỐNG] Đã vẽ {edgeCount} nét song song cho {shopPipes.Count} tuyến, " +
+                    $"thêm {reducerCount} côn giảm, xóa {erasedSourceCount} nét gốc.");
+            }
+        }
+
+        private int EraseShopSourceCurves(
+            Transaction tr,
+            IEnumerable<ObjectId> sourceCurveIds)
+        {
+            if (tr == null || sourceCurveIds == null)
+                return 0;
+
+            int count = 0;
+
+            foreach (ObjectId id in sourceCurveIds.Distinct())
+            {
+                if (id.IsNull || id.IsErased)
+                    continue;
+
+                try
+                {
+                    Entity ent =
+                        tr.GetObject(
+                            id,
+                            OpenMode.ForWrite,
+                            false) as Entity;
+
+                    if (ent == null || ent.IsErased)
+                        continue;
+
+                    if (ent is Line ||
+                        ent is Polyline ||
+                        ent is Polyline2d ||
+                        ent is Polyline3d ||
+                        ent is Arc)
+                    {
+                        ent.Erase();
+                        count++;
+                    }
+                }
+                catch { }
+            }
+
+            return count;
+        }
+
+        private void TryAddShopPipeSizeText(
+            PipeUiContext ctx,
+            string rawText,
+            Point3d position,
+            double rotation,
+            List<TextData> texts)
+        {
+            if (texts == null)
+                return;
+
+            string str =
+                (rawText ?? "")
+                    .Replace("\r", " ")
+                    .Replace("\n", " ")
+                    .Trim();
+
+            if (!TryParseAutomaticPipeSize(
+                    ctx,
+                    str,
+                    out string detectedSize,
+                    out double detectedWidth))
+                return;
+
+            texts.Add(
+                new TextData
+                {
+                    Position = position,
+                    Rotation = rotation,
+                    TextString = detectedSize,
+                    LayerName =
+                        "FF_SHOP_" +
+                        CleanLayerText(detectedSize),
+                    Width = detectedWidth
+                });
+        }
+
+        private ShopPipeCandidate CreateShopPipeCandidate(
+            Curve curve,
+            string sizeText,
+            double width)
+        {
+            if (curve == null ||
+                string.IsNullOrWhiteSpace(sizeText) ||
+                width <= 0.0)
+                return null;
+
+            try
+            {
+                Point3d start = curve.StartPoint;
+                Point3d end = curve.EndPoint;
+
+                Vector3d startDir =
+                    GetShopCurveDirection(
+                        curve,
+                        true);
+                Vector3d endDir =
+                    GetShopCurveDirection(
+                        curve,
+                        false);
+
+                if (startDir.Length < 1e-9 ||
+                    endDir.Length < 1e-9)
+                    return null;
+
+                Vector3d startNormal =
+                    GetPlanNormal(startDir);
+                Vector3d endNormal =
+                    GetPlanNormal(endDir);
+
+                double half = width / 2.0;
+
+                string cleanSize =
+                    CleanLayerText(sizeText);
+
+                return new ShopPipeCandidate
+                {
+                    Curve = curve,
+                    SizeText = sizeText,
+                    Width = width,
+                    LayerName = "FF_SHOP_" + cleanSize,
+                    Start = start,
+                    End = end,
+                    StartLeft = start + startNormal * half,
+                    StartRight = start - startNormal * half,
+                    EndLeft = end + endNormal * half,
+                    EndRight = end - endNormal * half
+                };
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private List<ShopPipeCandidate>
+            CreateShopSplitCandidatesFromTexts(
+                Curve curve,
+                List<TextProjectionData> projections)
+        {
+            List<ShopPipeCandidate> result =
+                new List<ShopPipeCandidate>();
+
+            if (curve == null ||
+                projections == null ||
+                projections.Count < 2 ||
+                !(curve is Line ||
+                  curve is Polyline ||
+                  curve is Polyline2d ||
+                  curve is Polyline3d))
+            {
+                return result;
+            }
+
+            List<TextProjectionData> ordered =
+                projections
+                    .Where(x =>
+                        x != null &&
+                        x.Text != null &&
+                        x.Text.Width > 0.0)
+                    .OrderBy(x => x.DistanceAlongCurve)
+                    .ToList();
+
+            if (ordered.Count < 2)
+                return result;
+
+            try
+            {
+                double totalLength =
+                    curve.GetDistanceAtParameter(
+                        curve.EndParam);
+
+                if (totalLength < 10.0)
+                    return result;
+
+                List<double> boundaries =
+                    new List<double>();
+
+                boundaries.Add(0.0);
+
+                for (int i = 0; i < ordered.Count - 1; i++)
+                {
+                    double middle =
+                        (ordered[i].DistanceAlongCurve +
+                         ordered[i + 1].DistanceAlongCurve) / 2.0;
+
+                    if (middle > 1.0 &&
+                        middle < totalLength - 1.0)
+                    {
+                        boundaries.Add(middle);
+                    }
+                }
+
+                boundaries.Add(totalLength);
+
+                if (boundaries.Count != ordered.Count + 1)
+                    return result;
+
+                for (int i = 0; i < ordered.Count; i++)
+                {
+                    double d1 = boundaries[i];
+                    double d2 = boundaries[i + 1];
+
+                    if (d2 - d1 < 5.0)
+                        continue;
+
+                    Point3d p1 =
+                        curve.GetPointAtDist(d1);
+                    Point3d p2 =
+                        curve.GetPointAtDist(d2);
+
+                    if (p1.DistanceTo(p2) < 5.0)
+                        continue;
+
+                    Line segment =
+                        new Line(p1, p2);
+
+                    ShopPipeCandidate candidate =
+                        CreateShopPipeCandidate(
+                            segment,
+                            ordered[i].Text.TextString,
+                            ordered[i].Text.Width);
+
+                    if (candidate != null)
+                        result.Add(candidate);
+                }
+            }
+            catch
+            {
+                result.Clear();
+            }
+
+            return result;
+        }
+
+        private Vector3d GetShopCurveDirection(
+            Curve curve,
+            bool atStart)
+        {
+            try
+            {
+                double param =
+                    atStart
+                        ? curve.StartParam
+                        : curve.EndParam;
+
+                Vector3d dir =
+                    curve.GetFirstDerivative(param);
+
+                if (dir.Length < 1e-9)
+                    return Vector3d.XAxis;
+
+                return new Vector3d(
+                    dir.X,
+                    dir.Y,
+                    0.0).GetNormal();
+            }
+            catch
+            {
+                try
+                {
+                    Vector3d dir =
+                        curve.EndPoint - curve.StartPoint;
+
+                    if (dir.Length < 1e-9)
+                        return Vector3d.XAxis;
+
+                    return new Vector3d(
+                        dir.X,
+                        dir.Y,
+                        0.0).GetNormal();
+                }
+                catch
+                {
+                    return Vector3d.XAxis;
+                }
+            }
+        }
+
+        private static Vector3d GetPlanNormal(Vector3d direction)
+        {
+            Vector3d dir =
+                new Vector3d(
+                    direction.X,
+                    direction.Y,
+                    0.0);
+
+            if (dir.Length < 1e-9)
+                return Vector3d.YAxis;
+
+            dir = dir.GetNormal();
+            return new Vector3d(-dir.Y, dir.X, 0.0).GetNormal();
+        }
+
+        private int DrawShopParallelPipe(
+            Transaction tr,
+            Database db,
+            BlockTableRecord btr,
+            ShopPipeCandidate pipe)
+        {
+            if (pipe == null || pipe.Curve == null)
+                return 0;
+
+            int count = 0;
+            double half = pipe.Width / 2.0;
+
+            count += DrawShopManualParallelCurves(
+                tr,
+                db,
+                btr,
+                pipe.Curve,
+                pipe,
+                half,
+                pipe.LayerName);
+
+            if (count > 0)
+                return count;
+
+            AppendShopLine(
+                tr,
+                db,
+                btr,
+                pipe.StartLeft,
+                pipe.EndLeft,
+                pipe.LayerName);
+
+            AppendShopLine(
+                tr,
+                db,
+                btr,
+                pipe.StartRight,
+                pipe.EndRight,
+                pipe.LayerName);
+
+            return 2;
+        }
+
+        private int DrawShopManualParallelCurves(
+            Transaction tr,
+            Database db,
+            BlockTableRecord btr,
+            Curve curve,
+            ShopPipeCandidate pipe,
+            double half,
+            string layerName)
+        {
+            if (curve == null || pipe == null)
+                return 0;
+
+            if (curve is Arc arc)
+            {
+                return DrawShopParallelArcPair(
+                    tr,
+                    db,
+                    btr,
+                    arc,
+                    half,
+                    layerName);
+            }
+
+            if (curve is Line)
+            {
+                AppendShopLine(
+                    tr,
+                    db,
+                    btr,
+                    pipe.StartLeft,
+                    pipe.EndLeft,
+                    layerName);
+
+                AppendShopLine(
+                    tr,
+                    db,
+                    btr,
+                    pipe.StartRight,
+                    pipe.EndRight,
+                    layerName);
+
+                return 2;
+            }
+
+            if (curve is Polyline pl &&
+                pl.NumberOfVertices >= 2)
+            {
+                int count = 0;
+
+                for (int i = 0; i < pl.NumberOfVertices - 1; i++)
+                {
+                    if (pl.GetSegmentType(i) != SegmentType.Line)
+                        return 0;
+
+                    Point2d p1 = pl.GetPoint2dAt(i);
+                    Point2d p2 = pl.GetPoint2dAt(i + 1);
+                    Vector3d dir =
+                        new Vector3d(
+                            p2.X - p1.X,
+                            p2.Y - p1.Y,
+                            0.0);
+
+                    if (dir.Length < 1e-9)
+                        continue;
+
+                    Vector3d normal =
+                        GetPlanNormal(dir);
+
+                    Point3d a =
+                        new Point3d(p1.X, p1.Y, curve.StartPoint.Z);
+                    Point3d b =
+                        new Point3d(p2.X, p2.Y, curve.StartPoint.Z);
+
+                    AppendShopLine(
+                        tr,
+                        db,
+                        btr,
+                        a + normal * half,
+                        b + normal * half,
+                        layerName);
+
+                    AppendShopLine(
+                        tr,
+                        db,
+                        btr,
+                        a - normal * half,
+                        b - normal * half,
+                        layerName);
+
+                    count += 2;
+                }
+
+                return count;
+            }
+
+            return 0;
+        }
+
+        private int DrawShopParallelArcPair(
+            Transaction tr,
+            Database db,
+            BlockTableRecord btr,
+            Arc arc,
+            double half,
+            string layerName)
+        {
+            int count = 0;
+
+            double r1 = arc.Radius + half;
+            double r2 = arc.Radius - half;
+
+            if (r1 > 1.0)
+            {
+                Arc a1 =
+                    new Arc(
+                        arc.Center,
+                        r1,
+                        arc.StartAngle,
+                        arc.EndAngle);
+
+                a1.SetDatabaseDefaults(db);
+                ApplyShopEntityStyle(a1, layerName);
+                btr.AppendEntity(a1);
+                tr.AddNewlyCreatedDBObject(a1, true);
+                count++;
+            }
+
+            if (r2 > 1.0)
+            {
+                Arc a2 =
+                    new Arc(
+                        arc.Center,
+                        r2,
+                        arc.StartAngle,
+                        arc.EndAngle);
+
+                a2.SetDatabaseDefaults(db);
+                ApplyShopEntityStyle(a2, layerName);
+                btr.AppendEntity(a2);
+                tr.AddNewlyCreatedDBObject(a2, true);
+                count++;
+            }
+
+            return count;
+        }
+
+        private int DrawShopOffsetCurves(
+            Transaction tr,
+            Database db,
+            BlockTableRecord btr,
+            Curve curve,
+            double offset,
+            string layerName)
+        {
+            int count = 0;
+            DBObjectCollection offsets = null;
+
+            try
+            {
+                offsets = curve.GetOffsetCurves(offset);
+
+                foreach (DBObject obj in offsets)
+                {
+                    if (obj is Entity ent)
+                    {
+                        ent.SetDatabaseDefaults(db);
+                        ApplyShopEntityStyle(ent, layerName);
+
+                        btr.AppendEntity(ent);
+                        tr.AddNewlyCreatedDBObject(ent, true);
+                        count++;
+                    }
+                    else
+                    {
+                        obj.Dispose();
+                    }
+                }
+            }
+            catch
+            {
+                if (offsets != null)
+                {
+                    foreach (DBObject obj in offsets)
+                    {
+                        try { obj.Dispose(); }
+                        catch { }
+                    }
+                }
+            }
+
+            return count;
+        }
+
+        private int TryDrawShopReducer(
+            Transaction tr,
+            Database db,
+            BlockTableRecord btr,
+            ShopPipeCandidate a,
+            ShopPipeCandidate b,
+            string libraryPath,
+            HashSet<string> reducerJointKeys)
+        {
+            if (a == null || b == null ||
+                Math.Abs(a.Width - b.Width) < 0.5)
+                return 0;
+
+            const double jointTolerance = 150.0;
+
+            if (a.End.DistanceTo(b.Start) <= jointTolerance)
+            {
+                if (!RegisterShopReducerJoint(
+                        reducerJointKeys,
+                        a.End,
+                        b.Start))
+                    return 0;
+
+                return DrawShopReducerFromLibraryOrOutline(
+                    tr, db, btr,
+                    a.EndLeft, a.EndRight,
+                    b.StartLeft, b.StartRight,
+                    a, b, libraryPath);
+            }
+
+            if (a.Start.DistanceTo(b.End) <= jointTolerance)
+            {
+                if (!RegisterShopReducerJoint(
+                        reducerJointKeys,
+                        a.Start,
+                        b.End))
+                    return 0;
+
+                return DrawShopReducerFromLibraryOrOutline(
+                    tr, db, btr,
+                    a.StartLeft, a.StartRight,
+                    b.EndLeft, b.EndRight,
+                    a, b, libraryPath);
+            }
+
+            if (a.Start.DistanceTo(b.Start) <= jointTolerance)
+            {
+                if (!RegisterShopReducerJoint(
+                        reducerJointKeys,
+                        a.Start,
+                        b.Start))
+                    return 0;
+
+                return DrawShopReducerFromLibraryOrOutline(
+                    tr, db, btr,
+                    a.StartLeft, a.StartRight,
+                    b.StartLeft, b.StartRight,
+                    a, b, libraryPath);
+            }
+
+            if (a.End.DistanceTo(b.End) <= jointTolerance)
+            {
+                if (!RegisterShopReducerJoint(
+                        reducerJointKeys,
+                        a.End,
+                        b.End))
+                    return 0;
+
+                return DrawShopReducerFromLibraryOrOutline(
+                    tr, db, btr,
+                    a.EndLeft, a.EndRight,
+                    b.EndLeft, b.EndRight,
+                    a, b, libraryPath);
+            }
+
+            return 0;
+        }
+
+        private static bool RegisterShopReducerJoint(
+            HashSet<string> reducerJointKeys,
+            Point3d a,
+            Point3d b)
+        {
+            if (reducerJointKeys == null)
+                return true;
+
+            Point3d mid =
+                MidPoint(a, b);
+
+            string key =
+                Math.Round(mid.X / 50.0).ToString("0") +
+                "_" +
+                Math.Round(mid.Y / 50.0).ToString("0");
+
+            if (reducerJointKeys.Contains(key))
+                return false;
+
+            reducerJointKeys.Add(key);
+            return true;
+        }
+
+        private int DrawShopReducerFromLibraryOrOutline(
+            Transaction tr,
+            Database db,
+            BlockTableRecord btr,
+            Point3d aLeft,
+            Point3d aRight,
+            Point3d bLeft,
+            Point3d bRight,
+            ShopPipeCandidate a,
+            ShopPipeCandidate b,
+            string libraryPath)
+        {
+            string layerName =
+                "FF_SHOP_GIAM_" +
+                CleanLayerText(a.SizeText) +
+                "-" +
+                CleanLayerText(b.SizeText);
+
+            EnsureShopLayerExists(tr, db, layerName);
+
+            Point3d centerA =
+                MidPoint(aLeft, aRight);
+            Point3d centerB =
+                MidPoint(bLeft, bRight);
+            Point3d insertPoint =
+                MidPoint(centerA, centerB);
+            Vector3d direction =
+                centerB - centerA;
+
+            double rotation =
+                direction.Length > 1e-9
+                    ? Math.Atan2(direction.Y, direction.X)
+                    : 0.0;
+
+            if (TryInsertShopLibraryFitting(
+                    tr,
+                    db,
+                    btr,
+                    libraryPath,
+                    "REDUCER",
+                    a.SizeText,
+                    b.SizeText,
+                    insertPoint,
+                    rotation,
+                    layerName))
+                return 1;
+
+            return DrawShopReducerLines(
+                tr,
+                db,
+                btr,
+                aLeft,
+                aRight,
+                bLeft,
+                bRight,
+                a,
+                b);
+        }
+
+        private int DrawShopReducerLines(
+            Transaction tr,
+            Database db,
+            BlockTableRecord btr,
+            Point3d aLeft,
+            Point3d aRight,
+            Point3d bLeft,
+            Point3d bRight,
+            ShopPipeCandidate a,
+            ShopPipeCandidate b)
+        {
+            string layerName =
+                "FF_SHOP_GIAM_" +
+                CleanLayerText(a.SizeText) +
+                "-" +
+                CleanLayerText(b.SizeText);
+
+            EnsureShopLayerExists(tr, db, layerName);
+
+            double normalPair =
+                aLeft.DistanceTo(bLeft) +
+                aRight.DistanceTo(bRight);
+            double crossPair =
+                aLeft.DistanceTo(bRight) +
+                aRight.DistanceTo(bLeft);
+
+            if (crossPair < normalPair)
+            {
+                AppendShopLine(tr, db, btr, aLeft, aRight, layerName);
+                AppendShopLine(tr, db, btr, bLeft, bRight, layerName);
+                AppendShopLine(tr, db, btr, aLeft, bRight, layerName);
+                AppendShopLine(tr, db, btr, aRight, bLeft, layerName);
+            }
+            else
+            {
+                AppendShopLine(tr, db, btr, aLeft, aRight, layerName);
+                AppendShopLine(tr, db, btr, bLeft, bRight, layerName);
+                AppendShopLine(tr, db, btr, aLeft, bLeft, layerName);
+                AppendShopLine(tr, db, btr, aRight, bRight, layerName);
+            }
+
+            return 1;
+        }
+
+        private void AppendShopLine(
+            Transaction tr,
+            Database db,
+            BlockTableRecord btr,
+            Point3d start,
+            Point3d end,
+            string layerName)
+        {
+            if (start.DistanceTo(end) < 1.0)
+                return;
+
+            Line line = new Line(start, end);
+            line.SetDatabaseDefaults(db);
+            ApplyShopEntityStyle(line, layerName);
+
+            btr.AppendEntity(line);
+            tr.AddNewlyCreatedDBObject(line, true);
+        }
+
+        private string FindShopFittingLibraryPath(
+            string materialName,
+            Database db)
+        {
+            string fileName =
+                GetShopLibraryFileName(materialName);
+
+            if (string.IsNullOrWhiteSpace(fileName))
+                return "";
+
+            List<string> folders =
+                new List<string>();
+
+            try
+            {
+                string dllFolder =
+                    Path.GetDirectoryName(
+                        Assembly.GetExecutingAssembly().Location);
+
+                if (!string.IsNullOrWhiteSpace(dllFolder))
+                    folders.Add(dllFolder);
+            }
+            catch { }
+
+            try
+            {
+                string dwgFolder =
+                    Path.GetDirectoryName(db?.Filename ?? "");
+
+                if (!string.IsNullOrWhiteSpace(dwgFolder))
+                    folders.Add(dwgFolder);
+            }
+            catch { }
+
+            try
+            {
+                string current = Directory.GetCurrentDirectory();
+                if (!string.IsNullOrWhiteSpace(current))
+                    folders.Add(current);
+            }
+            catch { }
+
+            foreach (string folder in folders.Distinct(
+                StringComparer.OrdinalIgnoreCase))
+            {
+                try
+                {
+                    string path = Path.Combine(folder, fileName);
+                    if (File.Exists(path))
+                        return path;
+                }
+                catch { }
+            }
+
+            return "";
+        }
+
+        private string GetShopLibraryFileName(string materialName)
+        {
+            string u =
+                BoDauTiengViet(materialName ?? "");
+
+            if (u.Contains("PPR"))
+                return "Thu vien PPR.dwg";
+
+            if (u.Contains("UPVC") ||
+                u.Contains("PVC"))
+                return "Thu vien uPVC_Sang Le.dwg";
+
+            if (u.Contains("TRANG") ||
+                u.Contains("KEM") ||
+                u.Contains("THEP") ||
+                u.Contains("NHUNG") ||
+                u.Contains("STEEL"))
+                return "Thu vien STEEL.dwg";
+
+            return "";
+        }
+
+        private bool TryInsertShopLibraryFitting(
+            Transaction tr,
+            Database db,
+            BlockTableRecord btr,
+            string libraryPath,
+            string fittingType,
+            string fromSize,
+            string toSize,
+            Point3d insertPoint,
+            double rotation,
+            string layerName)
+        {
+            if (string.IsNullOrWhiteSpace(libraryPath) ||
+                !File.Exists(libraryPath))
+                return false;
+
+            string blockName =
+                FindShopFittingBlockName(
+                    libraryPath,
+                    fittingType,
+                    fromSize,
+                    toSize);
+
+            if (string.IsNullOrWhiteSpace(blockName))
+                return false;
+
+            ObjectId blockId =
+                EnsureExternalBlockImported(
+                    tr,
+                    db,
+                    libraryPath,
+                    blockName);
+
+            if (blockId.IsNull)
+                return false;
+
+            BlockReference br =
+                new BlockReference(
+                    insertPoint,
+                    blockId);
+
+            NormalizeShopImportedBlock(
+                tr,
+                blockId);
+
+            br.SetDatabaseDefaults(db);
+            br.Layer = layerName;
+            br.Rotation = rotation;
+            br.Color =
+                Autodesk.AutoCAD.Colors.Color.FromColorIndex(
+                    ColorMethod.ByAci,
+                    GetShopVisibleAciColor(layerName));
+            br.LineWeight = LineWeight.LineWeight000;
+            br.Transparency =
+                new Autodesk.AutoCAD.Colors.Transparency((byte)0);
+            br.Visible = true;
+
+            btr.AppendEntity(br);
+            tr.AddNewlyCreatedDBObject(br, true);
+            return true;
+        }
+
+        private void NormalizeShopImportedBlock(
+            Transaction tr,
+            ObjectId blockId)
+        {
+            if (tr == null || blockId.IsNull)
+                return;
+
+            try
+            {
+                BlockTableRecord blockDef =
+                    tr.GetObject(
+                        blockId,
+                        OpenMode.ForWrite) as BlockTableRecord;
+
+                if (blockDef == null)
+                    return;
+
+                foreach (ObjectId id in blockDef)
+                {
+                    Entity ent =
+                        tr.GetObject(
+                            id,
+                            OpenMode.ForWrite,
+                            false) as Entity;
+
+                    if (ent == null)
+                        continue;
+
+                    ent.Layer = "0";
+                    ent.Color =
+                        Autodesk.AutoCAD.Colors.Color.FromColorIndex(
+                            ColorMethod.ByBlock,
+                            0);
+                    ent.LineWeight = LineWeight.LineWeight000;
+                    ent.Transparency =
+                        new Autodesk.AutoCAD.Colors.Transparency((byte)0);
+
+                    if (ent is Polyline pl)
+                        pl.ConstantWidth = 0.0;
+                }
+            }
+            catch { }
+        }
+
+        private ObjectId EnsureExternalBlockImported(
+            Transaction targetTr,
+            Database targetDb,
+            string libraryPath,
+            string blockName)
+        {
+            BlockTable targetBt =
+                (BlockTable)targetTr.GetObject(
+                    targetDb.BlockTableId,
+                    OpenMode.ForRead);
+
+            if (targetBt.Has(blockName))
+                return targetBt[blockName];
+
+            try
+            {
+                using (Database sourceDb =
+                    new Database(false, true))
+                {
+                    sourceDb.ReadDwgFile(
+                        libraryPath,
+                        FileOpenMode.OpenForReadAndAllShare,
+                        true,
+                        "");
+
+                    ObjectId sourceBlockId = ObjectId.Null;
+
+                    using (Transaction sourceTr =
+                        sourceDb.TransactionManager
+                            .StartTransaction())
+                    {
+                        BlockTable sourceBt =
+                            (BlockTable)sourceTr.GetObject(
+                                sourceDb.BlockTableId,
+                                OpenMode.ForRead);
+
+                        if (!sourceBt.Has(blockName))
+                            return ObjectId.Null;
+
+                        sourceBlockId = sourceBt[blockName];
+                        sourceTr.Commit();
+                    }
+
+                    ObjectIdCollection ids =
+                        new ObjectIdCollection();
+                    ids.Add(sourceBlockId);
+
+                    IdMapping mapping =
+                        new IdMapping();
+
+                    sourceDb.WblockCloneObjects(
+                        ids,
+                        targetDb.BlockTableId,
+                        mapping,
+                        DuplicateRecordCloning.Ignore,
+                        false);
+                }
+
+                targetBt =
+                    (BlockTable)targetTr.GetObject(
+                        targetDb.BlockTableId,
+                        OpenMode.ForRead);
+
+                if (targetBt.Has(blockName))
+                    return targetBt[blockName];
+            }
+            catch { }
+
+            return ObjectId.Null;
+        }
+
+        private string FindShopFittingBlockName(
+            string libraryPath,
+            string fittingType,
+            string fromSize,
+            string toSize)
+        {
+            try
+            {
+                using (Database libDb =
+                    new Database(false, true))
+                {
+                    libDb.ReadDwgFile(
+                        libraryPath,
+                        FileOpenMode.OpenForReadAndAllShare,
+                        true,
+                        "");
+
+                    using (Transaction tr =
+                        libDb.TransactionManager
+                            .StartTransaction())
+                    {
+                        string byGrid =
+                            FindShopBlockByLibraryGrid(
+                                tr,
+                                libDb,
+                                fittingType,
+                                fromSize,
+                                toSize);
+
+                        if (!string.IsNullOrWhiteSpace(byGrid))
+                            return byGrid;
+
+                        string byName =
+                            FindShopBlockByName(
+                                tr,
+                                libDb,
+                                fittingType,
+                                fromSize,
+                                toSize);
+
+                        if (!string.IsNullOrWhiteSpace(byName))
+                            return byName;
+
+                        tr.Commit();
+                    }
+                }
+            }
+            catch { }
+
+            return "";
+        }
+
+        private string FindShopBlockByName(
+            Transaction tr,
+            Database db,
+            string fittingType,
+            string fromSize,
+            string toSize)
+        {
+            BlockTable bt =
+                (BlockTable)tr.GetObject(
+                    db.BlockTableId,
+                    OpenMode.ForRead);
+
+            string typeKey =
+                NormalizeShopKey(fittingType);
+            string fromKey =
+                NormalizeShopKey(fromSize);
+            string toKey =
+                NormalizeShopKey(toSize);
+            string pairKey1 =
+                fromKey + "X" + toKey.Replace("DN", "");
+            string pairKey2 =
+                toKey + "X" + fromKey.Replace("DN", "");
+
+            string bestName = "";
+            int bestScore = -1;
+
+            foreach (ObjectId id in bt)
+            {
+                BlockTableRecord btr =
+                    tr.GetObject(id, OpenMode.ForRead)
+                        as BlockTableRecord;
+
+                if (btr == null ||
+                    btr.IsLayout ||
+                    btr.IsAnonymous)
+                    continue;
+
+                string name = btr.Name ?? "";
+                string key = NormalizeShopKey(name);
+                int score = 0;
+
+                bool hasReducerToken =
+                    key.Contains("REDUC") ||
+                    key.Contains("GIAM") ||
+                    key.Contains("CON") ||
+                    key.Contains("RED");
+
+                if (IsReducerKey(typeKey) &&
+                    hasReducerToken)
+                    score += 10;
+
+                if (key.Contains(pairKey1) ||
+                    key.Contains(pairKey2))
+                    score += 20;
+
+                if (key.Contains(fromKey))
+                    score += 5;
+                if (key.Contains(toKey))
+                    score += 5;
+
+                if (score > bestScore)
+                {
+                    bestScore = score;
+                    bestName = name;
+                }
+            }
+
+            return bestScore >= 30 ? bestName : "";
+        }
+
+        private string FindShopBlockByLibraryGrid(
+            Transaction tr,
+            Database db,
+            string fittingType,
+            string fromSize,
+            string toSize)
+        {
+            BlockTable bt =
+                (BlockTable)tr.GetObject(
+                    db.BlockTableId,
+                    OpenMode.ForRead);
+
+            BlockTableRecord ms =
+                (BlockTableRecord)tr.GetObject(
+                    bt[BlockTableRecord.ModelSpace],
+                    OpenMode.ForRead);
+
+            List<Tuple<string, Point3d>> texts =
+                new List<Tuple<string, Point3d>>();
+            List<BlockReference> blocks =
+                new List<BlockReference>();
+
+            foreach (ObjectId id in ms)
+            {
+                Entity ent =
+                    tr.GetObject(id, OpenMode.ForRead)
+                        as Entity;
+
+                if (ent is DBText dbText)
+                {
+                    texts.Add(
+                        Tuple.Create(
+                            dbText.TextString ?? "",
+                            dbText.Position));
+                }
+                else if (ent is MText mText)
+                {
+                    texts.Add(
+                        Tuple.Create(
+                            LayPlainTextTuMText(mText.Contents),
+                            mText.Location));
+                }
+                else if (ent is BlockReference br)
+                {
+                    blocks.Add(br);
+                }
+            }
+
+            if (texts.Count == 0 || blocks.Count == 0)
+                return "";
+
+            string typeKey =
+                NormalizeShopKey(fittingType);
+            string fromKey =
+                NormalizeShopKey(fromSize);
+            string toKey =
+                NormalizeShopKey(toSize);
+
+            List<Tuple<string, Point3d>> typeLabels =
+                texts.Where(t =>
+                    IsReducerKey(typeKey)
+                        ? IsReducerText(t.Item1)
+                        : NormalizeShopKey(t.Item1)
+                            .Contains(typeKey))
+                    .ToList();
+
+            List<Tuple<string, Point3d>> sizeLabels =
+                texts.Where(t =>
+                {
+                    string k = NormalizeShopKey(t.Item1);
+                    return k.Contains(fromKey) &&
+                           (k.Contains(toKey) ||
+                            k.Contains("X" + toKey.Replace("DN", "")));
+                }).ToList();
+
+            if (typeLabels.Count == 0 ||
+                sizeLabels.Count == 0)
+                return "";
+
+            BlockReference bestBlock = null;
+            double bestScore = double.MaxValue;
+
+            foreach (BlockReference br in blocks)
+            {
+                Point3d pos = br.Position;
+
+                double rowDist =
+                    typeLabels.Min(t =>
+                        Math.Abs(t.Item2.Y - pos.Y));
+                double colDist =
+                    sizeLabels.Min(t =>
+                        Math.Abs(t.Item2.X - pos.X));
+
+                double score = rowDist + colDist;
+
+                if (score < bestScore)
+                {
+                    bestScore = score;
+                    bestBlock = br;
+                }
+            }
+
+            if (bestBlock == null)
+                return "";
+
+            BlockTableRecord blockDef =
+                tr.GetObject(
+                    bestBlock.BlockTableRecord,
+                    OpenMode.ForRead) as BlockTableRecord;
+
+            return blockDef?.Name ?? "";
+        }
+
+        private static bool IsReducerKey(string key)
+        {
+            key = NormalizeShopKey(key);
+            return key.Contains("REDUC") ||
+                   key.Contains("GIAM") ||
+                   key.Contains("RED");
+        }
+
+        private static bool IsReducerText(string text)
+        {
+            string key = NormalizeShopKey(text);
+            return key.Contains("REDUC") ||
+                   key.Contains("GIAM") ||
+                   key.Contains("REDUCER");
+        }
+
+        private static string NormalizeShopKey(string text)
+        {
+            string u =
+                BoDauTiengViet(text ?? "")
+                    .ToUpperInvariant();
+
+            return Regex.Replace(
+                u,
+                @"[^A-Z0-9]+",
+                "");
+        }
+
+        private void EnsureShopLayerExists(
+            Transaction tr,
+            Database db,
+            string layerName)
+        {
+            EnsureLayerExists(tr, db, layerName, false);
+
+            try
+            {
+                LayerTable lt =
+                    (LayerTable)tr.GetObject(
+                        db.LayerTableId,
+                        OpenMode.ForRead);
+
+                if (!lt.Has(layerName))
+                    return;
+
+                LayerTableRecord ltr =
+                    (LayerTableRecord)tr.GetObject(
+                        lt[layerName],
+                        OpenMode.ForWrite);
+
+                ltr.LineWeight = LineWeight.LineWeight000;
+                ltr.Color =
+                    Autodesk.AutoCAD.Colors.Color.FromColorIndex(
+                        ColorMethod.ByAci,
+                        GetShopVisibleAciColor(layerName));
+                ltr.Transparency =
+                    new Autodesk.AutoCAD.Colors.Transparency((byte)0);
+                ltr.IsOff = false;
+                ltr.IsFrozen = false;
+                ltr.IsLocked = false;
+            }
+            catch { }
+        }
+
+        private static void ApplyShopEntityStyle(
+            Entity ent,
+            string layerName)
+        {
+            if (ent == null)
+                return;
+
+            ent.Layer = layerName;
+            ent.Color =
+                Autodesk.AutoCAD.Colors.Color.FromColorIndex(
+                    ColorMethod.ByAci,
+                    GetShopVisibleAciColor(layerName));
+            ent.LineWeight = LineWeight.LineWeight000;
+            ent.Transparency =
+                new Autodesk.AutoCAD.Colors.Transparency((byte)0);
+            ent.Visible = true;
+
+            if (ent is Polyline pl)
+                pl.ConstantWidth = 0.0;
+        }
+
+        private static short GetShopVisibleAciColor(string layerName)
+        {
+            string key =
+                NormalizeShopKey(layerName ?? "");
+
+            if (key.Contains("DN15"))
+                return 2;
+            if (key.Contains("DN20"))
+                return 3;
+            if (key.Contains("DN25"))
+                return 4;
+            if (key.Contains("DN32"))
+                return 5;
+            if (key.Contains("DN40"))
+                return 3;
+            if (key.Contains("DN50"))
+                return 1;
+            if (key.Contains("DN65"))
+                return 6;
+            if (key.Contains("DN80"))
+                return 4;
+            if (key.Contains("DN100"))
+                return 2;
+            if (key.Contains("DN125"))
+                return 5;
+            if (key.Contains("DN150"))
+                return 1;
+
+            if (key.Contains("GIAM") ||
+                key.Contains("REDUC"))
+                return 7;
+
+            return 7;
+        }
 
         /// <summary>
         /// Layer do tool tạo luôn bắt đầu bằng mã hệ thống: FF_ / ACMV_ / CTN_
