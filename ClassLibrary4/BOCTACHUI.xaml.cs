@@ -12562,6 +12562,7 @@ namespace ClassLibrary4
 
                     List<Point3d> targets = new List<Point3d>();
                     HashSet<ObjectId> targetIds = new HashSet<ObjectId>();
+                    HashSet<ObjectId> circleIds = new HashSet<ObjectId>();
 
                     using (doc.LockDocument())
                     using (Transaction tr =
@@ -12597,12 +12598,25 @@ namespace ClassLibrary4
                                 texts.Add(o);
                         }
 
-                        if (khoanhTron && texts.Count > 0)
+                        if (khoanhTron)
                         {
+                            foreach (Polyline pl in plines)
+                            {
+                                targets.Add(LayDiemGiuaPolyline(pl));
+                                targetIds.Add(pl.ObjectId);
+                            }
+
                             foreach (Entity t in texts)
                             {
                                 targets.Add(LayDiemDaiDien(t));
                                 targetIds.Add(t.ObjectId);
+                                circleIds.Add(t.ObjectId);
+                            }
+
+                            if (circleIds.Count == 0)
+                            {
+                                foreach (Polyline pl in plines)
+                                    circleIds.Add(pl.ObjectId);
                             }
                         }
                         else if (plines.Count > 0)
@@ -12650,6 +12664,8 @@ namespace ClassLibrary4
                         Autodesk.AutoCAD.Colors.Color colGray =
                             Autodesk.AutoCAD.Colors.Color.FromColorIndex(
                                 ColorMethod.ByAci, 8);
+                        HashSet<ObjectId> blockChildBackupIds =
+                            new HashSet<ObjectId>();
 
                         foreach (ObjectId id in btr)
                         {
@@ -12685,13 +12701,27 @@ namespace ClassLibrary4
                                     o.Color = colYellow;
                                 else
                                     o.Color = colGray;
+
+                                if (o is BlockReference br)
+                                {
+                                    DoiMauEntityTrongBlockTamThoi(
+                                        tr,
+                                        db,
+                                        br,
+                                        targetIds.Contains(id)
+                                            ? colYellow
+                                            : colGray,
+                                        colorBackups,
+                                        blockChildBackupIds,
+                                        new HashSet<ObjectId>());
+                                }
                             }
                             catch { }
                         }
 
                         if (khoanhTron)
                         {
-                            foreach (ObjectId id in targetIds)
+                            foreach (ObjectId id in circleIds)
                             {
                                 try
                                 {
@@ -12934,6 +12964,116 @@ namespace ClassLibrary4
             }
         }
 
+        private static void DoiMauEntityTrongBlockTamThoi(
+            Transaction tr,
+            Database db,
+            BlockReference blockRef,
+            Autodesk.AutoCAD.Colors.Color color,
+            List<EntityColorBackup> colorBackups,
+            HashSet<ObjectId> backedUpIds,
+            HashSet<ObjectId> visitedBlockRecords)
+        {
+            if (blockRef == null ||
+                blockRef.BlockTableRecord.IsNull ||
+                visitedBlockRecords.Contains(blockRef.BlockTableRecord))
+                return;
+
+            try
+            {
+                foreach (ObjectId attId in blockRef.AttributeCollection)
+                {
+                    AttributeReference att =
+                        tr.GetObject(attId, OpenMode.ForRead)
+                            as AttributeReference;
+
+                    if (att == null || att.IsErased)
+                        continue;
+
+                    if (IsEntityOnLockedLayer(tr, db, att))
+                        continue;
+
+                    try
+                    {
+                        att.UpgradeOpen();
+
+                        if (!backedUpIds.Contains(att.ObjectId))
+                        {
+                            colorBackups.Add(new EntityColorBackup
+                            {
+                                Id = att.ObjectId,
+                                Color = att.Color
+                            });
+                            backedUpIds.Add(att.ObjectId);
+                        }
+
+                        att.Color = color;
+                    }
+                    catch { }
+                }
+            }
+            catch { }
+
+            visitedBlockRecords.Add(blockRef.BlockTableRecord);
+
+            try
+            {
+                BlockTableRecord blockDef =
+                    tr.GetObject(
+                        blockRef.BlockTableRecord,
+                        OpenMode.ForRead) as BlockTableRecord;
+
+                if (blockDef == null)
+                    return;
+
+                foreach (ObjectId childId in blockDef)
+                {
+                    Entity child =
+                        tr.GetObject(childId, OpenMode.ForRead)
+                            as Entity;
+                    if (child == null || child.IsErased)
+                        continue;
+
+                    if (IsEntityOnLockedLayer(tr, db, child))
+                        continue;
+
+                    try
+                    {
+                        child.UpgradeOpen();
+
+                        if (!backedUpIds.Contains(child.ObjectId))
+                        {
+                            colorBackups.Add(new EntityColorBackup
+                            {
+                                Id = child.ObjectId,
+                                Color = child.Color
+                            });
+                            backedUpIds.Add(child.ObjectId);
+                        }
+
+                        child.Color = color;
+
+                        if (child is BlockReference nestedBlock)
+                        {
+                            DoiMauEntityTrongBlockTamThoi(
+                                tr,
+                                db,
+                                nestedBlock,
+                                color,
+                                colorBackups,
+                                backedUpIds,
+                                visitedBlockRecords);
+                        }
+                    }
+                    catch { }
+                }
+            }
+            catch { }
+            finally
+            {
+                visitedBlockRecords.Remove(blockRef.BlockTableRecord);
+            }
+        }
+
         private static Circle TaoVongTronBaoDoiTuong(Entity ent)
         {
             if (ent == null)
@@ -12956,10 +13096,10 @@ namespace ClassLibrary4
                 double maxSize = Math.Max(width, height);
 
                 if (maxSize < 1e-6)
-                    maxSize = 300.0;
+                    maxSize = 600.0;
 
                 double radius =
-                    Math.Max(maxSize * 0.72, 300.0);
+                    Math.Max(maxSize * 1.44, 600.0);
 
                 return new Circle(
                     center,
@@ -12972,7 +13112,7 @@ namespace ClassLibrary4
                 return new Circle(
                     center,
                     Vector3d.ZAxis,
-                    300.0);
+                    600.0);
             }
         }
 
