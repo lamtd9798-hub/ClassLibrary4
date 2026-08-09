@@ -61,7 +61,7 @@ namespace ClassLibrary4
         private const double TemplateDuplicateTolerance = 100.0;
 
         // SHOP thông minh: gom các đầu/điểm giao thành nút rồi mới quyết định phụ kiện.
-        private const string ShopSmartBuild = "SHOP-SMART-20260809-14-SNAPFACE";
+        private const string ShopSmartBuild = "SHOP-SMART-20260809-21-TOUCHGAP";
         private const double ShopJointTolerance = 150.0;
         private const double ShopDuplicateNodeTolerance = 100.0;
         private const double ShopStraightAngleToleranceDeg = 12.0;
@@ -12520,38 +12520,21 @@ namespace ClassLibrary4
                 if (node == null || node.Arms.Count == 0)
                     continue;
 
-                // Đầu hở: chỉ chèn co 90 khi xác định được đầu phun gần đầu ống.
+                // Đầu hở gần đầu phun: chèn CO 90 ĐI XUỐNG (không dùng hướng ngang).
                 if (node.Arms.Count == 1)
                 {
                     if (IsShopSprinklerEnd(
                             node.Point,
                             sprinklerCenters))
                     {
-                        ShopJointArm arm = node.Arms[0];
-                        string layerName =
-                            "FF_SHOP_CO90_DAUPHUN_" +
-                            CleanLayerText(arm.SizeText);
-
-                        EnsureShopLayerExists(tr, db, layerName);
-
-                        double rotation =
-                            Math.Atan2(
-                                arm.Direction.Y,
-                                arm.Direction.X);
-
-                        if (TryInsertShopLibraryFitting(
+                        if (DrawSmartShopSprinklerDropElbow(
                                 tr,
                                 db,
                                 btr,
-                                libraryPath,
-                                "ELBOW90",
-                                arm.SizeText,
-                                arm.SizeText,
                                 node.Point,
-                                rotation,
-                                layerName,
-                                false,
-                                fittingGaps))
+                                node.Arms[0],
+                                libraryPath,
+                                fittingGaps) > 0)
                         {
                             sprinklerElbowCount++;
                             elbow90Count++;
@@ -13203,6 +13186,273 @@ namespace ClassLibrary4
             return (a.X * b.Y) - (a.Y * b.X);
         }
 
+        /// <summary>
+        /// Co 90 cuối nhánh đầu phun: một đầu theo ống, một đầu HƯỚNG XUỐNG.
+        /// Không dùng orientation ngang.
+        /// </summary>
+        private int DrawSmartShopSprinklerDropElbow(
+            Transaction tr,
+            Database db,
+            BlockTableRecord btr,
+            Point3d nodePoint,
+            ShopJointArm arm,
+            string libraryPath,
+            List<ShopFittingGapInfo> fittingGaps)
+        {
+            if (arm == null)
+                return 0;
+
+            string layerName =
+                "FF_SHOP_CO90_DAUPHUN_" +
+                CleanLayerText(arm.SizeText);
+
+            EnsureShopLayerExists(tr, db, layerName);
+
+            // Direction arm: từ nút đi VÀO trong ống
+            Vector3d intoPipe = arm.Direction;
+            if (intoPipe.Length < 1e-9)
+                return 0;
+            intoPipe = intoPipe.GetNormal();
+
+            // Hướng xuống (mặt bằng: -Y)
+            Vector3d down = new Vector3d(0, -1, 0);
+
+            // Block co: +X = nhánh 1, +Y = nhánh 2
+            // Gán +X theo ống, +Y theo hướng xuống (mirror nếu cần)
+            double rotation =
+                Math.Atan2(intoPipe.Y, intoPipe.X);
+
+            // +Y sau xoay (không mirror) = vuông góc trái của intoPipe
+            Vector3d plusY =
+                new Vector3d(-intoPipe.Y, intoPipe.X, 0.0);
+            Vector3d plusYMirror =
+                new Vector3d(intoPipe.Y, -intoPipe.X, 0.0);
+
+            bool mirrorY =
+                plusYMirror.DotProduct(down) >
+                plusY.DotProduct(down);
+
+            // Nếu cả hai đều không hướng xuống rõ (ống gần như đứng),
+            // ép mirror để nhánh 2 nghiêng về -Y.
+            if (Math.Abs(intoPipe.DotProduct(down)) > 0.9)
+            {
+                // Ống gần như thẳng đứng — co ngang không dùng ở cuối đầu phun
+                // Vẫn giữ orientation có thành phần xuống tối đa
+                mirrorY =
+                    plusYMirror.DotProduct(down) >=
+                    plusY.DotProduct(down);
+            }
+
+            if (!TryInsertShopLibraryFitting(
+                    tr,
+                    db,
+                    btr,
+                    libraryPath,
+                    "ELBOW90",
+                    arm.SizeText,
+                    arm.SizeText,
+                    nodePoint,
+                    rotation,
+                    layerName,
+                    mirrorY,
+                    fittingGaps))
+            {
+                return 0;
+            }
+
+            // Ép dynamic block sang trạng thái "xuống" nếu có
+            TrySetShopElbowDropVisibility(
+                tr,
+                btr,
+                nodePoint);
+
+            return 1;
+        }
+
+        /// <summary>
+        /// Block động co cuối đầu phun: visibility HƯỚNG XUỐNG.
+        /// </summary>
+        private void TrySetShopElbowDropVisibility(
+            Transaction tr,
+            BlockTableRecord btr,
+            Point3d nearPoint)
+        {
+            TrySetShopFittingVisibility(
+                tr,
+                btr,
+                nearPoint,
+                preferDown: true,
+                preferHorizontal: false);
+        }
+
+        /// <summary>
+        /// Chọn visibility block động: xuống HOẶC ngang (không để hiện cả hai).
+        /// </summary>
+        private void TrySetShopFittingVisibility(
+            Transaction tr,
+            BlockTableRecord btr,
+            Point3d nearPoint,
+            bool preferDown,
+            bool preferHorizontal)
+        {
+            if (tr == null || btr == null)
+                return;
+
+            try
+            {
+                BlockReference best = null;
+                double bestDist = double.MaxValue;
+
+                foreach (ObjectId id in btr)
+                {
+                    BlockReference br =
+                        tr.GetObject(
+                            id,
+                            OpenMode.ForRead,
+                            false) as BlockReference;
+
+                    if (br == null || br.IsErased)
+                        continue;
+
+                    double d = br.Position.DistanceTo(nearPoint);
+                    if (d < bestDist && d <= 400.0)
+                    {
+                        bestDist = d;
+                        best = br;
+                    }
+                }
+
+                if (best == null)
+                    return;
+
+                best =
+                    tr.GetObject(
+                        best.ObjectId,
+                        OpenMode.ForWrite,
+                        false) as BlockReference;
+
+                if (best == null || !best.IsDynamicBlock)
+                    return;
+
+                DynamicBlockReferencePropertyCollection props =
+                    best.DynamicBlockReferencePropertyCollection;
+
+                if (props == null)
+                    return;
+
+                foreach (DynamicBlockReferenceProperty prop in props)
+                {
+                    if (prop == null || prop.ReadOnly)
+                        continue;
+
+                    string pname =
+                        (prop.PropertyName ?? "").ToUpperInvariant();
+
+                    bool isVis =
+                        pname.Contains("VISIBILITY") ||
+                        pname.Contains("VISIBLE") ||
+                        pname.Contains("STATE") ||
+                        pname.Contains("TRANGTHAI") ||
+                        pname.Contains("HUONG") ||
+                        pname.Contains("ORIENT") ||
+                        pname.Contains("TYPE") ||
+                        pname.Contains("KIEU") ||
+                        pname.Contains("VIEW") ||
+                        pname.Contains("LOOKUP") ||
+                        pname.Contains("CHIEU") ||
+                        pname.Contains("DIRECTION");
+
+                    // Flip parameter: không dùng cho visibility, bỏ qua
+                    if (pname.Contains("FLIP") ||
+                        pname.Contains("MIRROR"))
+                        continue;
+
+                    if (!isVis)
+                        continue;
+
+                    object[] values = null;
+                    try { values = prop.GetAllowedValues(); }
+                    catch { continue; }
+
+                    if (values == null || values.Length == 0)
+                        continue;
+
+                    string scoreBest = null;
+                    int scoreBestVal = int.MinValue;
+
+                    foreach (object v in values)
+                    {
+                        string s = (v ?? "").ToString();
+                        string k = NormalizeShopKey(s);
+                        int score = 0;
+
+                        bool isDown =
+                            k.Contains("XUONG") ||
+                            k.Contains("DOWN") ||
+                            k.Contains("DROP") ||
+                            k.Contains("DIXUONG") ||
+                            k.Contains("BOTTOM");
+
+                        bool isUp =
+                            k.Contains("LEN") ||
+                            k.Contains("TOP") ||
+                            (k.Contains("UP") &&
+                             !k.Contains("SUP") &&
+                             !k.Contains("COUP"));
+
+                        bool isHoriz =
+                            k.Contains("NGANG") ||
+                            k.Contains("HORIZ") ||
+                            k.Contains("FLAT") ||
+                            k.Contains("PLAN") ||
+                            k.Contains("SIDE") ||
+                            k.Contains("LEFT") ||
+                            k.Contains("RIGHT") ||
+                            k == "1" ||
+                            k == "A" ||
+                            k.Contains("ELB90") ||
+                            k.Contains("CO90");
+
+                        if (preferDown)
+                        {
+                            if (isDown) score += 100;
+                            if (isHoriz) score -= 60;
+                            if (isUp) score += 5;
+                        }
+                        else if (preferHorizontal)
+                        {
+                            if (isHoriz) score += 100;
+                            if (isDown) score -= 100;
+                            if (isUp) score -= 50;
+                            if (!isDown && !isUp) score += 40;
+                        }
+
+                        if (score > scoreBestVal)
+                        {
+                            scoreBestVal = score;
+                            scoreBest = s;
+                        }
+                    }
+
+                    if (scoreBest != null && scoreBestVal > 0)
+                    {
+                        try
+                        {
+                            prop.Value = scoreBest;
+                        }
+                        catch { }
+                    }
+                }
+
+                try
+                {
+                    best.RecordGraphicsModified(true);
+                }
+                catch { }
+            }
+            catch { }
+        }
+
         private bool IsShopSprinklerEnd(
             Point3d point,
             List<Point3d> sprinklerCenters)
@@ -13402,6 +13652,13 @@ namespace ClassLibrary4
                     mirrorY,
                     fittingGaps))
             {
+                // Co góc mặt bằng: visibility NGANG (không dùng trạng thái đi xuống)
+                TrySetShopFittingVisibility(
+                    tr,
+                    btr,
+                    nodePoint,
+                    preferDown: false,
+                    preferHorizontal: true);
                 return 1;
             }
 
@@ -13533,13 +13790,29 @@ namespace ClassLibrary4
 
             EnsureShopLayerExists(tr, db, layerName);
 
-            Vector3d mainDir = main.Direction;
-            double rotation =
-                Math.Atan2(mainDir.Y, mainDir.X);
+            // Hướng ống thật trên bản vẽ
+            Vector3d mainDir = main1.Direction;
+            if (mainDir.Length < 1e-9)
+                mainDir = main.Direction;
+            mainDir = mainDir.GetNormal();
 
-            // Quy ước block Tê: trục chính theo X, nhánh theo +Y.
-            bool mirrorY =
-                ShopCross(mainDir, branch.Direction) < 0.0;
+            Vector3d branchDir = branch.Direction;
+            if (branchDir.Length > 1e-9)
+                branchDir = branchDir.GetNormal();
+            else
+                branchDir = new Vector3d(-mainDir.Y, mainDir.X, 0.0);
+
+            // Thư viện SCREW/WELD-TEE: trục chính thường dọc theo Y, nhánh theo X
+            // (xem preview block). Tính rotation để:
+            //   trục chính block → mainDir (ống lớn nằm ngang/đúng hướng)
+            //   nhánh block     → branchDir
+            double rotation;
+            bool mirrorY;
+            ComputeShopTeeTransform(
+                mainDir,
+                branchDir,
+                out rotation,
+                out mirrorY);
 
             if (TryInsertShopLibraryFitting(
                     tr,
@@ -13555,10 +13828,58 @@ namespace ClassLibrary4
                     mirrorY,
                     fittingGaps))
             {
+                // Ép visibility tê nếu block động
+                TrySetShopFittingVisibility(
+                    tr,
+                    btr,
+                    nodePoint,
+                    preferDown: false,
+                    preferHorizontal: true);
                 return 1;
             }
 
             return 0;
+        }
+
+        /// <summary>
+        /// Tính xoay/mirror cho TÊ thư viện SCREW/WELD
+        /// (trục chính block ≈ Y, nhánh ≈ X trong định nghĩa).
+        /// </summary>
+        private void ComputeShopTeeTransform(
+            Vector3d mainDir,
+            Vector3d branchDir,
+            out double rotation,
+            out bool mirrorY)
+        {
+            // Block SCREW/WELD-TEE: +Y = đường chính, +X = nhánh.
+            // Thử 2 chiều through, chọn chiều làm nhánh (+X) khớp branchDir nhất.
+            // Không mirror Y (dễ đảo trục chính).
+            mainDir = mainDir.GetNormal();
+            branchDir = branchDir.GetNormal();
+            mirrorY = false;
+
+            Vector3d through = mainDir;
+            double bestScore = double.MinValue;
+            double bestRot = 0.0;
+
+            for (int i = 0; i < 2; i++)
+            {
+                // R*(0,1) = (-sinθ, cosθ) = through
+                double theta = Math.Atan2(-through.X, through.Y);
+                Vector3d xDir = new Vector3d(
+                    Math.Cos(theta),
+                    Math.Sin(theta),
+                    0.0);
+                double score = xDir.DotProduct(branchDir);
+                if (score > bestScore)
+                {
+                    bestScore = score;
+                    bestRot = theta;
+                }
+                through = -through;
+            }
+
+            rotation = bestRot;
         }
 
         private int EraseShopSourceCurves(
@@ -13696,6 +14017,59 @@ namespace ClassLibrary4
             }
         }
 
+        /// <summary>
+        /// True nếu curve chỉ là 1 đoạn thẳng (không gãy góc).
+        /// </summary>
+        private bool IsShopStraightCurve(Curve curve)
+        {
+            if (curve == null)
+                return false;
+
+            if (curve is Line)
+                return true;
+
+            if (curve is Polyline pl)
+            {
+                if (pl.NumberOfVertices < 2)
+                    return false;
+
+                Vector3d? firstDir = null;
+
+                for (int i = 0; i < pl.NumberOfVertices - 1; i++)
+                {
+                    if (pl.GetSegmentType(i) != SegmentType.Line)
+                        return false;
+
+                    Point2d a = pl.GetPoint2dAt(i);
+                    Point2d b = pl.GetPoint2dAt(i + 1);
+                    Vector3d d =
+                        new Vector3d(b.X - a.X, b.Y - a.Y, 0.0);
+
+                    if (d.Length < 1e-9)
+                        continue;
+
+                    d = d.GetNormal();
+
+                    if (firstDir == null)
+                    {
+                        firstDir = d;
+                        continue;
+                    }
+
+                    double ang =
+                        GetShopAngleDegrees(firstDir.Value, d);
+
+                    // Lệch > 5° coi là có góc gãy
+                    if (ang > 5.0 && ang < 175.0)
+                        return false;
+                }
+
+                return firstDir != null;
+            }
+
+            return false;
+        }
+
         private List<ShopPipeCandidate>
             CreateShopSplitCandidatesFromTexts(
                 Curve curve,
@@ -13714,6 +14088,12 @@ namespace ClassLibrary4
             {
                 return result;
             }
+
+            // QUAN TRỌNG: không được cắt polyline có góc thành Line (d1→d2)
+            // vì Line là đường CHÉO (chord), phá góc vuông gốc.
+            // Chỉ split khi đường nguồn là 1 đoạn thẳng.
+            if (!IsShopStraightCurve(curve))
+                return result;
 
             List<TextProjectionData> ordered =
                 projections
@@ -14074,7 +14454,7 @@ namespace ClassLibrary4
             if (pipe == null || pipe.Curve == null)
                 return 0;
 
-            // Line thẳng: SNAP đầu ống vào mặt phụ kiện (joint ± half theo hướng ống)
+            // Line thẳng: rút khe tại đầu VÀ tại phụ kiện nằm giữa đoạn (tê)
             if (pipe.Curve is Line)
             {
                 Point3d start = pipe.Start;
@@ -14085,77 +14465,120 @@ namespace ClassLibrary4
                     return 0;
                 dir = dir.GetNormal();
 
-                Point3d s2 = start;
-                Point3d e2 = end;
+                // Danh sách mốc dọc đoạn: 0, joints, len
+                List<Tuple<double, double>> cuts =
+                    new List<Tuple<double, double>>();
+                // Tuple: distanceAlong, halfGap (0 = endpoint no gap)
 
-                Point3d jointS;
-                double halfS;
-                if (TryFindShopFittingGap(
-                        start,
-                        fittingGaps,
-                        out jointS,
-                        out halfS))
+                cuts.Add(Tuple.Create(0.0, 0.0));
+
+                if (fittingGaps != null)
                 {
-                    // Hướng từ nút vào trong đoạn ống
-                    Vector3d into =
-                        (end - jointS);
-                    if (into.Length > 1e-9)
+                    double reach =
+                        Math.Max(
+                            ShopJointTolerance,
+                            Math.Max(pipe.Width * 3.0, 150.0));
+
+                    foreach (ShopFittingGapInfo g in fittingGaps)
                     {
-                        into = into.GetNormal();
-                        s2 = jointS + into * halfS;
+                        if (g == null || g.HalfLength <= 1.0)
+                            continue;
+
+                        Vector3d toJ = g.Joint - start;
+                        double along = toJ.DotProduct(dir);
+
+                        // Cho phép joint hơi ngoài 2 đầu đoạn
+                        if (along < -reach || along > len + reach)
+                            continue;
+
+                        along = Math.Max(0.0, Math.Min(len, along));
+                        Point3d proj = start + dir * along;
+
+                        // Khoảng cách vuông góc tới tâm ống
+                        if (PlanDistance(proj, g.Joint) > reach)
+                            continue;
+
+                        // Dùng đúng half đã đo — không phóng to (gây hở)
+                        cuts.Add(Tuple.Create(along, g.HalfLength));
                     }
                 }
 
-                Point3d jointE;
-                double halfE;
-                if (TryFindShopFittingGap(
-                        end,
-                        fittingGaps,
-                        out jointE,
-                        out halfE))
-                {
-                    Vector3d into =
-                        (start - jointE);
-                    if (into.Length > 1e-9)
-                    {
-                        into = into.GetNormal();
-                        e2 = jointE + into * halfE;
-                    }
-                }
+                cuts.Add(Tuple.Create(len, 0.0));
+                cuts = cuts
+                    .OrderBy(c => c.Item1)
+                    .ToList();
 
-                // Đoạn quá ngắn sau snap → bỏ qua
-                if (s2.DistanceTo(e2) < 5.0)
-                    return 0;
+                // Gộp mốc trùng
+                List<Tuple<double, double>> merged =
+                    new List<Tuple<double, double>>();
+                foreach (var c in cuts)
+                {
+                    if (merged.Count == 0)
+                    {
+                        merged.Add(c);
+                        continue;
+                    }
+                    var last = merged[merged.Count - 1];
+                    if (Math.Abs(c.Item1 - last.Item1) <= 1.0)
+                    {
+                        // Giữ half lớn hơn
+                        if (c.Item2 > last.Item2)
+                            merged[merged.Count - 1] =
+                                Tuple.Create(last.Item1, c.Item2);
+                    }
+                    else
+                        merged.Add(c);
+                }
 
                 Vector3d normal = GetPlanNormal(dir);
                 double half = pipe.Width / 2.0;
+                int drawn = 0;
 
-                AppendShopLine(
-                    tr, db, btr,
-                    s2 + normal * half,
-                    e2 + normal * half,
-                    pipe.LayerName);
-                AppendShopLine(
-                    tr, db, btr,
-                    s2 - normal * half,
-                    e2 - normal * half,
-                    pipe.LayerName);
+                for (int i = 0; i < merged.Count - 1; i++)
+                {
+                    double d0 = merged[i].Item1;
+                    double gap0 = merged[i].Item2;
+                    double d1 = merged[i + 1].Item1;
+                    double gap1 = merged[i + 1].Item2;
 
-                // Đường tâm nét đứt — chuẩn để đặt co/tê/giảm
-                AppendShopCenterline(
-                    tr, db, btr, s2, e2, pipe.LayerName);
-                return 3;
+                    // Rút half tại mỗi đầu mốc (phụ kiện)
+                    double a = d0 + gap0;
+                    double b = d1 - gap1;
+                    if (b - a < 5.0)
+                        continue;
+
+                    Point3d p0 = start + dir * a;
+                    Point3d p1 = start + dir * b;
+
+                    AppendShopLine(
+                        tr, db, btr,
+                        p0 + normal * half,
+                        p1 + normal * half,
+                        pipe.LayerName);
+                    AppendShopLine(
+                        tr, db, btr,
+                        p0 - normal * half,
+                        p1 - normal * half,
+                        pipe.LayerName);
+                    AppendShopCenterline(
+                        tr, db, btr, p0, p1, pipe.LayerName);
+                    drawn += 3;
+                }
+
+                return drawn;
             }
 
-            // Polyline / Arc: DrawShopParallelPipe đã vẽ song song + đường tâm
-            return DrawShopParallelPipe(tr, db, btr, pipe);
+            // Polyline: vẽ từng đoạn + rút khe tại nút phụ kiện
+            return DrawShopParallelPipe(
+                tr, db, btr, pipe, fittingGaps);
         }
 
         private int DrawShopParallelPipe(
             Transaction tr,
             Database db,
             BlockTableRecord btr,
-            ShopPipeCandidate pipe)
+            ShopPipeCandidate pipe,
+            List<ShopFittingGapInfo> fittingGaps = null)
         {
             if (pipe == null || pipe.Curve == null)
                 return 0;
@@ -14170,7 +14593,8 @@ namespace ClassLibrary4
                 pipe.Curve,
                 pipe,
                 half,
-                pipe.LayerName);
+                pipe.LayerName,
+                fittingGaps);
 
             if (count > 0)
             {
@@ -14178,6 +14602,11 @@ namespace ClassLibrary4
                     tr, db, btr, pipe);
                 return count;
             }
+
+            // Chỉ fallback Start→End khi nguồn là 1 đoạn thẳng.
+            // Polyline gãy góc: CẤM vẽ chéo từ đầu tới cuối.
+            if (!IsShopStraightCurve(pipe.Curve))
+                return 0;
 
             AppendShopLine(
                 tr,
@@ -14210,7 +14639,8 @@ namespace ClassLibrary4
             Curve curve,
             ShopPipeCandidate pipe,
             double half,
-            string layerName)
+            string layerName,
+            List<ShopFittingGapInfo> fittingGaps = null)
         {
             if (curve == null || pipe == null)
                 return 0;
@@ -14251,12 +14681,11 @@ namespace ClassLibrary4
                 pl.NumberOfVertices >= 2)
             {
                 int count = 0;
-                double gap = ComputeShopFittingGap(
-                    pipe.Width > 0 ? pipe.Width : half * 2.0);
 
+                // Từng đoạn thẳng polyline — góc vuông giữ nguyên.
+                // Rút khe CHỈ tại nút có phụ kiện (co/tê/giảm).
                 for (int i = 0; i < pl.NumberOfVertices - 1; i++)
                 {
-                    // Chỉ bỏ qua segment không phải line, không return toàn bộ
                     if (pl.GetSegmentType(i) != SegmentType.Line)
                         continue;
 
@@ -14279,52 +14708,89 @@ namespace ClassLibrary4
                     Point3d b =
                         new Point3d(p2.X, p2.Y, curve.StartPoint.Z);
 
-                    double len = a.DistanceTo(b);
-                    double gapStart = 0.0;
-                    double gapEnd = 0.0;
+                    double segLen = a.DistanceTo(b);
+                    if (segLen < 1e-9)
+                        continue;
 
-                    // Đỉnh nội bộ polyline = vị trí co/tê tiềm năng
-                    bool startIsVertex = i > 0 || pl.Closed;
-                    bool endIsVertex =
-                        i < pl.NumberOfVertices - 2 || pl.Closed;
+                    // Cắt tại mọi phụ kiện nằm trên đoạn (kể cả tê giữa đoạn)
+                    List<Tuple<double, double>> cuts =
+                        new List<Tuple<double, double>>();
+                    cuts.Add(Tuple.Create(0.0, 0.0));
+                    cuts.Add(Tuple.Create(segLen, 0.0));
 
-                    // Đầu mở của polyline không rút
-                    if (i == 0 && !pl.Closed)
-                        startIsVertex = false;
-                    if (i == pl.NumberOfVertices - 2 && !pl.Closed)
-                        endIsVertex = false;
-
-                    if (startIsVertex)
-                        gapStart = gap;
-                    if (endIsVertex)
-                        gapEnd = gap;
-
-                    if (gapStart + gapEnd >= len - 5.0)
+                    if (fittingGaps != null)
                     {
-                        gapStart = 0;
-                        gapEnd = 0;
+                        double reach =
+                            Math.Max(
+                                ShopJointTolerance,
+                                Math.Max(half * 6.0, 150.0));
+
+                        foreach (ShopFittingGapInfo g in fittingGaps)
+                        {
+                            if (g == null || g.HalfLength <= 1.0)
+                                continue;
+
+                            Vector3d toJ = g.Joint - a;
+                            double along = toJ.DotProduct(dir);
+                            if (along < -reach || along > segLen + reach)
+                                continue;
+
+                            along = Math.Max(0.0, Math.Min(segLen, along));
+                            Point3d proj = a + dir * along;
+                            if (PlanDistance(proj, g.Joint) > reach)
+                                continue;
+
+                            cuts.Add(Tuple.Create(along, g.HalfLength));
+                        }
                     }
 
-                    Point3d a2 = a + dir * gapStart;
-                    Point3d b2 = b - dir * gapEnd;
+                    cuts = cuts.OrderBy(c => c.Item1).ToList();
+                    List<Tuple<double, double>> merged =
+                        new List<Tuple<double, double>>();
+                    foreach (var c in cuts)
+                    {
+                        if (merged.Count == 0)
+                        {
+                            merged.Add(c);
+                            continue;
+                        }
+                        var last = merged[merged.Count - 1];
+                        if (Math.Abs(c.Item1 - last.Item1) <= 1.0)
+                        {
+                            if (c.Item2 > last.Item2)
+                                merged[merged.Count - 1] =
+                                    Tuple.Create(last.Item1, c.Item2);
+                        }
+                        else
+                            merged.Add(c);
+                    }
 
-                    AppendShopLine(
-                        tr,
-                        db,
-                        btr,
-                        a2 + normal * half,
-                        b2 + normal * half,
-                        layerName);
+                    for (int k = 0; k < merged.Count - 1; k++)
+                    {
+                        double d0 = merged[k].Item1;
+                        double g0 = merged[k].Item2;
+                        double d1 = merged[k + 1].Item1;
+                        double g1 = merged[k + 1].Item2;
+                        double aa = d0 + g0;
+                        double bb = d1 - g1;
+                        if (bb - aa < 5.0)
+                            continue;
 
-                    AppendShopLine(
-                        tr,
-                        db,
-                        btr,
-                        a2 - normal * half,
-                        b2 - normal * half,
-                        layerName);
+                        Point3d p0 = a + dir * aa;
+                        Point3d p1pt = a + dir * bb;
 
-                    count += 2;
+                        AppendShopLine(
+                            tr, db, btr,
+                            p0 + normal * half,
+                            p1pt + normal * half,
+                            layerName);
+                        AppendShopLine(
+                            tr, db, btr,
+                            p0 - normal * half,
+                            p1pt - normal * half,
+                            layerName);
+                        count += 2;
+                    }
                 }
 
                 return count;
@@ -15084,6 +15550,70 @@ namespace ClassLibrary4
         /// <summary>
         /// Tâm hình học + nửa chiều dài theo trục dài của block (local).
         /// </summary>
+        /// <summary>
+        /// Khoảng rút ống tại co/tê = khoảng từ base point tới mép xa nhất
+        /// theo phương X hoặc Y (chân co).
+        /// </summary>
+        private double EstimateShopElbowLegGap(
+            Transaction tr,
+            ObjectId blockId)
+        {
+            try
+            {
+                BlockTableRecord rec =
+                    tr.GetObject(blockId, OpenMode.ForRead, false)
+                        as BlockTableRecord;
+                if (rec == null)
+                    return 0;
+
+                Extents3d? ext = null;
+                foreach (ObjectId id in rec)
+                {
+                    Entity ent =
+                        tr.GetObject(id, OpenMode.ForRead, false)
+                            as Entity;
+                    if (ent == null || ent.IsErased)
+                        continue;
+                    try
+                    {
+                        Extents3d e = ent.GeometricExtents;
+                        if (ext == null) ext = e;
+                        else
+                        {
+                            Extents3d cur = ext.Value;
+                            cur.AddExtents(e);
+                            ext = cur;
+                        }
+                    }
+                    catch { }
+                }
+
+                if (ext == null)
+                    return 0;
+
+                Extents3d box = ext.Value;
+                // Từ origin (0,0) ra mép — lấy cạnh lớn hơn (chân co)
+                double toX =
+                    Math.Max(
+                        Math.Abs(box.MinPoint.X),
+                        Math.Abs(box.MaxPoint.X));
+                double toY =
+                    Math.Max(
+                        Math.Abs(box.MinPoint.Y),
+                        Math.Abs(box.MaxPoint.Y));
+                // Lấy cạnh NHỎ hơn = chân co/tê thật (max sẽ lấy luôn nhánh dài → hở to)
+                double leg = Math.Min(toX, toY);
+                if (leg < 1.0)
+                    leg = Math.Max(toX, toY);
+                // 0.82: ống chạm sát mặt bích, không hở khúc
+                return leg > 1.0 ? leg * 0.82 : 0;
+            }
+            catch
+            {
+                return 0;
+            }
+        }
+
         private bool TryGetShopBlockLocalCenter(
             Transaction tr,
             ObjectId blockId,
@@ -15241,16 +15771,28 @@ namespace ClassLibrary4
             double finalMirrorY = mirrorY ? -1.0 : 1.0;
             Point3d basePoint = insertPoint;
 
-            // Block SCREW/WELD: căn TÂM HÌNH HỌC của block vào điểm nút trên đường tâm.
-            // Không dùng Base Point (0,0) — nhiều block gốc nằm ở 1 đầu → lệch 1 bên.
-            bool simpleCenterInsert =
-                IsShopSimpleCenterBlock(blockName, fittingType);
+            // REDUCER: căn tâm hình học trên đường tâm (thẳng).
+            // CO / TÊ: dùng Base Point gốc block tại nút (thường là giao 2 trục tâm).
+            //   Không dùng bbox center — sẽ lệch, ống đâm vào thân phụ kiện.
+            bool isReducer =
+                IsReducerKey(NormalizeShopKey(fittingType ?? "")) ||
+                NormalizeShopKey(blockName ?? "").Contains("RED") ||
+                NormalizeShopKey(blockName ?? "").Contains("GIAM");
+
+            bool isElbowOrTee =
+                IsElbow90Key(NormalizeShopKey(fittingType ?? "")) ||
+                IsElbow45Key(NormalizeShopKey(fittingType ?? "")) ||
+                IsTeeKey(NormalizeShopKey(fittingType ?? "")) ||
+                NormalizeShopKey(blockName ?? "").Contains("ELB") ||
+                NormalizeShopKey(blockName ?? "").Contains("TEE") ||
+                NormalizeShopKey(blockName ?? "").Contains("CO");
 
             finalRotation = rotation;
             finalMirrorY = mirrorY ? -1.0 : 1.0;
             basePoint = insertPoint;
 
-            if (simpleCenterInsert)
+            if (isReducer &&
+                IsShopSimpleCenterBlock(blockName, fittingType))
             {
                 Point3d localCenter;
                 double halfAlong;
@@ -15271,15 +15813,49 @@ namespace ClassLibrary4
                             finalRotation,
                             Vector3d.ZAxis);
 
-                    // Điểm chèn sao cho tâm hình học trùng insertPoint
                     basePoint = insertPoint - world;
 
-                    // Ghi gap = nửa chiều dài dọc trục (để ống chạm 2 mặt)
                     RecordShopFittingGap(
                         fittingGaps,
                         insertPoint,
                         halfAlong);
                 }
+            }
+            else if (isElbowOrTee)
+            {
+                // Base point block = điểm nút trên giao tâm ống
+                basePoint = insertPoint;
+
+                double legGap = EstimateShopElbowLegGap(tr, blockId);
+
+                if (legGap < 1.0)
+                {
+                    Point3d localCenter;
+                    double halfAlong;
+                    if (TryGetShopBlockLocalCenter(
+                            tr,
+                            blockId,
+                            out localCenter,
+                            out halfAlong))
+                    {
+                        legGap = halfAlong;
+                    }
+                }
+
+                // Chỉ khi đo block thất bại mới ước theo DN (nhỏ, sát mặt)
+                if (legGap < 1.0)
+                {
+                    double dn = Math.Max(
+                        ParseShopDnNumber(NormalizeShopDnToken(fromSize)),
+                        ParseShopDnNumber(NormalizeShopDnToken(toSize)));
+                    if (dn <= 0) dn = 25;
+                    legGap = Math.Max(8.0, dn * 0.40);
+                }
+
+                RecordShopFittingGap(
+                    fittingGaps,
+                    insertPoint,
+                    legGap);
             }
             else if (placement != null &&
                      placement.Ports.Count > 0 &&
@@ -15451,7 +16027,7 @@ namespace ClassLibrary4
                         if (along > 2.0)
                         {
                             // Một chút nhỏ hơn 0.5 để nét ống chạm mặt bích, không hở
-                            return along * 0.50;
+                            return along * 0.48;
                         }
                     }
                 }
