@@ -512,24 +512,6 @@
                                                 </ToolTip>
                                             </Button.ToolTip>
                                         </Button>
-
-                                        <Button x:Name="BtnThongKePhuKienShop"
-                                                Content="THỐNG KÊ PHỤ KIỆN"
-                                                Height="38"
-                                                FontSize="13"
-                                                FontWeight="Bold"
-                                                Background="#FF6F42C1"
-                                                Foreground="White"
-                                                Margin="0,8,0,0"
-                                                Cursor="Hand"
-                                                Click="BtnThongKePhuKienShop_Click">
-                                            <Button.ToolTip>
-                                                <ToolTip>
-                                                    <TextBlock MaxWidth="280" TextWrapping="Wrap"
-                                                               Text="THỐNG KÊ PHỤ KIỆN SHOP: Quét vùng có phụ kiện do VẼ SHOP tạo. Tool đếm Co 90, Co 45/lơi, Tê và Giảm theo kích thước + kiểu nối SCREW/WELD rồi tạo bảng thống kê trong CAD."/>
-                                                </ToolTip>
-                                            </Button.ToolTip>
-                                        </Button>
                                     </StackPanel>
                                 </Grid>
                             </Grid>
@@ -1450,6 +1432,19 @@
                                 </Button.ToolTip>
                             </Button>
 
+                            <Button x:Name="BtnThongKePhuKienShop"
+                                    Content="THỐNG KÊ PHỤ KIỆN"
+                                    Height="42" FontSize="14" FontWeight="Bold"
+                                    Background="#FF6F42C1" Foreground="White" Margin="0,0,0,10" Cursor="Hand"
+                                    Click="BtnThongKePhuKienShop_Click">
+                                <Button.ToolTip>
+                                    <ToolTip>
+                                        <TextBlock MaxWidth="280" TextWrapping="Wrap"
+                                                   Text="THỐNG KÊ PHỤ KIỆN SHOP: Quét vùng có phụ kiện do VẼ SHOP tạo. Tool đếm Co 90, Co 45/lơi, Tê và Giảm theo kích thước + kiểu nối SCREW/WELD rồi tạo bảng thống kê trong CAD."/>
+                                    </ToolTip>
+                                </Button.ToolTip>
+                            </Button>
+
                             <Button Content="TÌM ĐỐI TƯỢNG ĐƯỜNG THẲNG" Height="40" FontSize="12" FontWeight="Bold"
                                     Background="#FFE67E22" Foreground="White" Margin="0,0,0,10" Cursor="Hand"
                                     Click="BtnTimDoiTuongThongKe_Click">
@@ -1476,7 +1471,7 @@
                                 <StackPanel>
                                     <TextBlock Text="Hướng dẫn nhanh" FontWeight="Bold" FontSize="12" Margin="0,0,0,4"/>
                                     <TextBlock TextWrapping="Wrap" FontSize="11" Foreground="#FF444444"
-                                               Text="1. Thống kê ống / thiết bị+van → quét vùng → đặt bảng&#10;2. Tìm đường thẳng → click tên Layer → xem đường chỉ&#10;3. Tìm khoanh tròn → click tên Layer → khoanh chữ target&#10;4. ESC/Enter để xóa dấu tạm"/>
+                                               Text="1. Thống kê ống / thiết bị+van / phụ kiện → quét vùng → đặt bảng&#10;2. Tìm đường thẳng → click tên Layer → xem đường chỉ&#10;3. Tìm khoanh tròn → click tên Layer → khoanh chữ target&#10;4. ESC/Enter để xóa dấu tạm"/>
                                 </StackPanel>
                             </Border>
                         </StackPanel>
