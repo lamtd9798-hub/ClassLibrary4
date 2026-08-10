@@ -61,7 +61,7 @@ namespace ClassLibrary4
         private const double TemplateDuplicateTolerance = 100.0;
 
         // SHOP thông minh: gom các đầu/điểm giao thành nút rồi mới quyết định phụ kiện.
-        private const string ShopSmartBuild = "SHOP-SMART-20260809-40-PIPE-STATS-SHOP-LINE";
+        private const string ShopSmartBuild = "SHOP-SMART-20260810-40H-WELD-TRUE-PORTS-DN65";
         private const double ShopJointTolerance = 150.0;
         private const double ShopDuplicateNodeTolerance = 100.0;
         private const double ShopStraightAngleToleranceDeg = 12.0;
@@ -98,6 +98,44 @@ namespace ClassLibrary4
                 new double[] { 300, 315, 323.9, 324 },
                 new double[] { 350, 355, 355.6, 356 },
                 new double[] { 400, 400, 406.4 }
+            };
+
+
+        // FIX40F - BẢNG DN -> ĐƯỜNG KÍNH NGOÀI ỐNG THÉP
+        // Lấy đúng theo bảng user cung cấp ngày 10/08/2026.
+        //
+        // VẼ SHOP CHỮA CHÁY phải vẽ 2 nét theo Ø NGOÀI,
+        // KHÔNG dùng DN làm khoảng cách 2 nét.
+        //
+        // Ví dụ:
+        // DN80 -> Ø ngoài 88.90 mm -> mỗi nét cách tim 44.45 mm.
+        private static readonly double[][] FireSteelDnOutsideDiameterTable =
+            new double[][]
+            {
+                new double[] { 6,   10.29 },
+                new double[] { 8,   13.72 },
+                new double[] { 10,  17.15 },
+                new double[] { 15,  21.34 },
+                new double[] { 20,  26.67 },
+                new double[] { 25,  33.40 },
+                new double[] { 32,  42.16 },
+                new double[] { 40,  48.26 },
+                new double[] { 50,  60.33 },
+                new double[] { 65,  73.03 },
+                new double[] { 80,  88.90 },
+                new double[] { 90,  101.60 },
+                new double[] { 100, 114.30 },
+                new double[] { 115, 127.00 },
+                new double[] { 125, 141.30 },
+                new double[] { 150, 168.28 },
+                new double[] { 200, 219.08 },
+                new double[] { 250, 273.05 },
+                new double[] { 300, 323.85 },
+                new double[] { 350, 355.60 },
+                new double[] { 400, 406.40 },
+                new double[] { 450, 457.20 },
+                new double[] { 500, 508.00 },
+                new double[] { 600, 609.60 }
             };
 
         private readonly short[] _brightAciColors = new short[]
@@ -5279,6 +5317,101 @@ namespace ClassLibrary4
                 "0.##",
                 CultureInfo.InvariantCulture);
         }
+
+        private static bool TryGetFireSteelOutsideDiameter(
+            double nominalDn,
+            out double outsideDiameter)
+        {
+            outsideDiameter = 0.0;
+
+            if (nominalDn <= 0.0)
+                return false;
+
+            foreach (double[] row
+                in FireSteelDnOutsideDiameterTable)
+            {
+                if (row == null ||
+                    row.Length < 2)
+                {
+                    continue;
+                }
+
+                if (Math.Abs(
+                        row[0] -
+                        nominalDn) <= 0.01)
+                {
+                    outsideDiameter =
+                        row[1];
+
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private static double GetFireSteelOutsideDiameterForSize(
+            string sizeText,
+            double fallbackWidth)
+        {
+            string normalized =
+                NormalizeShopDnToken(
+                    sizeText ?? "");
+
+            Match m =
+                Regex.Match(
+                    normalized,
+                    @"DN\s*(?<DN>\d{1,4}(?:[.,]\d+)?)",
+                    RegexOptions.IgnoreCase);
+
+            if (!m.Success)
+                return fallbackWidth;
+
+            if (!double.TryParse(
+                    m.Groups["DN"].Value
+                        .Replace(',', '.'),
+                    NumberStyles.AllowDecimalPoint,
+                    CultureInfo.InvariantCulture,
+                    out double dn))
+            {
+                return fallbackWidth;
+            }
+
+            if (TryGetFireSteelOutsideDiameter(
+                    dn,
+                    out double od))
+            {
+                return od;
+            }
+
+            return fallbackWidth;
+        }
+
+        private static double GetFireSteelOutsideDiameterForPair(
+            string fromSize,
+            string toSize,
+            double fallback)
+        {
+            double a =
+                GetFireSteelOutsideDiameterForSize(
+                    fromSize,
+                    0.0);
+
+            double b =
+                GetFireSteelOutsideDiameterForSize(
+                    toSize,
+                    0.0);
+
+            double result =
+                Math.Max(
+                    a,
+                    b);
+
+            return result > 0.0
+                ? result
+                : fallback;
+        }
+
 
         private bool TryConvertOutsideDiameterToNominal(
             double outsideDiameter,
@@ -12143,6 +12276,3881 @@ namespace ClassLibrary4
         }
 
 
+
+        // ============================================================
+        // FIX40A - PHỤ KIỆN THỦ CÔNG TỪ THƯ VIỆN STEEL
+        // UI: TÊN PK (1/4) + SIZE (3/4) + ĐẶT TB
+        // ============================================================
+
+        private void TxtPhuKienThuVienThem_KeyDown(
+            object sender,
+            WpfKeyEventArgs e)
+        {
+            if (e.Key != WpfKey.Enter)
+                return;
+
+            string value =
+                (TxtPhuKienThuVienThem?.Text ?? "")
+                    .Trim();
+
+            if (string.IsNullOrWhiteSpace(value))
+                return;
+
+            AddAndSelectManualLibraryItem(
+                LstPhuKienThuVien,
+                value);
+
+            TxtPhuKienThuVienThem.Clear();
+            e.Handled = true;
+        }
+
+        private void TxtSizePhuKienThuVienThem_KeyDown(
+            object sender,
+            WpfKeyEventArgs e)
+        {
+            if (e.Key != WpfKey.Enter)
+                return;
+
+            string value =
+                NormalizeManualLibrarySize(
+                    TxtSizePhuKienThuVienThem?.Text ?? "");
+
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                MessageBox.Show(
+                    "Size không hợp lệ.\n\n" +
+                    "Ví dụ:\n" +
+                    "DN50\n" +
+                    "DN150x80 (Tê giảm)",
+                    "PHỤ KIỆN");
+                return;
+            }
+
+            AddAndSelectManualLibraryItem(
+                LstSizePhuKienThuVien,
+                value);
+
+            TxtSizePhuKienThuVienThem.Clear();
+            e.Handled = true;
+        }
+
+        private static void AddAndSelectManualLibraryItem(
+            WpfListBox listBox,
+            string value)
+        {
+            if (listBox == null ||
+                string.IsNullOrWhiteSpace(value))
+            {
+                return;
+            }
+
+            foreach (object obj in listBox.Items)
+            {
+                string old =
+                    GetManualLibraryItemText(obj);
+
+                if (string.Equals(
+                        old,
+                        value,
+                        StringComparison.OrdinalIgnoreCase))
+                {
+                    listBox.SelectedItem = obj;
+                    listBox.ScrollIntoView(obj);
+                    return;
+                }
+            }
+
+            WpfListBoxItem item =
+                new WpfListBoxItem
+                {
+                    Content = value
+                };
+
+            listBox.Items.Add(item);
+            listBox.SelectedItem = item;
+            listBox.ScrollIntoView(item);
+        }
+
+        private static string GetManualLibraryItemText(
+            object item)
+        {
+            if (item == null)
+                return "";
+
+            if (item is WpfListBoxItem lbi)
+            {
+                return (lbi.Content ?? "")
+                    .ToString()
+                    .Trim();
+            }
+
+            return item.ToString()?.Trim() ?? "";
+        }
+
+        private static string GetSelectedManualLibraryItem(
+            WpfListBox listBox)
+        {
+            if (listBox == null ||
+                listBox.SelectedItem == null)
+            {
+                return "";
+            }
+
+            return GetManualLibraryItemText(
+                listBox.SelectedItem);
+        }
+
+        private static string NormalizeManualLibrarySize(
+            string raw)
+        {
+            string u =
+                (raw ?? "")
+                    .Trim()
+                    .ToUpperInvariant()
+                    .Replace(" ", "")
+                    .Replace("×", "X")
+                    .Replace("*", "X");
+
+            if (string.IsNullOrWhiteSpace(u))
+                return "";
+
+            Match pair =
+                Regex.Match(
+                    u,
+                    @"^(?:DN)?(\d{1,4}(?:[.,]\d+)?)X(?:DN)?(\d{1,4}(?:[.,]\d+)?)$",
+                    RegexOptions.IgnoreCase);
+
+            if (pair.Success)
+            {
+                string a =
+                    pair.Groups[1].Value
+                        .Replace(',', '.');
+
+                string b =
+                    pair.Groups[2].Value
+                        .Replace(',', '.');
+
+                return "DN" + a + "x" + b;
+            }
+
+            Match one =
+                Regex.Match(
+                    u,
+                    @"^(?:DN)?(\d{1,4}(?:[.,]\d+)?)$",
+                    RegexOptions.IgnoreCase);
+
+            if (!one.Success)
+                return "";
+
+            return "DN" +
+                one.Groups[1].Value
+                    .Replace(',', '.');
+        }
+
+        private static bool TrySplitManualTeeReducerSize(
+            string sizeText,
+            out string mainSize,
+            out string branchSize)
+        {
+            mainSize = "";
+            branchSize = "";
+
+            string normalized =
+                NormalizeManualLibrarySize(
+                    sizeText);
+
+            Match m =
+                Regex.Match(
+                    normalized,
+                    @"^DN(\d{1,4}(?:\.\d+)?)x(\d{1,4}(?:\.\d+)?)$",
+                    RegexOptions.IgnoreCase);
+
+            if (!m.Success)
+                return false;
+
+            mainSize =
+                "DN" + m.Groups[1].Value;
+
+            branchSize =
+                "DN" + m.Groups[2].Value;
+
+            return true;
+        }
+
+        private void BtnDatPhuKienThuVien_Click(
+            object sender,
+            RoutedEventArgs e)
+        {
+            string pk =
+                GetSelectedManualLibraryItem(
+                    LstPhuKienThuVien);
+
+            string size =
+                GetSelectedManualLibraryItem(
+                    LstSizePhuKienThuVien);
+
+            if (string.IsNullOrWhiteSpace(pk))
+            {
+                MessageBox.Show(
+                    "Hãy chọn TÊN PK trước.",
+                    "PHỤ KIỆN");
+                return;
+            }
+
+            if (string.IsNullOrWhiteSpace(size))
+            {
+                MessageBox.Show(
+                    "Hãy chọn SIZE trước.",
+                    "PHỤ KIỆN");
+                return;
+            }
+
+            string pkKey =
+                NormalizeShopKey(pk);
+
+            string fromSize =
+                NormalizeManualLibrarySize(size);
+
+            string toSize =
+                fromSize;
+
+            string fittingType = "";
+            bool useShopFittingEngine = false;
+
+            if (pkKey == "CO90" ||
+                pkKey.Contains("CO90"))
+            {
+                fittingType = "ELBOW90";
+                useShopFittingEngine = true;
+            }
+            else if (pkKey.Contains("LOI45") ||
+                     pkKey.Contains("CO45") ||
+                     pkKey.Contains("ELB45"))
+            {
+                fittingType = "ELBOW45";
+                useShopFittingEngine = true;
+            }
+            else if (pkKey.Contains("TEDEU") ||
+                     pkKey == "TEE" ||
+                     pkKey == "TE")
+            {
+                fittingType = "TEE";
+                useShopFittingEngine = true;
+                toSize = fromSize;
+            }
+            else if (pkKey.Contains("TEGIAM") ||
+                     pkKey.Contains("TETHU"))
+            {
+                // FIX40C: tên thật trong thư viện là TEED cho TÊ GIẢM.
+                // Ví dụ: SCREW-TEED-DN20x15
+                fittingType = "TEED";
+                useShopFittingEngine = true;
+
+                if (!TrySplitManualTeeReducerSize(
+                        size,
+                        out fromSize,
+                        out toSize))
+                {
+                    MessageBox.Show(
+                        "TÊ GIẢM cần 2 kích thước.\n\n" +
+                        "Hãy nhập vào ô SIZE bên dưới theo dạng:\n" +
+                        "DN150x80\n" +
+                        "sau đó nhấn Enter và chọn size vừa thêm.",
+                        "PHỤ KIỆN");
+                    return;
+                }
+            }
+
+            var doc =
+                Autodesk.AutoCAD.ApplicationServices.Core.Application
+                    .DocumentManager
+                    .MdiActiveDocument;
+
+            if (doc == null)
+                return;
+
+            var ed = doc.Editor;
+            var db = doc.Database;
+
+            Autodesk.AutoCAD.Internal.Utils.SetFocusToDwgView();
+
+            // Chữa cháy dùng thư viện STEEL.
+            string libraryPath =
+                FindShopFittingLibraryPath(
+                    "STEEL",
+                    db);
+
+            if (string.IsNullOrWhiteSpace(libraryPath) ||
+                !File.Exists(libraryPath))
+            {
+                MessageBox.Show(
+                    "Không tìm thấy file thư viện STEEL trong thư mục DLL.\n\n" +
+                    "Tên file hỗ trợ: Thu vien STEEL.dwg / STEEL.dwg",
+                    "PHỤ KIỆN");
+                return;
+            }
+
+            string genericBlockName = "";
+            string shopBlockName = "";
+
+            if (useShopFittingEngine)
+            {
+                // FIX40B:
+                // Chỉ dùng bộ tìm block của VẼ SHOP.
+                // KHÔNG gọi TryInsertShopLibraryFitting khi đặt thủ công,
+                // vì hàm đó yêu cầu topology/hướng ống thật.
+                shopBlockName =
+                    FindShopFittingBlockName(
+                        libraryPath,
+                        fittingType,
+                        fromSize,
+                        toSize);
+
+                if (string.IsNullOrWhiteSpace(shopBlockName))
+                {
+                    MessageBox.Show(
+                        "Không tìm thấy block trong thư viện:\n\n" +
+                        pk + " - " + size + "\n\n" +
+                        "Đã tìm theo đúng bộ tên SCREW/WELD của VẼ SHOP.",
+                        "PHỤ KIỆN");
+                    return;
+                }
+            }
+            else
+            {
+                genericBlockName =
+                    FindManualAccessoryBlockName(
+                        libraryPath,
+                        pk,
+                        fromSize);
+
+                if (string.IsNullOrWhiteSpace(genericBlockName))
+                {
+                    MessageBox.Show(
+                        "Không tìm thấy block phù hợp trong thư viện:\n\n" +
+                        pk + " - " + fromSize + "\n\n" +
+                        "Code đã dò theo tên phụ kiện + DN trong " +
+                        Path.GetFileName(libraryPath) + ".",
+                        "PHỤ KIỆN");
+                    return;
+                }
+            }
+
+            string layerName =
+                BuildManualAccessoryLayerName(
+                    pk,
+                    fromSize,
+                    toSize);
+
+            int inserted = 0;
+
+            ed.WriteMessage(
+                "\n[ĐẶT TB] " +
+                pk + " | " +
+                (string.Equals(
+                    fromSize,
+                    toSize,
+                    StringComparison.OrdinalIgnoreCase)
+                    ? fromSize
+                    : fromSize + "x" +
+                      NormalizeShopDnToken(toSize).Replace("DN", "")) +
+                " | Thư viện: " +
+                Path.GetFileName(libraryPath) +
+                "\nClick GẦN vị trí cần đặt. Tool ghép ĐƯỜNG TÂM CỔNG PHỤ KIỆN với ĐƯỜNG TÂM ỐNG để tự đặt đúng tâm + đúng hướng. Enter/ESC để kết thúc.");
+
+            while (true)
+            {
+                PromptPointOptions ppo =
+                    new PromptPointOptions(
+                        "\nChọn điểm đặt " +
+                        pk +
+                        " [" +
+                        size +
+                        "] <Enter/ESC kết thúc>: ")
+                    {
+                        AllowNone = true
+                    };
+
+                PromptPointResult ppr =
+                    ed.GetPoint(ppo);
+
+                if (ppr.Status == PromptStatus.Cancel ||
+                    ppr.Status == PromptStatus.None)
+                {
+                    break;
+                }
+
+                if (ppr.Status != PromptStatus.OK)
+                    continue;
+
+                bool ok = false;
+
+                using (doc.LockDocument())
+                using (Transaction tr =
+                    db.TransactionManager.StartTransaction())
+                {
+                    BlockTableRecord btr =
+                        (BlockTableRecord)tr.GetObject(
+                            db.CurrentSpaceId,
+                            OpenMode.ForWrite);
+
+                    EnsureShopLayerExists(
+                        tr,
+                        db,
+                        layerName);
+
+                    if (useShopFittingEngine)
+                    {
+                        // FIX40B:
+                        // Manual = chèn đúng block tại điểm click,
+                        // không yêu cầu topology / port-direction matching.
+                        ok =
+                            TryInsertManualShopFittingBlock(
+                                tr,
+                                db,
+                                btr,
+                                libraryPath,
+                                shopBlockName,
+                                fittingType,
+                                fromSize,
+                                toSize,
+                                ppr.Value,
+                                layerName);
+                    }
+                    else
+                    {
+                        ok =
+                            TryInsertManualAccessoryBlock(
+                                tr,
+                                db,
+                                btr,
+                                libraryPath,
+                                genericBlockName,
+                                ppr.Value,
+                                layerName);
+                    }
+
+                    if (ok)
+                        tr.Commit();
+                    else
+                        tr.Abort();
+                }
+
+                if (!ok)
+                {
+                    MessageBox.Show(
+                        "Không chèn được block:\n" +
+                        pk + " - " + size +
+                        "\n\nBlock đã tìm thấy nhưng AutoCAD không import/chèn được.",
+                        "PHỤ KIỆN");
+                    break;
+                }
+
+                inserted++;
+
+                try
+                {
+                    ed.Regen();
+                }
+                catch
+                {
+                }
+            }
+
+            ed.WriteMessage(
+                $"\n[ĐẶT TB] Đã chèn {inserted} phụ kiện " +
+                $"{pk} {size}.");
+        }
+
+        private string BuildManualAccessoryLayerName(
+            string pk,
+            string fromSize,
+            string toSize)
+        {
+            string pkKey =
+                NormalizeShopKey(
+                    pk ?? "");
+
+            string a =
+                CleanLayerText(
+                    fromSize ?? "");
+
+            string b =
+                CleanLayerText(
+                    toSize ?? "");
+
+            // Dùng layer chuẩn SHOP cho 4 fitting chính để
+            // chức năng THỐNG KÊ PHỤ KIỆN hiện tại vẫn nhận được.
+            if (pkKey.Contains("CO90"))
+                return "FF_SHOP_CO90_" + a;
+
+            if (pkKey.Contains("LOI45") ||
+                pkKey.Contains("CO45") ||
+                pkKey.Contains("ELB45"))
+            {
+                return "FF_SHOP_COLOI45_" + a;
+            }
+
+            if (pkKey.Contains("TEDEU") ||
+                pkKey.Contains("TEGIAM") ||
+                pkKey.Contains("TETHU") ||
+                pkKey == "TEE" ||
+                pkKey == "TE")
+            {
+                return "FF_SHOP_TE_" +
+                    a +
+                    "-" +
+                    b;
+            }
+
+            return "FF_SHOP_PK_" +
+                CleanLayerText(
+                    pkKey) +
+                "_" +
+                a;
+        }
+
+        private bool TryInsertManualShopFittingBlock(
+            Transaction tr,
+            Database db,
+            BlockTableRecord btr,
+            string libraryPath,
+            string sourceBlockName,
+            string fittingType,
+            string fromSize,
+            string toSize,
+            Point3d insertPoint,
+            string layerName)
+        {
+            if (tr == null ||
+                db == null ||
+                btr == null ||
+                string.IsNullOrWhiteSpace(libraryPath) ||
+                string.IsNullOrWhiteSpace(sourceBlockName))
+            {
+                return false;
+            }
+
+            ObjectId blockId =
+                EnsureExternalBlockImported(
+                    tr,
+                    db,
+                    libraryPath,
+                    sourceBlockName);
+
+            if (blockId.IsNull)
+                return false;
+
+            NormalizeShopImportedBlock(
+                tr,
+                blockId);
+
+            ShopFittingPlacementInfo placement =
+                null;
+
+            try
+            {
+                placement =
+                    AnalyzeShopFittingPlacement(
+                        blockId,
+                        fittingType,
+                        fromSize,
+                        toSize);
+            }
+            catch
+            {
+                placement = null;
+            }
+
+            double dn1 =
+                ParseShopDnNumber(
+                    NormalizeShopDnToken(
+                        fromSize));
+
+            double dn2 =
+                ParseShopDnNumber(
+                    NormalizeShopDnToken(
+                        toSize));
+
+            double refDn =
+                Math.Max(
+                    dn1,
+                    dn2);
+
+            if (refDn <= 0.0)
+                refDn = 25.0;
+
+            double refOutsideDiameter =
+                GetFireSteelOutsideDiameterForPair(
+                    fromSize,
+                    toSize,
+                    refDn);
+
+            // ========================================================
+            // FIX40H - CO HÀN DN65+
+            //
+            // SCREW và WELD không dùng chung hình học cổng nối.
+            // Với WELD-ELB90 / WELD-ELB45 từ DN65 trở lên:
+            // bỏ placement generic nếu có và đọc lại đúng TÂM HAI MẶT NỐI
+            // bên ngoài của block WELD. Ø ngoài thực được dùng để chọn
+            // đúng mặt nối, không dùng DN danh nghĩa.
+            // ========================================================
+            string sourceBlockKey =
+                NormalizeShopKey(
+                    sourceBlockName ?? "");
+
+            bool isWeldElbow =
+                sourceBlockKey.StartsWith(
+                    "WELD",
+                    StringComparison.OrdinalIgnoreCase) &&
+                (IsElbow90Key(
+                     NormalizeShopKey(
+                         fittingType ?? "")) ||
+                 IsElbow45Key(
+                     NormalizeShopKey(
+                         fittingType ?? "")));
+
+            if (isWeldElbow &&
+                refDn >= 65.0)
+            {
+                ShopFittingPlacementInfo weldPlacement =
+                    AnalyzeManualWeldElbowTruePorts(
+                        blockId,
+                        fittingType,
+                        fromSize,
+                        toSize,
+                        refOutsideDiameter);
+
+                if (weldPlacement != null)
+                {
+                    placement =
+                        weldPlacement;
+                }
+            }
+
+            Point3d targetPoint =
+                insertPoint;
+
+            double rotation = 0.0;
+
+            bool autoSnapped = false;
+            bool autoRotated = false;
+
+            string snapInfo = "SNAP=NO";
+            string autoRotateInfo = "ROTATE=NO";
+
+            // ========================================================
+            // FIX40G - GIẢI ĐỒNG THỜI TÂM + GÓC
+            //
+            // Không còn:
+            // 1) snap theo một logic,
+            // 2) rồi xoay theo một logic khác.
+            //
+            // Mà dùng CHÍNH HAI ĐƯỜNG TÂM CỔNG NỐI của block:
+            // Anchor -> Port.Center
+            //
+            // để match với CHÍNH HAI TIM ỐNG.
+            // ========================================================
+            if (placement != null &&
+                TryResolveManualFittingTransformByPortCenterlines(
+                    tr,
+                    db,
+                    insertPoint,
+                    fittingType,
+                    fromSize,
+                    toSize,
+                    refOutsideDiameter,
+                    placement,
+                    out Point3d solvedPoint,
+                    out double solvedRotation,
+                    out string solvedInfo))
+            {
+                targetPoint =
+                    solvedPoint;
+
+                rotation =
+                    solvedRotation;
+
+                autoSnapped = true;
+                autoRotated = true;
+
+                snapInfo =
+                    "PORT-CENTERLINE-SNAP";
+
+                autoRotateInfo =
+                    solvedInfo;
+            }
+            else
+            {
+                // Nếu chưa giải được cả 2 đầu phụ kiện:
+                // chỉ được SNAP tâm, KHÔNG tự xoay bằng logic mơ hồ.
+                autoSnapped =
+                    TrySnapManualFittingPointToPipeCenter(
+                        tr,
+                        db,
+                        insertPoint,
+                        fittingType,
+                        fromSize,
+                        toSize,
+                        refOutsideDiameter,
+                        out Point3d snappedPoint,
+                        out snapInfo);
+
+                if (autoSnapped)
+                    targetPoint = snappedPoint;
+
+                rotation = 0.0;
+                autoRotated = false;
+
+                autoRotateInfo =
+                    placement == null
+                        ? "không đọc được port block"
+                        : "không match đủ đường tâm cổng phụ kiện với tim ống";
+            }
+
+            // ========================================================
+            // Đưa ANCHOR của fitting đúng vào giao TIM ỐNG.
+            // Sau đó rotation đã làm các centerline cổng trùng centerline ống.
+            // ========================================================
+            Point3d basePoint =
+                targetPoint;
+
+            if (placement != null)
+            {
+                try
+                {
+                    Vector3d anchorVector =
+                        placement.Anchor
+                            .GetAsVector()
+                            .RotateBy(
+                                rotation,
+                                Vector3d.ZAxis);
+
+                    basePoint =
+                        targetPoint -
+                        anchorVector;
+                }
+                catch
+                {
+                    basePoint =
+                        targetPoint;
+                }
+            }
+            else
+            {
+                try
+                {
+                    if (TryGetShopBlockLocalCenter(
+                            tr,
+                            blockId,
+                            out Point3d localCenter,
+                            out double _))
+                    {
+                        Vector3d localVector =
+                            localCenter
+                                .GetAsVector()
+                                .RotateBy(
+                                    rotation,
+                                    Vector3d.ZAxis);
+
+                        basePoint =
+                            targetPoint -
+                            localVector;
+                    }
+                }
+                catch
+                {
+                    basePoint =
+                        targetPoint;
+                }
+            }
+
+            BlockReference br =
+                new BlockReference(
+                    basePoint,
+                    blockId);
+
+            br.SetDatabaseDefaults(db);
+            br.Layer = layerName;
+            br.Rotation = rotation;
+
+            br.ScaleFactors =
+                new Scale3d(
+                    1.0,
+                    1.0,
+                    1.0);
+
+            br.Color =
+                Autodesk.AutoCAD.Colors.Color.FromColorIndex(
+                    ColorMethod.ByAci,
+                    GetShopVisibleAciColor(layerName));
+
+            br.LineWeight =
+                Autodesk.AutoCAD.DatabaseServices.LineWeight.LineWeight000;
+
+            br.Transparency =
+                new Autodesk.AutoCAD.Colors.Transparency(
+                    (byte)255);
+
+            br.Visible = true;
+
+            btr.AppendEntity(br);
+            tr.AddNewlyCreatedDBObject(
+                br,
+                true);
+
+            try
+            {
+                double degree =
+                    rotation *
+                    180.0 /
+                    Math.PI;
+
+                double snapDistance =
+                    PlanDistance(
+                        insertPoint,
+                        targetPoint);
+
+                Autodesk.AutoCAD.ApplicationServices.Core.Application
+                    .DocumentManager
+                    .MdiActiveDocument?
+                    .Editor
+                    .WriteMessage(
+                        $"\n[ĐẶT TB FIX40H] " +
+                        $"{fittingType} {fromSize}->{toSize} | " +
+                        $"block={sourceBlockName} | " +
+                        $"Øngoài={refOutsideDiameter:0.##} | " +
+                        $"AUTO-SNAP={(autoSnapped ? "YES" : "NO")} " +
+                        $"({snapDistance:0.##}) | " +
+                        $"AUTO-ROTATE={(autoRotated ? "YES" : "NO")} | " +
+                        $"rotation={degree:0.##}° | " +
+                        $"{snapInfo} | {autoRotateInfo}");
+            }
+            catch
+            {
+            }
+
+            return true;
+        }
+
+
+        private class ManualPipeAxisCandidate
+        {
+            public Point3d A { get; set; }
+            public Point3d B { get; set; }
+            public Vector3d Direction { get; set; }
+            public string Layer { get; set; }
+            public bool IsShopCenterline { get; set; }
+            public double DistanceToPick { get; set; }
+        }
+
+        private bool TrySnapManualFittingPointToPipeCenter(
+            Transaction tr,
+            Database db,
+            Point3d pick,
+            string fittingType,
+            string fromSize,
+            string toSize,
+            double expectedOutsideDiameter,
+            out Point3d snappedPoint,
+            out string info)
+        {
+            snappedPoint = pick;
+            info = "SNAP=NO";
+
+            if (tr == null ||
+                db == null)
+            {
+                return false;
+            }
+
+            string key =
+                NormalizeShopKey(
+                    fittingType ?? "");
+
+            List<ManualPipeAxisCandidate> axes =
+                FindManualPipeAxesNearPoint(
+                    tr,
+                    db,
+                    pick,
+                    fromSize,
+                    toSize,
+                    expectedOutsideDiameter);
+
+            if (axes == null ||
+                axes.Count == 0)
+            {
+                info = "không thấy tim/ống gần điểm click";
+                return false;
+            }
+
+            double maxSnap =
+                Math.Max(
+                    180.0,
+                    Math.Min(
+                        700.0,
+                        expectedOutsideDiameter * 3.5 + 120.0));
+
+            // ========================================================
+            // CO90 / LƠI45:
+            // lấy giao điểm hai TIM ỐNG phù hợp gần click nhất.
+            // Với hướng trục line, Co45 = hai trục tạo ~45°.
+            // ========================================================
+            if (IsElbow90Key(key) ||
+                IsElbow45Key(key))
+            {
+                double targetAxisAngle =
+                    IsElbow90Key(key)
+                        ? 90.0
+                        : 45.0;
+
+                if (TryFindBestManualAxisIntersection(
+                        axes,
+                        pick,
+                        targetAxisAngle,
+                        IsElbow90Key(key) ? 22.0 : 25.0,
+                        maxSnap,
+                        out Point3d joint,
+                        out double actualAngle,
+                        out string layerInfo))
+                {
+                    snappedPoint = joint;
+                    info =
+                        $"SNAP-GIAO-TIM | angle={actualAngle:0.##}° | {layerInfo}";
+                    return true;
+                }
+            }
+
+            // ========================================================
+            // TÊ:
+            // chỉ cần tìm giao của trục main + branch ~90°.
+            // Main có thể là một LINE xuyên qua joint hoặc hai đoạn cùng trục.
+            // ========================================================
+            if (IsTeeKey(key))
+            {
+                if (TryFindBestManualAxisIntersection(
+                        axes,
+                        pick,
+                        90.0,
+                        25.0,
+                        maxSnap,
+                        out Point3d joint,
+                        out double actualAngle,
+                        out string layerInfo))
+                {
+                    snappedPoint = joint;
+                    info =
+                        $"SNAP-TÂM-TÊ | angle={actualAngle:0.##}° | {layerInfo}";
+                    return true;
+                }
+            }
+
+            // ========================================================
+            // FALLBACK:
+            // nếu chưa xác định được giao điểm, snap vào TIM ỐNG gần nhất.
+            // Ưu tiên FF_SHOP_TAM_*.
+            // ========================================================
+            ManualPipeAxisCandidate nearest =
+                axes
+                    .OrderByDescending(x =>
+                        x.IsShopCenterline)
+                    .ThenBy(x =>
+                        x.DistanceToPick)
+                    .FirstOrDefault();
+
+            if (nearest != null)
+            {
+                Point3d closest =
+                    GetClosestPointOnManualSegment(
+                        pick,
+                        nearest.A,
+                        nearest.B,
+                        out double _);
+
+                if (PlanDistance(
+                        pick,
+                        closest) <=
+                    maxSnap)
+                {
+                    snappedPoint =
+                        closest;
+
+                    info =
+                        $"SNAP-TIM-GẦN-NHẤT | layer={nearest.Layer}";
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private List<ManualPipeAxisCandidate> FindManualPipeAxesNearPoint(
+            Transaction tr,
+            Database db,
+            Point3d pick,
+            string fromSize,
+            string toSize,
+            double expectedOutsideDiameter)
+        {
+            List<ManualPipeAxisCandidate> best =
+                new List<ManualPipeAxisCandidate>();
+
+            if (tr == null ||
+                db == null)
+            {
+                return best;
+            }
+
+            BlockTableRecord btr =
+                tr.GetObject(
+                    db.CurrentSpaceId,
+                    OpenMode.ForRead,
+                    false) as BlockTableRecord;
+
+            if (btr == null)
+                return best;
+
+            double tightTol =
+                Math.Max(
+                    35.0,
+                    Math.Min(
+                        180.0,
+                        expectedOutsideDiameter * 0.75 + 25.0));
+
+            double wideTol =
+                Math.Max(
+                    80.0,
+                    Math.Min(
+                        450.0,
+                        expectedOutsideDiameter * 2.2 + 80.0));
+
+            // Pass:
+            // 0 centerline đúng DN
+            // 1 line/pipe đúng DN
+            // 2 centerline bất kỳ
+            // 3 line/pipe bất kỳ
+            for (int pass = 0;
+                pass < 4;
+                pass++)
+            {
+                bool centerOnly =
+                    pass == 0 ||
+                    pass == 2;
+
+                bool sizeOnly =
+                    pass == 0 ||
+                    pass == 1;
+
+                double tol =
+                    centerOnly
+                        ? tightTol
+                        : wideTol;
+
+                List<ManualPipeAxisCandidate> current =
+                    new List<ManualPipeAxisCandidate>();
+
+                foreach (ObjectId id in btr)
+                {
+                    Entity ent =
+                        tr.GetObject(
+                            id,
+                            OpenMode.ForRead,
+                            false) as Entity;
+
+                    if (ent == null ||
+                        ent.IsErased)
+                    {
+                        continue;
+                    }
+
+                    string layer =
+                        (ent.Layer ?? "")
+                            .Trim();
+
+                    if (!IsManualPipeCandidateLayer(
+                            layer,
+                            centerOnly))
+                    {
+                        continue;
+                    }
+
+                    if (sizeOnly &&
+                        !ManualPipeLayerMatchesAnySize(
+                            layer,
+                            fromSize,
+                            toSize))
+                    {
+                        continue;
+                    }
+
+                    bool isCenter =
+                        layer.StartsWith(
+                            "FF_SHOP_TAM_",
+                            StringComparison.OrdinalIgnoreCase);
+
+                    if (ent is Line ln)
+                    {
+                        AddManualAxisCandidate(
+                            current,
+                            ln.StartPoint,
+                            ln.EndPoint,
+                            layer,
+                            isCenter,
+                            pick,
+                            tol);
+                    }
+                    else if (ent is Polyline pl)
+                    {
+                        AddManualAxisCandidatesFromPolyline(
+                            current,
+                            pl,
+                            layer,
+                            isCenter,
+                            pick,
+                            tol);
+                    }
+                }
+
+                DeduplicateManualAxisCandidates(
+                    current,
+                    Math.Max(
+                        6.0,
+                        expectedOutsideDiameter * 0.06));
+
+                if (centerOnly)
+                {
+                    // Nếu có tim SHOP thật thì dùng luôn.
+                    if (current.Count >= 2)
+                        return current;
+
+                    if (current.Count > best.Count)
+                        best = current;
+                }
+                else
+                {
+                    // FIX40F:
+                    // KHÔNG được lấy trực tiếp 2 nét biên làm tim.
+                    // Ghép từng cặp line song song có khoảng cách ~= Ø ngoài,
+                    // rồi tạo TIM ẢO đúng chính giữa hai nét.
+                    List<ManualPipeAxisCandidate> realCenters =
+                        current
+                            .Where(x =>
+                                x != null &&
+                                x.IsShopCenterline)
+                            .ToList();
+
+                    List<ManualPipeAxisCandidate> rawEdges =
+                        current
+                            .Where(x =>
+                                x != null &&
+                                !x.IsShopCenterline)
+                            .ToList();
+
+                    List<ManualPipeAxisCandidate> virtualCenters =
+                        BuildManualVirtualCenterAxesFromDoubleLines(
+                            rawEdges,
+                            expectedOutsideDiameter,
+                            pick,
+                            tol);
+
+                    List<ManualPipeAxisCandidate> combinedCenters =
+                        new List<ManualPipeAxisCandidate>();
+
+                    combinedCenters.AddRange(
+                        realCenters);
+
+                    combinedCenters.AddRange(
+                        virtualCenters);
+
+                    DeduplicateManualAxisCandidates(
+                        combinedCenters,
+                        Math.Max(
+                            4.0,
+                            expectedOutsideDiameter * 0.04));
+
+                    // Chỉ trả về TIM THẬT / TIM ẢO.
+                    // Không bao giờ trả trực tiếp các nét biên SHOP.
+                    if (combinedCenters.Count >= 2)
+                        return combinedCenters;
+
+                    if (combinedCenters.Count > best.Count)
+                        best = combinedCenters;
+                }
+            }
+
+            return best;
+        }
+
+        private List<ManualPipeAxisCandidate>
+            BuildManualVirtualCenterAxesFromDoubleLines(
+                List<ManualPipeAxisCandidate> edgeAxes,
+                double expectedOutsideDiameter,
+                Point3d pick,
+                double searchTolerance)
+        {
+            List<ManualPipeAxisCandidate> result =
+                new List<ManualPipeAxisCandidate>();
+
+            if (edgeAxes == null ||
+                edgeAxes.Count < 2 ||
+                expectedOutsideDiameter <= 0.0)
+            {
+                return result;
+            }
+
+            // Cho phép đọc cả SHOP cũ từng vẽ sai theo DN:
+            // ví dụ DN80 cũ cách 80 nhưng đúng phải 88.90.
+            // Tolerance 20% giúp nhận lại tâm, còn SHOP mới vẫn ưu tiên rất tốt.
+            double separationTolerance =
+                Math.Max(
+                    5.0,
+                    expectedOutsideDiameter * 0.20);
+
+            double maxCenterDistance =
+                Math.Max(
+                    searchTolerance * 1.35,
+                    expectedOutsideDiameter * 1.8);
+
+            for (int i = 0;
+                i < edgeAxes.Count;
+                i++)
+            {
+                ManualPipeAxisCandidate a =
+                    edgeAxes[i];
+
+                if (a == null ||
+                    a.Direction.Length < 1e-9)
+                {
+                    continue;
+                }
+
+                for (int j = i + 1;
+                    j < edgeAxes.Count;
+                    j++)
+                {
+                    ManualPipeAxisCandidate b =
+                        edgeAxes[j];
+
+                    if (b == null ||
+                        b.Direction.Length < 1e-9)
+                    {
+                        continue;
+                    }
+
+                    double angle =
+                        GetShopAngleDegrees(
+                            a.Direction,
+                            b.Direction);
+
+                    double axisAngle =
+                        Math.Min(
+                            angle,
+                            Math.Abs(
+                                180.0 -
+                                angle));
+
+                    if (axisAngle > 5.0)
+                        continue;
+
+                    Vector3d dir =
+                        new Vector3d(
+                            a.Direction.X,
+                            a.Direction.Y,
+                            0.0);
+
+                    if (dir.Length < 1e-9)
+                        continue;
+
+                    dir =
+                        dir.GetNormal();
+
+                    // Khoảng cách vuông góc giữa 2 đường song song.
+                    Point3d bOnA =
+                        GetClosestPointOnManualInfiniteLine(
+                            b.A,
+                            a.A,
+                            dir);
+
+                    double separation =
+                        PlanDistance(
+                            b.A,
+                            bOnA);
+
+                    if (Math.Abs(
+                            separation -
+                            expectedOutsideDiameter) >
+                        separationTolerance)
+                    {
+                        continue;
+                    }
+
+                    // Điểm nằm chính giữa 2 nét biên.
+                    Point3d centerBase =
+                        MidPoint(
+                            b.A,
+                            bOnA);
+
+                    Point3d centerClosest =
+                        GetClosestPointOnManualInfiniteLine(
+                            pick,
+                            centerBase,
+                            dir);
+
+                    double distanceToPick =
+                        PlanDistance(
+                            pick,
+                            centerClosest);
+
+                    if (distanceToPick >
+                        maxCenterDistance)
+                    {
+                        continue;
+                    }
+
+                    // FIX40G:
+                    // Tạo TIM ẢO nhưng GIỮ PHẠM VI THẬT của hai nét biên.
+                    // Nhờ vậy khi tới góc Co/Tê, code biết ống nằm về phía nào
+                    // của giao điểm thay vì coi tim ảo kéo dài vô hạn hai phía.
+                    double a1 =
+                        a.A.GetAsVector()
+                            .DotProduct(dir);
+
+                    double a2 =
+                        a.B.GetAsVector()
+                            .DotProduct(dir);
+
+                    double b1 =
+                        b.A.GetAsVector()
+                            .DotProduct(dir);
+
+                    double b2 =
+                        b.B.GetAsVector()
+                            .DotProduct(dir);
+
+                    double minA =
+                        Math.Min(a1, a2);
+
+                    double maxA =
+                        Math.Max(a1, a2);
+
+                    double minB =
+                        Math.Min(b1, b2);
+
+                    double maxB =
+                        Math.Max(b1, b2);
+
+                    double minT =
+                        Math.Max(
+                            minA,
+                            minB);
+
+                    double maxT =
+                        Math.Min(
+                            maxA,
+                            maxB);
+
+                    // Nếu hai nét không overlap hoàn toàn do đã chừa fitting,
+                    // dùng vùng bao của cả hai nhưng vẫn giữ extents hữu hạn.
+                    if (maxT - minT < 1.0)
+                    {
+                        minT =
+                            Math.Min(
+                                minA,
+                                minB);
+
+                        maxT =
+                            Math.Max(
+                                maxA,
+                                maxB);
+                    }
+
+                    double baseT =
+                        centerBase
+                            .GetAsVector()
+                            .DotProduct(dir);
+
+                    Point3d va =
+                        centerBase +
+                        dir *
+                        (minT - baseT);
+
+                    Point3d vb =
+                        centerBase +
+                        dir *
+                        (maxT - baseT);
+
+                    string layerLabel =
+                        "VIRTUAL_CENTER[" +
+                        (string.IsNullOrWhiteSpace(a.Layer)
+                            ? "PIPE"
+                            : a.Layer) +
+                        "]";
+
+                    result.Add(
+                        new ManualPipeAxisCandidate
+                        {
+                            A = va,
+                            B = vb,
+                            Direction = dir,
+                            Layer = layerLabel,
+                            IsShopCenterline = true,
+                            DistanceToPick = distanceToPick
+                        });
+                }
+            }
+
+            DeduplicateManualAxisCandidates(
+                result,
+                Math.Max(
+                    3.0,
+                    expectedOutsideDiameter * 0.035));
+
+            return result;
+        }
+
+
+        private void AddManualAxisCandidate(
+            List<ManualPipeAxisCandidate> list,
+            Point3d a,
+            Point3d b,
+            string layer,
+            bool isCenterline,
+            Point3d pick,
+            double tolerance)
+        {
+            if (list == null)
+                return;
+
+            Vector3d v =
+                b - a;
+
+            v =
+                new Vector3d(
+                    v.X,
+                    v.Y,
+                    0.0);
+
+            if (v.Length < 1e-6)
+                return;
+
+            Point3d closest =
+                GetClosestPointOnManualSegment(
+                    pick,
+                    a,
+                    b,
+                    out double _);
+
+            double distance =
+                PlanDistance(
+                    pick,
+                    closest);
+
+            if (distance > tolerance)
+                return;
+
+            list.Add(
+                new ManualPipeAxisCandidate
+                {
+                    A = a,
+                    B = b,
+                    Direction = v.GetNormal(),
+                    Layer = layer ?? "",
+                    IsShopCenterline = isCenterline,
+                    DistanceToPick = distance
+                });
+        }
+
+        private void AddManualAxisCandidatesFromPolyline(
+            List<ManualPipeAxisCandidate> list,
+            Polyline pl,
+            string layer,
+            bool isCenterline,
+            Point3d pick,
+            double tolerance)
+        {
+            if (list == null ||
+                pl == null ||
+                pl.NumberOfVertices < 2)
+            {
+                return;
+            }
+
+            int segmentCount =
+                pl.Closed
+                    ? pl.NumberOfVertices
+                    : pl.NumberOfVertices - 1;
+
+            for (int i = 0;
+                i < segmentCount;
+                i++)
+            {
+                try
+                {
+                    int next =
+                        (i + 1) %
+                        pl.NumberOfVertices;
+
+                    // Chỉ dùng segment thẳng.
+                    if (Math.Abs(
+                            pl.GetBulgeAt(i)) >
+                        1e-9)
+                    {
+                        continue;
+                    }
+
+                    Point3d a =
+                        pl.GetPoint3dAt(i);
+
+                    Point3d b =
+                        pl.GetPoint3dAt(next);
+
+                    AddManualAxisCandidate(
+                        list,
+                        a,
+                        b,
+                        layer,
+                        isCenterline,
+                        pick,
+                        tolerance);
+                }
+                catch
+                {
+                }
+            }
+        }
+
+        private static void DeduplicateManualAxisCandidates(
+            List<ManualPipeAxisCandidate> axes,
+            double locationTolerance)
+        {
+            if (axes == null ||
+                axes.Count <= 1)
+            {
+                return;
+            }
+
+            List<ManualPipeAxisCandidate> unique =
+                new List<ManualPipeAxisCandidate>();
+
+            foreach (ManualPipeAxisCandidate axis
+                in axes
+                    .OrderByDescending(x =>
+                        x.IsShopCenterline)
+                    .ThenBy(x =>
+                        x.DistanceToPick))
+            {
+                if (axis == null ||
+                    axis.Direction.Length < 1e-9)
+                {
+                    continue;
+                }
+
+                Point3d mid =
+                    MidPoint(
+                        axis.A,
+                        axis.B);
+
+                bool duplicate =
+                    unique.Any(old =>
+                    {
+                        double angle =
+                            GetShopAngleDegrees(
+                                old.Direction,
+                                axis.Direction);
+
+                        // Trục không phân biệt chiều:
+                        angle =
+                            Math.Min(
+                                angle,
+                                Math.Abs(
+                                    180.0 -
+                                    angle));
+
+                        if (angle > 5.0)
+                            return false;
+
+                        Point3d oldClosest =
+                            GetClosestPointOnManualInfiniteLine(
+                                mid,
+                                old.A,
+                                old.Direction);
+
+                        return PlanDistance(
+                                   mid,
+                                   oldClosest) <=
+                               locationTolerance;
+                    });
+
+                if (!duplicate)
+                    unique.Add(axis);
+            }
+
+            axes.Clear();
+            axes.AddRange(unique);
+        }
+
+        private static Point3d GetClosestPointOnManualInfiniteLine(
+            Point3d point,
+            Point3d linePoint,
+            Vector3d direction)
+        {
+            Vector3d d =
+                new Vector3d(
+                    direction.X,
+                    direction.Y,
+                    0.0);
+
+            if (d.Length < 1e-9)
+                return linePoint;
+
+            d =
+                d.GetNormal();
+
+            Vector3d v =
+                point -
+                linePoint;
+
+            double t =
+                v.DotProduct(d);
+
+            return linePoint +
+                d * t;
+        }
+
+        private bool TryFindBestManualAxisIntersection(
+            List<ManualPipeAxisCandidate> axes,
+            Point3d pick,
+            double targetAxisAngle,
+            double angleTolerance,
+            double maxSnapDistance,
+            out Point3d joint,
+            out double actualAngle,
+            out string info)
+        {
+            joint = pick;
+            actualAngle = 0.0;
+            info = "";
+
+            if (axes == null ||
+                axes.Count < 2)
+            {
+                return false;
+            }
+
+            double bestScore =
+                double.MaxValue;
+
+            ManualPipeAxisCandidate bestA =
+                null;
+
+            ManualPipeAxisCandidate bestB =
+                null;
+
+            for (int i = 0;
+                i < axes.Count;
+                i++)
+            {
+                ManualPipeAxisCandidate a =
+                    axes[i];
+
+                if (a == null ||
+                    a.Direction.Length < 1e-9)
+                {
+                    continue;
+                }
+
+                for (int j = i + 1;
+                    j < axes.Count;
+                    j++)
+                {
+                    ManualPipeAxisCandidate b =
+                        axes[j];
+
+                    if (b == null ||
+                        b.Direction.Length < 1e-9)
+                    {
+                        continue;
+                    }
+
+                    double angle =
+                        GetShopAngleDegrees(
+                            a.Direction,
+                            b.Direction);
+
+                    // Góc giữa hai TRỤC, không phân biệt chiều.
+                    angle =
+                        Math.Min(
+                            angle,
+                            Math.Abs(
+                                180.0 -
+                                angle));
+
+                    double angleError =
+                        Math.Abs(
+                            angle -
+                            targetAxisAngle);
+
+                    if (angleError >
+                        angleTolerance)
+                    {
+                        continue;
+                    }
+
+                    if (!TryIntersectShopAxes(
+                            a.A,
+                            a.Direction,
+                            b.A,
+                            b.Direction,
+                            out Point3d p))
+                    {
+                        continue;
+                    }
+
+                    double snapDistance =
+                        PlanDistance(
+                            pick,
+                            p);
+
+                    if (snapDistance >
+                        maxSnapDistance)
+                    {
+                        continue;
+                    }
+
+                    // Ưu tiên centerline thật.
+                    double centerBonus =
+                        (a.IsShopCenterline ? 60.0 : 0.0) +
+                        (b.IsShopCenterline ? 60.0 : 0.0);
+
+                    double score =
+                        angleError * 12.0 +
+                        snapDistance +
+                        a.DistanceToPick * 0.25 +
+                        b.DistanceToPick * 0.25 -
+                        centerBonus;
+
+                    if (score < bestScore)
+                    {
+                        bestScore = score;
+                        joint = p;
+                        actualAngle = angle;
+                        bestA = a;
+                        bestB = b;
+                    }
+                }
+            }
+
+            if (bestA == null ||
+                bestB == null)
+            {
+                return false;
+            }
+
+            info =
+                $"{bestA.Layer} + {bestB.Layer}";
+
+            return true;
+        }
+
+
+        private ShopFittingPlacementInfo AnalyzeManualWeldElbowTruePorts(
+            ObjectId blockId,
+            string fittingType,
+            string fromSize,
+            string toSize,
+            double outsideDiameter)
+        {
+            if (blockId.IsNull ||
+                outsideDiameter <= 0.0)
+            {
+                return null;
+            }
+
+            string key =
+                NormalizeShopKey(
+                    fittingType ?? "");
+
+            ShopFittingPlacementInfo placement =
+                null;
+
+            // --------------------------------------------------------
+            // WELD CO 90:
+            // Hai cổng thật là hai MẶT NỐI NGOÀI cùng nằm ở biên block.
+            // BuildShopFittingBoundaryPortsForLargeWeld đọc tâm của chính
+            // các mặt này, vì vậy Anchor = giao hai centerline cổng thật.
+            // --------------------------------------------------------
+            if (IsElbow90Key(key))
+            {
+                List<ShopFittingPortInfo> truePorts =
+                    BuildShopFittingBoundaryPortsForLargeWeld(
+                        blockId,
+                        outsideDiameter);
+
+                placement =
+                    AnalyzeShopElbowPorts(
+                        truePorts,
+                        90.0);
+
+                if (placement != null)
+                {
+                    WriteManualWeldPortDiagnostic(
+                        "ELB90",
+                        fromSize,
+                        outsideDiameter,
+                        placement);
+
+                    return placement;
+                }
+            }
+
+            // --------------------------------------------------------
+            // WELD LƠI / CO 45:
+            // Một mặt nối có thể nghiêng 45°, vì vậy dùng bộ đọc mặt nghiêng.
+            // Bộ này lấy midpoint của đoạn mặt nối và normal hướng ra ngoài.
+            // --------------------------------------------------------
+            if (IsElbow45Key(key))
+            {
+                List<ShopFittingPortInfo> truePorts =
+                    BuildShopElbow45ObliquePorts(
+                        blockId,
+                        outsideDiameter);
+
+                placement =
+                    AnalyzeShopElbowPorts(
+                        truePorts,
+                        135.0);
+
+                if (placement != null)
+                {
+                    WriteManualWeldPortDiagnostic(
+                        "ELB45",
+                        fromSize,
+                        outsideDiameter,
+                        placement);
+
+                    return placement;
+                }
+
+                // Fallback cuối: nếu block ELB45 WELD có 2 mặt nằm trên
+                // biên X/Y như một số size, thử boundary ports.
+                truePorts =
+                    BuildShopFittingBoundaryPortsForLargeWeld(
+                        blockId,
+                        outsideDiameter);
+
+                placement =
+                    AnalyzeShopElbowPorts(
+                        truePorts,
+                        135.0);
+
+                if (placement != null)
+                {
+                    WriteManualWeldPortDiagnostic(
+                        "ELB45-BOUNDARY",
+                        fromSize,
+                        outsideDiameter,
+                        placement);
+
+                    return placement;
+                }
+            }
+
+            return null;
+        }
+
+        private void WriteManualWeldPortDiagnostic(
+            string kind,
+            string size,
+            double outsideDiameter,
+            ShopFittingPlacementInfo placement)
+        {
+            if (placement == null)
+                return;
+
+            try
+            {
+                string ports =
+                    string.Join(
+                        " ; ",
+                        placement.Ports
+                            .Select((p, i) =>
+                                $"P{i + 1}=({p.Center.X:0.##}," +
+                                $"{p.Center.Y:0.##})"));
+
+                Autodesk.AutoCAD.ApplicationServices.Core.Application
+                    .DocumentManager
+                    .MdiActiveDocument?
+                    .Editor
+                    .WriteMessage(
+                        $"\n[ĐẶT TB FIX40H] WELD TRUE PORTS " +
+                        $"{kind} {size} | Ø={outsideDiameter:0.##} | " +
+                        $"Anchor=({placement.Anchor.X:0.##}," +
+                        $"{placement.Anchor.Y:0.##}) | {ports}");
+            }
+            catch
+            {
+            }
+        }
+
+
+        private bool TryResolveManualFittingTransformByPortCenterlines(
+            Transaction tr,
+            Database db,
+            Point3d pick,
+            string fittingType,
+            string fromSize,
+            string toSize,
+            double expectedOutsideDiameter,
+            ShopFittingPlacementInfo placement,
+            out Point3d targetPoint,
+            out double rotation,
+            out string info)
+        {
+            targetPoint = pick;
+            rotation = 0.0;
+            info = "";
+
+            if (tr == null ||
+                db == null ||
+                placement == null ||
+                placement.Ports == null ||
+                placement.Ports.Count < 2)
+            {
+                return false;
+            }
+
+            string key =
+                NormalizeShopKey(
+                    fittingType ?? "");
+
+            List<ManualPipeAxisCandidate> axes =
+                FindManualPipeAxesNearPoint(
+                    tr,
+                    db,
+                    pick,
+                    fromSize,
+                    toSize,
+                    expectedOutsideDiameter);
+
+            if (axes == null ||
+                axes.Count < 2)
+            {
+                info = "không đủ tim ống";
+                return false;
+            }
+
+            double maxSnap =
+                Math.Max(
+                    180.0,
+                    Math.Min(
+                        750.0,
+                        expectedOutsideDiameter * 3.8 + 140.0));
+
+            // ========================================================
+            // CO 90 / LƠI 45:
+            // - tìm đúng 2 trục ống
+            // - lấy ray ống thực đi ra khỏi joint
+            // - match với Anchor->Port.Center của block
+            // ========================================================
+            if (IsElbow90Key(key) ||
+                IsElbow45Key(key))
+            {
+                double targetAxisAngle =
+                    IsElbow90Key(key)
+                        ? 90.0
+                        : 45.0;
+
+                double axisTol =
+                    IsElbow90Key(key)
+                        ? 22.0
+                        : 25.0;
+
+                double bestScore =
+                    double.MaxValue;
+
+                Point3d bestJoint =
+                    pick;
+
+                double bestRotation =
+                    0.0;
+
+                string bestInfo =
+                    "";
+
+                for (int i = 0;
+                    i < axes.Count;
+                    i++)
+                {
+                    ManualPipeAxisCandidate ax1 =
+                        axes[i];
+
+                    if (ax1 == null ||
+                        ax1.Direction.Length < 1e-9)
+                    {
+                        continue;
+                    }
+
+                    for (int j = i + 1;
+                        j < axes.Count;
+                        j++)
+                    {
+                        ManualPipeAxisCandidate ax2 =
+                            axes[j];
+
+                        if (ax2 == null ||
+                            ax2.Direction.Length < 1e-9)
+                        {
+                            continue;
+                        }
+
+                        double axisAngle =
+                            GetManualUndirectedAxisAngle(
+                                ax1.Direction,
+                                ax2.Direction);
+
+                        double axisError =
+                            Math.Abs(
+                                axisAngle -
+                                targetAxisAngle);
+
+                        if (axisError >
+                            axisTol)
+                        {
+                            continue;
+                        }
+
+                        if (!TryIntersectShopAxes(
+                                ax1.A,
+                                ax1.Direction,
+                                ax2.A,
+                                ax2.Direction,
+                                out Point3d joint))
+                        {
+                            continue;
+                        }
+
+                        double snapDistance =
+                            PlanDistance(
+                                pick,
+                                joint);
+
+                        if (snapDistance >
+                            maxSnap)
+                        {
+                            continue;
+                        }
+
+                        List<Vector3d> arms1 =
+                            GetManualAxisArmDirectionsAtJoint(
+                                ax1,
+                                joint,
+                                expectedOutsideDiameter);
+
+                        List<Vector3d> arms2 =
+                            GetManualAxisArmDirectionsAtJoint(
+                                ax2,
+                                joint,
+                                expectedOutsideDiameter);
+
+                        if (arms1.Count == 0 ||
+                            arms2.Count == 0)
+                        {
+                            continue;
+                        }
+
+                        foreach (Vector3d arm1
+                            in arms1)
+                        {
+                            foreach (Vector3d arm2
+                                in arms2)
+                            {
+                                double armAngle =
+                                    GetShopAngleDegrees(
+                                        arm1,
+                                        arm2);
+
+                                double expectedArmAngle =
+                                    IsElbow45Key(key)
+                                        ? 135.0
+                                        : 90.0;
+
+                                double armError =
+                                    Math.Abs(
+                                        armAngle -
+                                        expectedArmAngle);
+
+                                // Co45 có thể biểu diễn bằng 45/135 tùy chiều
+                                // segment, nhưng đường tâm cổng block sẽ quyết định
+                                // cặp nào đúng. Vẫn ưu tiên 135° như topology SHOP.
+                                if (IsElbow45Key(key) &&
+                                    armError > 30.0)
+                                {
+                                    double alternate =
+                                        Math.Abs(
+                                            armAngle -
+                                            45.0);
+
+                                    armError =
+                                        Math.Min(
+                                            armError,
+                                            alternate + 8.0);
+                                }
+
+                                if (armError > 35.0)
+                                    continue;
+
+                                if (!TryMatchShopPortCenterlinesToDirections(
+                                        placement,
+                                        new List<Vector3d>
+                                        {
+                                            arm1,
+                                            arm2
+                                        },
+                                        null,
+                                        out double candidateRotation,
+                                        out double portScore))
+                                {
+                                    continue;
+                                }
+
+                                double throughPenalty =
+                                    (arms1.Count > 1 ? 12.0 : 0.0) +
+                                    (arms2.Count > 1 ? 12.0 : 0.0);
+
+                                double score =
+                                    portScore * 12.0 +
+                                    axisError * 5.0 +
+                                    armError * 2.0 +
+                                    snapDistance * 0.12 +
+                                    throughPenalty;
+
+                                if (score < bestScore)
+                                {
+                                    bestScore = score;
+                                    bestJoint = joint;
+                                    bestRotation =
+                                        candidateRotation;
+
+                                    bestInfo =
+                                        $"PORT-CL: " +
+                                        $"{ax1.Layer} + {ax2.Layer} | " +
+                                        $"pipe={FormatManualDirection(arm1)}/" +
+                                        $"{FormatManualDirection(arm2)} | " +
+                                        $"fit-score={portScore:0.##}";
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if (bestScore <
+                    double.MaxValue)
+                {
+                    targetPoint =
+                        bestJoint;
+
+                    rotation =
+                        bestRotation;
+
+                    info =
+                        bestInfo;
+
+                    return true;
+                }
+
+                info =
+                    "không match được 2 centerline cổng Co với 2 tim ống";
+
+                return false;
+            }
+
+            // ========================================================
+            // TÊ ĐỀU / TÊ GIẢM:
+            // tại mỗi giao hai trục ~90°, gom toàn bộ ray ống thật tại joint,
+            // sau đó match main/main/branch với 3 centerline cổng block.
+            // ========================================================
+            if (IsTeeKey(key))
+            {
+                if (placement.Ports.Count < 3)
+                {
+                    info = "block Tê không đủ 3 port";
+                    return false;
+                }
+
+                double bestScore =
+                    double.MaxValue;
+
+                Point3d bestJoint =
+                    pick;
+
+                double bestRotation =
+                    0.0;
+
+                string bestInfo =
+                    "";
+
+                for (int i = 0;
+                    i < axes.Count;
+                    i++)
+                {
+                    for (int j = i + 1;
+                        j < axes.Count;
+                        j++)
+                    {
+                        ManualPipeAxisCandidate ax1 =
+                            axes[i];
+
+                        ManualPipeAxisCandidate ax2 =
+                            axes[j];
+
+                        if (ax1 == null ||
+                            ax2 == null)
+                        {
+                            continue;
+                        }
+
+                        double axisAngle =
+                            GetManualUndirectedAxisAngle(
+                                ax1.Direction,
+                                ax2.Direction);
+
+                        double axisError =
+                            Math.Abs(
+                                axisAngle -
+                                90.0);
+
+                        if (axisError > 25.0)
+                            continue;
+
+                        if (!TryIntersectShopAxes(
+                                ax1.A,
+                                ax1.Direction,
+                                ax2.A,
+                                ax2.Direction,
+                                out Point3d joint))
+                        {
+                            continue;
+                        }
+
+                        double snapDistance =
+                            PlanDistance(
+                                pick,
+                                joint);
+
+                        if (snapDistance >
+                            maxSnap)
+                        {
+                            continue;
+                        }
+
+                        List<Vector3d> allArms =
+                            CollectManualPipeArmsAtJoint(
+                                axes,
+                                joint,
+                                expectedOutsideDiameter);
+
+                        if (!TryPickManualTeeArms(
+                                allArms,
+                                out Vector3d main1,
+                                out Vector3d main2,
+                                out Vector3d branch,
+                                out double teeTopologyScore))
+                        {
+                            continue;
+                        }
+
+                        List<List<int>> permutations =
+                            new List<List<int>>
+                            {
+                                new List<int> { 0, 1, 2 },
+                                new List<int> { 1, 0, 2 }
+                            };
+
+                        if (!TryMatchShopPortCenterlinesToDirections(
+                                placement,
+                                new List<Vector3d>
+                                {
+                                    main1,
+                                    main2,
+                                    branch
+                                },
+                                permutations,
+                                out double candidateRotation,
+                                out double portScore))
+                        {
+                            continue;
+                        }
+
+                        double score =
+                            portScore * 12.0 +
+                            teeTopologyScore * 3.0 +
+                            axisError * 5.0 +
+                            snapDistance * 0.12;
+
+                        if (score < bestScore)
+                        {
+                            bestScore = score;
+                            bestJoint = joint;
+                            bestRotation =
+                                candidateRotation;
+
+                            bestInfo =
+                                $"PORT-CL TEE: main=" +
+                                $"{FormatManualDirection(main1)}/" +
+                                $"{FormatManualDirection(main2)} | " +
+                                $"branch={FormatManualDirection(branch)} | " +
+                                $"fit-score={portScore:0.##}";
+                        }
+                    }
+                }
+
+                if (bestScore <
+                    double.MaxValue)
+                {
+                    targetPoint =
+                        bestJoint;
+
+                    rotation =
+                        bestRotation;
+
+                    info =
+                        bestInfo;
+
+                    return true;
+                }
+
+                info =
+                    "không match được 3 centerline cổng Tê với tim ống";
+
+                return false;
+            }
+
+            return false;
+        }
+
+        private static double GetManualUndirectedAxisAngle(
+            Vector3d a,
+            Vector3d b)
+        {
+            double angle =
+                GetShopAngleDegrees(
+                    a,
+                    b);
+
+            return Math.Min(
+                angle,
+                Math.Abs(
+                    180.0 -
+                    angle));
+        }
+
+        private List<Vector3d> GetManualAxisArmDirectionsAtJoint(
+            ManualPipeAxisCandidate axis,
+            Point3d joint,
+            double expectedOutsideDiameter)
+        {
+            List<Vector3d> result =
+                new List<Vector3d>();
+
+            if (axis == null)
+                return result;
+
+            Vector3d ab =
+                axis.B -
+                axis.A;
+
+            ab =
+                new Vector3d(
+                    ab.X,
+                    ab.Y,
+                    0.0);
+
+            if (ab.Length < 1e-9)
+                return result;
+
+            double length =
+                ab.Length;
+
+            Vector3d dir =
+                ab.GetNormal();
+
+            double along =
+                (joint - axis.A)
+                    .DotProduct(dir);
+
+            double extensionTol =
+                Math.Max(
+                    80.0,
+                    expectedOutsideDiameter * 3.0);
+
+            // Joint quá xa ngoài phạm vi segment => không phải ray của nút này.
+            if (along < -extensionTol ||
+                along > length + extensionTol)
+            {
+                return result;
+            }
+
+            double endTol =
+                Math.Max(
+                    35.0,
+                    expectedOutsideDiameter * 1.15);
+
+            // Joint ở trước/đầu A -> ống đi từ joint về phía B.
+            if (along <= endTol)
+            {
+                AddManualArmDirection(
+                    result,
+                    dir);
+            }
+            // Joint ở gần/sau đầu B -> ống đi về phía A.
+            else if (along >=
+                     length - endTol)
+            {
+                AddManualArmDirection(
+                    result,
+                    -dir);
+            }
+            else
+            {
+                // Joint nằm giữa segment: đây là tuyến xuyên qua nút.
+                AddManualArmDirection(
+                    result,
+                    dir);
+
+                AddManualArmDirection(
+                    result,
+                    -dir);
+            }
+
+            DeduplicateManualArmDirections(
+                result,
+                5.0);
+
+            return result;
+        }
+
+        private List<Vector3d> CollectManualPipeArmsAtJoint(
+            List<ManualPipeAxisCandidate> axes,
+            Point3d joint,
+            double expectedOutsideDiameter)
+        {
+            List<Vector3d> result =
+                new List<Vector3d>();
+
+            if (axes == null)
+                return result;
+
+            double lineTol =
+                Math.Max(
+                    8.0,
+                    expectedOutsideDiameter * 0.10);
+
+            foreach (ManualPipeAxisCandidate axis
+                in axes)
+            {
+                if (axis == null ||
+                    axis.Direction.Length < 1e-9)
+                {
+                    continue;
+                }
+
+                Point3d onAxis =
+                    GetClosestPointOnManualInfiniteLine(
+                        joint,
+                        axis.A,
+                        axis.Direction);
+
+                if (PlanDistance(
+                        joint,
+                        onAxis) >
+                    lineTol)
+                {
+                    continue;
+                }
+
+                List<Vector3d> arms =
+                    GetManualAxisArmDirectionsAtJoint(
+                        axis,
+                        joint,
+                        expectedOutsideDiameter);
+
+                foreach (Vector3d arm in arms)
+                    AddManualArmDirection(result, arm);
+            }
+
+            DeduplicateManualArmDirections(
+                result,
+                8.0);
+
+            return result;
+        }
+
+        private bool TryMatchShopPortCenterlinesToDirections(
+            ShopFittingPlacementInfo placement,
+            List<Vector3d> desiredDirections,
+            List<List<int>> explicitPermutations,
+            out double bestRotation,
+            out double bestScore)
+        {
+            bestRotation = 0.0;
+            bestScore = double.MaxValue;
+
+            if (placement == null ||
+                placement.Ports == null ||
+                desiredDirections == null ||
+                placement.Ports.Count < desiredDirections.Count ||
+                desiredDirections.Count == 0)
+            {
+                return false;
+            }
+
+            int count =
+                desiredDirections.Count;
+
+            List<Vector3d> localCenterlines =
+                new List<Vector3d>();
+
+            for (int i = 0;
+                i < count;
+                i++)
+            {
+                ShopFittingPortInfo port =
+                    placement.Ports[i];
+
+                Vector3d local =
+                    port.Center -
+                    placement.Anchor;
+
+                local =
+                    new Vector3d(
+                        local.X,
+                        local.Y,
+                        0.0);
+
+                // Nếu tâm cổng gần trùng anchor do block đặc biệt,
+                // mới fallback về outward direction.
+                if (local.Length < 1e-6)
+                {
+                    local =
+                        new Vector3d(
+                            port.OutwardDirection.X,
+                            port.OutwardDirection.Y,
+                            0.0);
+                }
+
+                if (local.Length < 1e-9)
+                    return false;
+
+                localCenterlines.Add(
+                    local.GetNormal());
+            }
+
+            List<List<int>> permutations =
+                explicitPermutations ??
+                BuildShopIndexPermutations(count);
+
+            foreach (List<int> perm
+                in permutations)
+            {
+                if (perm == null ||
+                    perm.Count != count)
+                {
+                    continue;
+                }
+
+                Vector3d local0 =
+                    localCenterlines[
+                        perm[0]];
+
+                Vector3d desired0 =
+                    desiredDirections[0];
+
+                desired0 =
+                    new Vector3d(
+                        desired0.X,
+                        desired0.Y,
+                        0.0);
+
+                if (desired0.Length < 1e-9)
+                    continue;
+
+                desired0 =
+                    desired0.GetNormal();
+
+                double candidateRotation =
+                    Math.Atan2(
+                        desired0.Y,
+                        desired0.X) -
+                    Math.Atan2(
+                        local0.Y,
+                        local0.X);
+
+                double score = 0.0;
+
+                for (int i = 0;
+                    i < count;
+                    i++)
+                {
+                    Vector3d local =
+                        localCenterlines[
+                            perm[i]]
+                            .RotateBy(
+                                candidateRotation,
+                                Vector3d.ZAxis);
+
+                    Vector3d desired =
+                        desiredDirections[i];
+
+                    desired =
+                        new Vector3d(
+                            desired.X,
+                            desired.Y,
+                            0.0);
+
+                    if (desired.Length < 1e-9)
+                    {
+                        score =
+                            double.MaxValue;
+                        break;
+                    }
+
+                    desired =
+                        desired.GetNormal();
+
+                    score +=
+                        GetShopAngleDegrees(
+                            local,
+                            desired);
+                }
+
+                if (score < bestScore)
+                {
+                    bestScore =
+                        score;
+
+                    bestRotation =
+                        candidateRotation;
+                }
+            }
+
+            // Vì đây là centerline-to-centerline matching nên yêu cầu chặt hơn.
+            double maxScore =
+                count * 14.0;
+
+            return bestScore <=
+                maxScore;
+        }
+
+
+        private bool TryResolveManualFittingRotationFromNearbyPipes(
+            Transaction tr,
+            Database db,
+            Point3d insertPoint,
+            string fittingType,
+            string fromSize,
+            string toSize,
+            ShopFittingPlacementInfo placement,
+            out double rotation,
+            out string info)
+        {
+            rotation = 0.0;
+            info = "";
+
+            if (tr == null ||
+                db == null ||
+                placement == null ||
+                placement.Ports.Count == 0)
+            {
+                return false;
+            }
+
+            string key =
+                NormalizeShopKey(
+                    fittingType ?? "");
+
+            double dn1 =
+                ParseShopDnNumber(
+                    NormalizeShopDnToken(
+                        fromSize));
+
+            double dn2 =
+                ParseShopDnNumber(
+                    NormalizeShopDnToken(
+                        toSize));
+
+            double refDn =
+                Math.Max(
+                    dn1,
+                    dn2);
+
+            if (refDn <= 0.0)
+                refDn = 25.0;
+
+            List<Vector3d> arms =
+                FindManualPipeArmsNearPoint(
+                    tr,
+                    db,
+                    insertPoint,
+                    fromSize,
+                    toSize,
+                    refDn);
+
+            if (arms == null ||
+                arms.Count == 0)
+            {
+                info = "không thấy ống gần điểm click";
+                return false;
+            }
+
+            // --------------------------------------------------------
+            // CO 90
+            // --------------------------------------------------------
+            if (IsElbow90Key(key))
+            {
+                if (!TryPickManualElbowArms(
+                        arms,
+                        90.0,
+                        out Vector3d a,
+                        out Vector3d b,
+                        out double angle))
+                {
+                    info =
+                        $"không tìm được 2 hướng ~90°; arms={arms.Count}";
+                    return false;
+                }
+
+                if (!TryMatchShopPortsToDirections(
+                        placement.Ports
+                            .Take(2)
+                            .ToList(),
+                        new List<Vector3d>
+                        {
+                            a,
+                            b
+                        },
+                        false,
+                        out rotation,
+                        out double _))
+                {
+                    info = "block port không match Co90";
+                    return false;
+                }
+
+                info =
+                    $"2 ống={FormatManualDirection(a)} + " +
+                    $"{FormatManualDirection(b)} | góc={angle:0.##}°";
+
+                return true;
+            }
+
+            // --------------------------------------------------------
+            // LƠI / CO 45
+            // Outward arms ở joint tạo góc khoảng 135°.
+            // --------------------------------------------------------
+            if (IsElbow45Key(key))
+            {
+                if (!TryPickManualElbowArms(
+                        arms,
+                        135.0,
+                        out Vector3d a,
+                        out Vector3d b,
+                        out double angle))
+                {
+                    info =
+                        $"không tìm được 2 hướng ~135°; arms={arms.Count}";
+                    return false;
+                }
+
+                if (!TryMatchShopPortsToDirections(
+                        placement.Ports
+                            .Take(2)
+                            .ToList(),
+                        new List<Vector3d>
+                        {
+                            a,
+                            b
+                        },
+                        false,
+                        out rotation,
+                        out double _))
+                {
+                    info = "block port không match Lơi45";
+                    return false;
+                }
+
+                info =
+                    $"2 ống={FormatManualDirection(a)} + " +
+                    $"{FormatManualDirection(b)} | góc={angle:0.##}°";
+
+                return true;
+            }
+
+            // --------------------------------------------------------
+            // TÊ ĐỀU / TÊ GIẢM
+            // --------------------------------------------------------
+            if (IsTeeKey(key))
+            {
+                if (placement.Ports.Count < 3)
+                {
+                    info = "block Tê không đủ 3 port";
+                    return false;
+                }
+
+                if (!TryPickManualTeeArms(
+                        arms,
+                        out Vector3d main1,
+                        out Vector3d main2,
+                        out Vector3d branch,
+                        out double teeScore))
+                {
+                    info =
+                        $"không nhận đủ topology Tê; arms={arms.Count}";
+                    return false;
+                }
+
+                // AnalyzeShopTeePorts đã cố định:
+                // port 0/1 = main, port 2 = branch.
+                List<List<int>> permutations =
+                    new List<List<int>>
+                    {
+                        new List<int> { 0, 1, 2 },
+                        new List<int> { 1, 0, 2 }
+                    };
+
+                if (!TryMatchShopPortsToDirections(
+                        placement.Ports
+                            .Take(3)
+                            .ToList(),
+                        new List<Vector3d>
+                        {
+                            main1,
+                            main2,
+                            branch
+                        },
+                        false,
+                        out rotation,
+                        out double _,
+                        permutations))
+                {
+                    info = "block port không match topology Tê";
+                    return false;
+                }
+
+                info =
+                    $"main={FormatManualDirection(main1)}/" +
+                    $"{FormatManualDirection(main2)} | " +
+                    $"branch={FormatManualDirection(branch)} | " +
+                    $"score={teeScore:0.##}";
+
+                return true;
+            }
+
+            return false;
+        }
+
+        private List<Vector3d> FindManualPipeArmsNearPoint(
+            Transaction tr,
+            Database db,
+            Point3d pick,
+            string fromSize,
+            string toSize,
+            double refDn)
+        {
+            List<Vector3d> result =
+                new List<Vector3d>();
+
+            if (tr == null ||
+                db == null)
+            {
+                return result;
+            }
+
+            BlockTableRecord btr =
+                tr.GetObject(
+                    db.CurrentSpaceId,
+                    OpenMode.ForRead,
+                    false) as BlockTableRecord;
+
+            if (btr == null)
+                return result;
+
+            double tightTol =
+                Math.Max(
+                    20.0,
+                    Math.Min(
+                        120.0,
+                        refDn * 0.55 + 12.0));
+
+            double fallbackTol =
+                Math.Max(
+                    45.0,
+                    Math.Min(
+                        220.0,
+                        refDn * 1.10 + 30.0));
+
+            // 4 pass:
+            // 0 = centerline đúng DN
+            // 1 = pipe đúng DN
+            // 2 = centerline bất kỳ
+            // 3 = pipe bất kỳ
+            for (int pass = 0;
+                pass < 4;
+                pass++)
+            {
+                List<Vector3d> passArms =
+                    new List<Vector3d>();
+
+                bool centerOnly =
+                    pass == 0 ||
+                    pass == 2;
+
+                bool sizeMatchOnly =
+                    pass == 0 ||
+                    pass == 1;
+
+                double tol =
+                    centerOnly
+                        ? tightTol
+                        : fallbackTol;
+
+                foreach (ObjectId id in btr)
+                {
+                    Entity ent =
+                        tr.GetObject(
+                            id,
+                            OpenMode.ForRead,
+                            false) as Entity;
+
+                    if (ent == null ||
+                        ent.IsErased)
+                    {
+                        continue;
+                    }
+
+                    string layer =
+                        (ent.Layer ?? "")
+                            .Trim();
+
+                    if (!IsManualPipeCandidateLayer(
+                            layer,
+                            centerOnly))
+                    {
+                        continue;
+                    }
+
+                    if (sizeMatchOnly &&
+                        !ManualPipeLayerMatchesAnySize(
+                            layer,
+                            fromSize,
+                            toSize))
+                    {
+                        continue;
+                    }
+
+                    if (ent is Line ln)
+                    {
+                        AddManualArmsFromLine(
+                            passArms,
+                            ln.StartPoint,
+                            ln.EndPoint,
+                            pick,
+                            tol);
+                    }
+                    else if (ent is Polyline pl)
+                    {
+                        AddManualArmsFromPolyline(
+                            passArms,
+                            pl,
+                            pick,
+                            tol);
+                    }
+                    else if (ent is Arc arc)
+                    {
+                        AddManualArmsFromArc(
+                            passArms,
+                            arc,
+                            pick,
+                            tol);
+                    }
+                }
+
+                DeduplicateManualArmDirections(
+                    passArms,
+                    10.0);
+
+                if (passArms.Count >= 2)
+                {
+                    return passArms;
+                }
+
+                // Nếu pass tìm được 1 hướng, giữ làm fallback,
+                // nhưng vẫn thử pass rộng hơn để tìm đủ hướng.
+                if (passArms.Count > result.Count)
+                {
+                    result =
+                        passArms;
+                }
+            }
+
+            return result;
+        }
+
+        private bool IsManualPipeCandidateLayer(
+            string layerName,
+            bool centerOnly)
+        {
+            if (string.IsNullOrWhiteSpace(layerName))
+                return false;
+
+            string u =
+                layerName
+                    .Trim()
+                    .ToUpperInvariant();
+
+            if (centerOnly)
+            {
+                return u.StartsWith(
+                    "FF_SHOP_TAM_",
+                    StringComparison.OrdinalIgnoreCase);
+            }
+
+            if (u.StartsWith("FF_SHOP_CO90_") ||
+                u.StartsWith("FF_SHOP_COLOI45_") ||
+                u.StartsWith("FF_SHOP_TE_") ||
+                u.StartsWith("FF_SHOP_GIAM_") ||
+                u.StartsWith("FF_SHOP_PK_"))
+            {
+                return false;
+            }
+
+            if (u.StartsWith(
+                    "FF_SHOP_TAM_",
+                    StringComparison.OrdinalIgnoreCase) ||
+                Regex.IsMatch(
+                    u,
+                    @"^FF_SHOP_DN\d+(?:[.,]\d+)?$",
+                    RegexOptions.IgnoreCase))
+            {
+                return true;
+            }
+
+            try
+            {
+                return LaLayerOng(
+                    layerName);
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        private static bool ManualPipeLayerMatchesAnySize(
+            string layerName,
+            string fromSize,
+            string toSize)
+        {
+            if (string.IsNullOrWhiteSpace(layerName))
+                return false;
+
+            string u =
+                layerName
+                    .Trim()
+                    .ToUpperInvariant();
+
+            string a =
+                NormalizeShopDnToken(
+                    fromSize ?? "")
+                    .ToUpperInvariant();
+
+            string b =
+                NormalizeShopDnToken(
+                    toSize ?? "")
+                    .ToUpperInvariant();
+
+            bool hitA =
+                !string.IsNullOrWhiteSpace(a) &&
+                ShopKeyContainsSize(
+                    u,
+                    a);
+
+            bool hitB =
+                !string.IsNullOrWhiteSpace(b) &&
+                ShopKeyContainsSize(
+                    u,
+                    b);
+
+            return hitA || hitB;
+        }
+
+        private void AddManualArmsFromLine(
+            List<Vector3d> arms,
+            Point3d a,
+            Point3d b,
+            Point3d pick,
+            double tolerance)
+        {
+            if (arms == null)
+                return;
+
+            Vector3d ab =
+                b - a;
+
+            if (ab.Length < 1e-9)
+                return;
+
+            Vector3d dir =
+                new Vector3d(
+                    ab.X,
+                    ab.Y,
+                    0.0);
+
+            if (dir.Length < 1e-9)
+                return;
+
+            dir =
+                dir.GetNormal();
+
+            Point3d closest =
+                GetClosestPointOnManualSegment(
+                    pick,
+                    a,
+                    b,
+                    out double t);
+
+            if (PlanDistance(
+                    pick,
+                    closest) >
+                tolerance)
+            {
+                return;
+            }
+
+            double endpointTol =
+                Math.Max(
+                    0.02,
+                    Math.Min(
+                        0.20,
+                        tolerance /
+                        Math.Max(
+                            ab.Length,
+                            1.0)));
+
+            if (t <= endpointTol)
+            {
+                AddManualArmDirection(
+                    arms,
+                    dir);
+            }
+            else if (t >= 1.0 - endpointTol)
+            {
+                AddManualArmDirection(
+                    arms,
+                    -dir);
+            }
+            else
+            {
+                AddManualArmDirection(
+                    arms,
+                    dir);
+
+                AddManualArmDirection(
+                    arms,
+                    -dir);
+            }
+        }
+
+        private void AddManualArmsFromPolyline(
+            List<Vector3d> arms,
+            Polyline pl,
+            Point3d pick,
+            double tolerance)
+        {
+            if (arms == null ||
+                pl == null ||
+                pl.NumberOfVertices < 2)
+            {
+                return;
+            }
+
+            for (int i = 0;
+                i < pl.NumberOfVertices - 1;
+                i++)
+            {
+                try
+                {
+                    Point2d p2a =
+                        pl.GetPoint2dAt(i);
+
+                    Point2d p2b =
+                        pl.GetPoint2dAt(i + 1);
+
+                    Point3d a =
+                        new Point3d(
+                            p2a.X,
+                            p2a.Y,
+                            0.0);
+
+                    Point3d b =
+                        new Point3d(
+                            p2b.X,
+                            p2b.Y,
+                            0.0);
+
+                    AddManualArmsFromLine(
+                        arms,
+                        a,
+                        b,
+                        pick,
+                        tolerance);
+                }
+                catch
+                {
+                }
+            }
+
+            if (pl.Closed &&
+                pl.NumberOfVertices > 2)
+            {
+                try
+                {
+                    Point2d p2a =
+                        pl.GetPoint2dAt(
+                            pl.NumberOfVertices - 1);
+
+                    Point2d p2b =
+                        pl.GetPoint2dAt(0);
+
+                    AddManualArmsFromLine(
+                        arms,
+                        new Point3d(
+                            p2a.X,
+                            p2a.Y,
+                            0.0),
+                        new Point3d(
+                            p2b.X,
+                            p2b.Y,
+                            0.0),
+                        pick,
+                        tolerance);
+                }
+                catch
+                {
+                }
+            }
+        }
+
+        private void AddManualArmsFromArc(
+            List<Vector3d> arms,
+            Arc arc,
+            Point3d pick,
+            double tolerance)
+        {
+            if (arms == null ||
+                arc == null)
+            {
+                return;
+            }
+
+            try
+            {
+                Point3d closest =
+                    arc.GetClosestPointTo(
+                        pick,
+                        false);
+
+                if (PlanDistance(
+                        pick,
+                        closest) >
+                    tolerance)
+                {
+                    return;
+                }
+
+                Vector3d radial =
+                    closest -
+                    arc.Center;
+
+                radial =
+                    new Vector3d(
+                        radial.X,
+                        radial.Y,
+                        0.0);
+
+                if (radial.Length < 1e-9)
+                    return;
+
+                Vector3d tangent =
+                    new Vector3d(
+                        -radial.Y,
+                        radial.X,
+                        0.0)
+                        .GetNormal();
+
+                // Arc gần điểm đặt được xem như tuyến đi qua điểm:
+                // có hai hướng tiếp tuyến ngược nhau.
+                AddManualArmDirection(
+                    arms,
+                    tangent);
+
+                AddManualArmDirection(
+                    arms,
+                    -tangent);
+            }
+            catch
+            {
+            }
+        }
+
+        private static Point3d GetClosestPointOnManualSegment(
+            Point3d p,
+            Point3d a,
+            Point3d b,
+            out double t)
+        {
+            Vector3d ab =
+                b - a;
+
+            double len2 =
+                ab.DotProduct(ab);
+
+            if (len2 < 1e-12)
+            {
+                t = 0.0;
+                return a;
+            }
+
+            Vector3d ap =
+                p - a;
+
+            t =
+                ap.DotProduct(ab) /
+                len2;
+
+            t =
+                Math.Max(
+                    0.0,
+                    Math.Min(
+                        1.0,
+                        t));
+
+            return a +
+                ab * t;
+        }
+
+        private static void AddManualArmDirection(
+            List<Vector3d> arms,
+            Vector3d direction)
+        {
+            if (arms == null)
+                return;
+
+            Vector3d d =
+                new Vector3d(
+                    direction.X,
+                    direction.Y,
+                    0.0);
+
+            if (d.Length < 1e-9)
+                return;
+
+            arms.Add(
+                d.GetNormal());
+        }
+
+        private static void DeduplicateManualArmDirections(
+            List<Vector3d> arms,
+            double toleranceDeg)
+        {
+            if (arms == null ||
+                arms.Count <= 1)
+            {
+                return;
+            }
+
+            List<Vector3d> unique =
+                new List<Vector3d>();
+
+            foreach (Vector3d arm in arms)
+            {
+                if (arm.Length < 1e-9)
+                    continue;
+
+                Vector3d d =
+                    arm.GetNormal();
+
+                bool duplicate =
+                    unique.Any(u =>
+                        GetShopAngleDegrees(
+                            u,
+                            d) <=
+                        toleranceDeg);
+
+                if (!duplicate)
+                    unique.Add(d);
+            }
+
+            arms.Clear();
+            arms.AddRange(unique);
+        }
+
+        private static bool TryPickManualElbowArms(
+            List<Vector3d> arms,
+            double targetIncludedAngle,
+            out Vector3d a,
+            out Vector3d b,
+            out double actualAngle)
+        {
+            a = Vector3d.XAxis;
+            b = Vector3d.YAxis;
+            actualAngle = 0.0;
+
+            if (arms == null ||
+                arms.Count < 2)
+            {
+                return false;
+            }
+
+            double bestError =
+                double.MaxValue;
+
+            for (int i = 0;
+                i < arms.Count;
+                i++)
+            {
+                for (int j = i + 1;
+                    j < arms.Count;
+                    j++)
+                {
+                    double angle =
+                        GetShopAngleDegrees(
+                            arms[i],
+                            arms[j]);
+
+                    double error =
+                        Math.Abs(
+                            angle -
+                            targetIncludedAngle);
+
+                    if (error < bestError)
+                    {
+                        bestError = error;
+                        actualAngle = angle;
+                        a = arms[i];
+                        b = arms[j];
+                    }
+                }
+            }
+
+            double tolerance =
+                targetIncludedAngle > 120.0
+                    ? 24.0
+                    : 20.0;
+
+            return bestError <= tolerance;
+        }
+
+        private static bool TryPickManualTeeArms(
+            List<Vector3d> arms,
+            out Vector3d main1,
+            out Vector3d main2,
+            out Vector3d branch,
+            out double bestScore)
+        {
+            main1 = Vector3d.XAxis;
+            main2 = -Vector3d.XAxis;
+            branch = Vector3d.YAxis;
+            bestScore = double.MaxValue;
+
+            if (arms == null ||
+                arms.Count < 3)
+            {
+                return false;
+            }
+
+            bool found = false;
+
+            for (int i = 0;
+                i < arms.Count;
+                i++)
+            {
+                for (int j = i + 1;
+                    j < arms.Count;
+                    j++)
+                {
+                    double mainAngle =
+                        GetShopAngleDegrees(
+                            arms[i],
+                            arms[j]);
+
+                    double mainError =
+                        Math.Abs(
+                            180.0 -
+                            mainAngle);
+
+                    if (mainError > 25.0)
+                        continue;
+
+                    for (int k = 0;
+                        k < arms.Count;
+                        k++)
+                    {
+                        if (k == i ||
+                            k == j)
+                        {
+                            continue;
+                        }
+
+                        double e1 =
+                            Math.Abs(
+                                90.0 -
+                                GetShopAngleDegrees(
+                                    arms[i],
+                                    arms[k]));
+
+                        double e2 =
+                            Math.Abs(
+                                90.0 -
+                                GetShopAngleDegrees(
+                                    arms[j],
+                                    arms[k]));
+
+                        if (e1 > 28.0 ||
+                            e2 > 28.0)
+                        {
+                            continue;
+                        }
+
+                        double score =
+                            mainError * 2.0 +
+                            e1 +
+                            e2;
+
+                        if (score < bestScore)
+                        {
+                            bestScore = score;
+                            main1 = arms[i];
+                            main2 = arms[j];
+                            branch = arms[k];
+                            found = true;
+                        }
+                    }
+                }
+            }
+
+            return found;
+        }
+
+        private static string FormatManualDirection(
+            Vector3d direction)
+        {
+            if (direction.Length < 1e-9)
+                return "?";
+
+            double deg =
+                Math.Atan2(
+                    direction.Y,
+                    direction.X) *
+                180.0 /
+                Math.PI;
+
+            while (deg < 0.0)
+                deg += 360.0;
+
+            while (deg >= 360.0)
+                deg -= 360.0;
+
+            return deg.ToString(
+                "0.#",
+                CultureInfo.InvariantCulture) +
+                "°";
+        }
+
+
+        private bool TryInsertManualAccessoryBlock(
+            Transaction tr,
+            Database db,
+            BlockTableRecord btr,
+            string libraryPath,
+            string sourceBlockName,
+            Point3d insertPoint,
+            string layerName)
+        {
+            if (tr == null ||
+                db == null ||
+                btr == null ||
+                string.IsNullOrWhiteSpace(libraryPath) ||
+                string.IsNullOrWhiteSpace(sourceBlockName))
+            {
+                return false;
+            }
+
+            ObjectId blockId =
+                EnsureExternalBlockImported(
+                    tr,
+                    db,
+                    libraryPath,
+                    sourceBlockName);
+
+            if (blockId.IsNull)
+                return false;
+
+            NormalizeShopImportedBlock(
+                tr,
+                blockId);
+
+            // Với van / Y lọc / KNM: đặt tâm hình học đúng vào điểm click.
+            Point3d basePoint =
+                insertPoint;
+
+            try
+            {
+                if (TryGetShopBlockLocalCenter(
+                        tr,
+                        blockId,
+                        out Point3d localCenter,
+                        out double _))
+                {
+                    basePoint =
+                        insertPoint -
+                        localCenter.GetAsVector();
+                }
+            }
+            catch
+            {
+            }
+
+            BlockReference br =
+                new BlockReference(
+                    basePoint,
+                    blockId);
+
+            br.SetDatabaseDefaults(db);
+            br.Layer = layerName;
+            br.Rotation = 0.0;
+            br.ScaleFactors =
+                new Scale3d(
+                    1.0,
+                    1.0,
+                    1.0);
+
+            br.Color =
+                Autodesk.AutoCAD.Colors.Color.FromColorIndex(
+                    ColorMethod.ByAci,
+                    GetShopVisibleAciColor(layerName));
+
+            br.LineWeight =
+                Autodesk.AutoCAD.DatabaseServices.LineWeight.LineWeight000;
+
+            br.Transparency =
+                new Autodesk.AutoCAD.Colors.Transparency(
+                    (byte)255);
+
+            br.Visible = true;
+
+            btr.AppendEntity(br);
+            tr.AddNewlyCreatedDBObject(
+                br,
+                true);
+
+            return true;
+        }
+
+        private string FindManualAccessoryBlockName(
+            string libraryPath,
+            string accessoryName,
+            string sizeText)
+        {
+            if (string.IsNullOrWhiteSpace(libraryPath) ||
+                !File.Exists(libraryPath) ||
+                string.IsNullOrWhiteSpace(accessoryName))
+            {
+                return "";
+            }
+
+            try
+            {
+                using (Database libDb =
+                    new Database(false, true))
+                {
+                    libDb.ReadDwgFile(
+                        libraryPath,
+                        FileOpenMode.OpenForReadAndAllShare,
+                        true,
+                        "");
+
+                    using (Transaction tr =
+                        libDb.TransactionManager.StartTransaction())
+                    {
+                        BlockTable bt =
+                            (BlockTable)tr.GetObject(
+                                libDb.BlockTableId,
+                                OpenMode.ForRead);
+
+                        string bestName = "";
+                        int bestScore = int.MinValue;
+
+                        foreach (ObjectId id in bt)
+                        {
+                            BlockTableRecord rec =
+                                tr.GetObject(
+                                    id,
+                                    OpenMode.ForRead,
+                                    false) as BlockTableRecord;
+
+                            if (rec == null ||
+                                rec.IsLayout ||
+                                rec.IsAnonymous ||
+                                rec.IsFromExternalReference)
+                            {
+                                continue;
+                            }
+
+                            string name =
+                                rec.Name ?? "";
+
+                            if (string.IsNullOrWhiteSpace(name))
+                                continue;
+
+                            int score =
+                                ScoreManualAccessoryBlockName(
+                                    name,
+                                    accessoryName,
+                                    sizeText);
+
+                            if (score > bestScore)
+                            {
+                                bestScore = score;
+                                bestName = name;
+                            }
+                        }
+
+                        tr.Commit();
+
+                        // Phải đạt điểm loại phụ kiện + size đủ chắc.
+                        return bestScore >= 180
+                            ? bestName
+                            : "";
+                    }
+                }
+            }
+            catch
+            {
+                return "";
+            }
+        }
+
+        private static int ScoreManualAccessoryBlockName(
+            string blockName,
+            string accessoryName,
+            string sizeText)
+        {
+            string nameKey =
+                NormalizeShopKey(
+                    blockName ?? "");
+
+            string accessoryKey =
+                NormalizeShopKey(
+                    accessoryName ?? "");
+
+            if (string.IsNullOrWhiteSpace(nameKey) ||
+                string.IsNullOrWhiteSpace(accessoryKey))
+            {
+                return int.MinValue;
+            }
+
+            int score = 0;
+            bool typeHit = false;
+
+            if (accessoryKey.Contains("VCONG"))
+            {
+                typeHit =
+                    nameKey.Contains("VANCONG") ||
+                    nameKey.Contains("GATEVALVE") ||
+                    nameKey.Contains("GATE");
+
+                if (typeHit) score += 220;
+            }
+            else if (accessoryKey.Contains("VBUOM"))
+            {
+                typeHit =
+                    nameKey.Contains("VANBUOM") ||
+                    nameKey.Contains("BUTTERFLYVALVE") ||
+                    nameKey.Contains("BUTTERFLY");
+
+                if (typeHit) score += 220;
+            }
+            else if (accessoryKey.Contains("YLOC"))
+            {
+                typeHit =
+                    nameKey.Contains("YLOC") ||
+                    nameKey.Contains("YFILTER") ||
+                    nameKey.Contains("YSTRAINER") ||
+                    nameKey.Contains("STRAINER");
+
+                if (typeHit) score += 220;
+            }
+            else if (accessoryKey == "KNM" ||
+                     accessoryKey.Contains("KHOPNOIMEM"))
+            {
+                typeHit =
+                    nameKey.Contains("KNM") ||
+                    nameKey.Contains("KHOPNOIMEM") ||
+                    nameKey.Contains("FLEXIBLEJOINT") ||
+                    nameKey.Contains("FLEXIBLE") ||
+                    nameKey.Contains("RUBBERJOINT");
+
+                if (typeHit) score += 220;
+            }
+            else
+            {
+                // Phụ kiện người dùng tự thêm:
+                // thử khớp trực tiếp tên đã bỏ dấu/ký tự.
+                typeHit =
+                    nameKey.Contains(accessoryKey);
+
+                if (typeHit) score += 200;
+            }
+
+            if (!typeHit)
+                return int.MinValue;
+
+            bool sizeHit =
+                ShopKeyContainsSize(
+                    blockName,
+                    sizeText);
+
+            bool blockHasDn =
+                Regex.IsMatch(
+                    nameKey,
+                    @"DN\d{1,4}");
+
+            if (sizeHit)
+            {
+                score += 120;
+            }
+            else if (blockHasDn)
+            {
+                // Block có ghi DN nhưng sai size -> loại.
+                return int.MinValue;
+            }
+            else
+            {
+                // Dynamic/generic block không ghi DN:
+                // vẫn cho dùng nhưng ưu tiên thấp hơn.
+                score += 10;
+            }
+
+            // Ưu tiên block có tên ngắn/rõ hơn khi bằng điểm.
+            score -=
+                Math.Min(
+                    nameKey.Length,
+                    80) / 10;
+
+            return score;
+        }
+
+
         private void BtnVeShopOngChuaChay_Click(
             object sender,
             RoutedEventArgs e)
@@ -12471,7 +16479,8 @@ namespace ClassLibrary4
                     $"\n[{ShopSmartBuild}] Đã vẽ {edgeCount} nét (2 song song + tâm nét đứt) cho {shopPipes.Count} tuyến; " +
                     $"phụ kiện thư viện: {fittingCount} (giảm {reducerCount}, co90 {elbow90Count}, " +
                     $"co lơi 45 {elbow45Count}, tê {teeCount}, co90 đầu phun {sprinklerElbowCount}); " +
-                    $"xóa {erasedSourceCount} nét gốc.");
+                    $"xóa {erasedSourceCount} nét gốc. " +
+                    $"Khoảng cách 2 nét SHOP = Ø ngoài theo bảng thép.");
 
                 if (fittingCount == 0 &&
                     !string.IsNullOrWhiteSpace(shopLibraryPath))
@@ -14498,6 +18507,18 @@ namespace ClassLibrary4
                 width <= 0.0)
                 return null;
 
+            // FIX40F:
+            // Với VẼ SHOP CHỮA CHÁY, Width phải là Ø NGOÀI ống thép.
+            // Nếu size là DN trong bảng user cung cấp thì thay width=DN
+            // bằng đúng đường kính ngoài.
+            double shopOutsideWidth =
+                GetFireSteelOutsideDiameterForSize(
+                    sizeText,
+                    width);
+
+            if (shopOutsideWidth <= 0.0)
+                shopOutsideWidth = width;
+
             try
             {
                 Point3d start = curve.StartPoint;
@@ -14521,7 +18542,7 @@ namespace ClassLibrary4
                 Vector3d endNormal =
                     GetPlanNormal(endDir);
 
-                double half = width / 2.0;
+                double half = shopOutsideWidth / 2.0;
 
                 string cleanSize =
                     CleanLayerText(sizeText);
@@ -14530,7 +18551,7 @@ namespace ClassLibrary4
                 {
                     Curve = curve,
                     SizeText = sizeText,
-                    Width = width,
+                    Width = shopOutsideWidth,
                     LayerName = "FF_SHOP_" + cleanSize,
                     Start = start,
                     End = end,
@@ -19624,6 +23645,20 @@ namespace ClassLibrary4
                             {
                             }
 
+                            try
+                            {
+                                Autodesk.AutoCAD.ApplicationServices.Core.Application
+                                    .DocumentManager
+                                    .MdiActiveDocument?
+                                    .Editor
+                                    .WriteMessage(
+                                        $"\n[SHOP FIX40C] EXACT BLOCK: " +
+                                        $"{fittingType} {fromSize}->{toSize} = {byName}");
+                            }
+                            catch
+                            {
+                            }
+
                             return byName;
                         }
 
@@ -19728,21 +23763,20 @@ namespace ClassLibrary4
                 candidates.Add("CO45-" + sizeTok);
                 candidates.Add("COLOI45-" + sizeTok);
             }
-            // ---- TÊ : SCREW-TEE-DN50x40 / WELD-TEE-DN80x50 ----
+            // ---- TÊ ----
+            // TÊ ĐỀU:  SCREW-TEE-DN15x15
+            // TÊ GIẢM: SCREW-TEED-DN20x15
             else if (IsTeeKey(typeKey) ||
                      typeKey == "TEE" ||
-                     typeKey == "TE")
+                     typeKey == "TE" ||
+                     typeKey == "TEED")
             {
-                // FIX34:
-                // fromSize = MAIN, toSize = BRANCH.
-                // KHÔNG đảo main/branch bằng Max/Min vì vai trò topology đã biết.
                 double mainN = n1;
                 double branchN = n2 > 0 ? n2 : n1;
 
                 if (mainN <= 0 || branchN <= 0)
                     return "";
 
-                // Thư viện hiện tại không dùng Tê có nhánh lớn hơn main.
                 if (branchN > mainN + 0.01)
                     return "";
 
@@ -19761,25 +23795,42 @@ namespace ClassLibrary4
                 bool sameSize =
                     Math.Abs(mainN - branchN) <= 0.01;
 
+                bool reducing =
+                    typeKey == "TEED" ||
+                    typeKey.Contains("TEGIAM") ||
+                    typeKey.Contains("TETHU") ||
+                    !sameSize;
+
                 foreach (string p in prefixes)
                 {
-                    // Ưu tiên đúng block TEE-DNmain×DNbranch.
-                    candidates.Add(p + "-TEE-" + pair);
-                    candidates.Add(p + "-TEE-" + pairFull);
-                    candidates.Add(p + "-TE-" + pair);
-
-                    // Chỉ được dùng Tê đều khi yêu cầu thực sự là Tê đều.
-                    if (sameSize)
+                    if (!reducing)
                     {
-                        candidates.Add(
-                            p + "-TEE-" +
-                            mainTok + "x" +
-                            FormatShopDnNumber(mainN));
+                        // EXACT TÊ ĐỀU
+                        candidates.Add(p + "-TEE-" + pair);
+                        candidates.Add(p + "-TEE-" + pairFull);
+                    }
+                    else
+                    {
+                        // EXACT TÊ GIẢM
+                        candidates.Add(p + "-TEED-" + pair);
+                        candidates.Add(p + "-TEED-" + pairFull);
+
+                        // Nếu nhánh hàn WELD trong thư viện cũ dùng TEE cho tê giảm,
+                        // chỉ thử sau TEED exact.
+                        if (string.Equals(
+                                p,
+                                "WELD",
+                                StringComparison.OrdinalIgnoreCase))
+                        {
+                            candidates.Add(p + "-TEE-" + pair);
+                            candidates.Add(p + "-TEE-" + pairFull);
+                        }
                     }
                 }
 
-                candidates.Add("TEE-" + pair);
-                candidates.Add("TE-" + pair);
+                candidates.Add(
+                    (reducing ? "TEED-" : "TEE-") +
+                    pair);
             }
             // ---- GIẢM : SCREW-RED-DN50x40 / WELD-RED-DN80x50 ----
             else if (IsReducerKey(typeKey) ||
@@ -20478,23 +24529,34 @@ namespace ClassLibrary4
 
             if (IsTeeKey(typeKey))
             {
-                if (key == "TE" ||
-                    key == "TEE")
+                bool wantsReducing =
+                    typeKey == "TEED" ||
+                    typeKey.Contains("TEGIAM") ||
+                    typeKey.Contains("TETHU");
+
+                bool isTeed =
+                    Regex.IsMatch(
+                        key,
+                        @"(?:^|SCREW|WELD)TEED(?:DN|\d|$)",
+                        RegexOptions.IgnoreCase);
+
+                bool isTee =
+                    Regex.IsMatch(
+                        key,
+                        @"(?:^|SCREW|WELD)TEE(?:DN|\d|$)",
+                        RegexOptions.IgnoreCase);
+
+                if (wantsReducing)
                 {
-                    return true;
+                    return isTeed ||
+                           key.Contains("TEGIAM") ||
+                           key.Contains("TETHU");
                 }
 
-                // Không dùng Contains("TEE") vì THUVIENSTEEL... cũng có "TEE".
-                if (IsStrictShopTeeName(key))
-                    return true;
-
-                if (key.Contains("TEGIAM") ||
-                    key.Contains("TETHU"))
-                {
-                    return true;
-                }
-
-                return false;
+                // TÊ ĐỀU không được lấy nhầm TEED.
+                return isTee ||
+                       key == "TEE" ||
+                       key == "TE";
             }
 
             // Nắp / cap
@@ -20589,18 +24651,23 @@ namespace ClassLibrary4
             key = NormalizeShopKey(key);
 
             if (key == "TEE" ||
-                key == "TE")
+                key == "TE" ||
+                key == "TEED")
             {
                 return true;
             }
 
-            // QUAN TRỌNG:
-            // KHÔNG dùng key.Contains("TEE"), vì "STEEL" cũng chứa "TEE".
-            // Chỉ nhận TEE khi chuỗi thực sự mang cấu trúc tên phụ kiện Tê.
+            // TÊ ĐỀU  = ...-TEE-DNxxXxx
+            // TÊ GIẢM = ...-TEED-DNxxXxx
+            // Không dùng Contains("TEE") vì "STEEL" cũng chứa "TEE".
             return Regex.IsMatch(
-                key,
-                @"(?:^|SCREW|WELD)TEE(?:DN|\d|$)",
-                RegexOptions.IgnoreCase) ||
+                       key,
+                       @"(?:^|SCREW|WELD)TEED(?:DN|\d|$)",
+                       RegexOptions.IgnoreCase) ||
+                   Regex.IsMatch(
+                       key,
+                       @"(?:^|SCREW|WELD)TEE(?:DN|\d|$)",
+                       RegexOptions.IgnoreCase) ||
                    Regex.IsMatch(
                        key,
                        @"(?:^|SCREW|WELD)TE(?:DN|\d|$)",
@@ -20616,6 +24683,10 @@ namespace ClassLibrary4
                     text ?? "");
 
             return Regex.IsMatch(
+                       key,
+                       @"(?:^|SCREW|WELD)TEED(?:DN|\d|$)",
+                       RegexOptions.IgnoreCase) ||
+                   Regex.IsMatch(
                        key,
                        @"(?:^|SCREW|WELD)TEE(?:DN|\d|$)",
                        RegexOptions.IgnoreCase) ||

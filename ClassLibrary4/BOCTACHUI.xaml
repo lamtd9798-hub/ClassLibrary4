@@ -491,11 +491,138 @@
                                             </Style.Triggers>
                                         </Style>
                                     </Grid.Style>
-                                    <StackPanel>
-                                        <TextBlock Text="VẼ SHOP CHỮA CHÁY" FontWeight="Bold" FontSize="13" Foreground="#FF0078D7" Margin="0,0,0,10"/>
-                                        <TextBlock TextWrapping="Wrap" Foreground="#FF555555" FontSize="11" Margin="0,0,0,12"
-                                                   Text="Quét chọn tuyến ống + chữ DN. Tool vẽ 2 nét SHOP và chèn Co / Tê / Giảm theo topology của tuyến ống."/>
 
+                                    <StackPanel>
+                                        <TextBlock Text="VẼ SHOP CHỮA CHÁY"
+                                                   FontWeight="Bold"
+                                                   FontSize="13"
+                                                   Foreground="#FF0078D7"
+                                                   Margin="0,0,0,6"/>
+
+                                        <TextBlock TextWrapping="Wrap"
+                                                   Foreground="#FF555555"
+                                                   FontSize="11"
+                                                   Margin="0,0,0,10"
+                                                   Text="Chọn phụ kiện từ thư viện để đặt thủ công hoặc dùng VẼ SHOP ỐNG tự động bên dưới."/>
+
+                                        <!-- ================= PHỤ KIỆN ================= -->
+                                        <Border BorderBrush="#FFB8B8B8"
+                                                BorderThickness="1"
+                                                CornerRadius="2"
+                                                Padding="6"
+                                                Margin="0,0,0,10">
+                                            <StackPanel>
+                                                <TextBlock Text="PHỤ KIỆN"
+                                                           FontSize="13"
+                                                           FontWeight="Bold"
+                                                           Foreground="#FF6F42C1"
+                                                           HorizontalAlignment="Center"
+                                                           Margin="0,0,0,6"/>
+
+                                                <Grid>
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="1*"/>
+                                                        <ColumnDefinition Width="6"/>
+                                                        <ColumnDefinition Width="3*"/>
+                                                    </Grid.ColumnDefinitions>
+
+                                                    <!-- CỘT 1: TÊN PHỤ KIỆN = 1/4 -->
+                                                    <StackPanel Grid.Column="0">
+                                                        <TextBlock Text="TÊN PK"
+                                                                   FontSize="11"
+                                                                   FontWeight="Bold"
+                                                                   HorizontalAlignment="Center"
+                                                                   Margin="0,0,0,3"/>
+
+                                                        <ListBox x:Name="LstPhuKienThuVien"
+                                                                 Height="164"
+                                                                 FontSize="10"
+                                                                 BorderBrush="#FFCCCCCC"
+                                                                 ScrollViewer.VerticalScrollBarVisibility="Auto"
+                                                                 ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                                                            <ListBoxItem Content="CO 90"/>
+                                                            <ListBoxItem Content="TÊ ĐỀU"/>
+                                                            <ListBoxItem Content="TÊ GIẢM"/>
+                                                            <ListBoxItem Content="LƠI 45"/>
+                                                            <ListBoxItem Content="V.CỔNG"/>
+                                                            <ListBoxItem Content="V.BƯỚM"/>
+                                                            <ListBoxItem Content="Y.LỌC"/>
+                                                            <ListBoxItem Content="KNM"/>
+                                                        </ListBox>
+
+                                                        <TextBox x:Name="TxtPhuKienThuVienThem"
+                                                                 Height="25"
+                                                                 FontSize="10"
+                                                                 Padding="3"
+                                                                 Margin="0,3,0,0"
+                                                                 ToolTip="Nhập thêm tên phụ kiện rồi Enter"
+                                                                 KeyDown="TxtPhuKienThuVienThem_KeyDown"/>
+                                                    </StackPanel>
+
+                                                    <!-- CỘT 2: SIZE = 3/4 -->
+                                                    <StackPanel Grid.Column="2">
+                                                        <TextBlock Text="SIZE"
+                                                                   FontSize="11"
+                                                                   FontWeight="Bold"
+                                                                   HorizontalAlignment="Center"
+                                                                   Margin="0,0,0,3"/>
+
+                                                        <ListBox x:Name="LstSizePhuKienThuVien"
+                                                                 Height="164"
+                                                                 FontSize="10"
+                                                                 BorderBrush="#FFCCCCCC"
+                                                                 ScrollViewer.VerticalScrollBarVisibility="Auto"
+                                                                 ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                                                            <ListBoxItem Content="DN15"/>
+                                                            <ListBoxItem Content="DN20"/>
+                                                            <ListBoxItem Content="DN25"/>
+                                                            <ListBoxItem Content="DN32"/>
+                                                            <ListBoxItem Content="DN40"/>
+                                                            <ListBoxItem Content="DN50"/>
+                                                            <ListBoxItem Content="DN65"/>
+                                                            <ListBoxItem Content="DN80"/>
+                                                            <ListBoxItem Content="DN100"/>
+                                                            <ListBoxItem Content="DN125"/>
+                                                            <ListBoxItem Content="DN150"/>
+                                                            <ListBoxItem Content="DN200"/>
+                                                            <ListBoxItem Content="DN250"/>
+                                                            <ListBoxItem Content="DN300"/>
+                                                            <ListBoxItem Content="DN350"/>
+                                                            <ListBoxItem Content="DN400"/>
+                                                        </ListBox>
+
+                                                        <TextBox x:Name="TxtSizePhuKienThuVienThem"
+                                                                 Height="25"
+                                                                 FontSize="10"
+                                                                 Padding="3"
+                                                                 Margin="0,3,0,0"
+                                                                 ToolTip="Nhập thêm size rồi Enter. Tê giảm nhập dạng DN150x80."
+                                                                 KeyDown="TxtSizePhuKienThuVienThem_KeyDown"/>
+                                                    </StackPanel>
+                                                </Grid>
+
+                                                <Button x:Name="BtnDatPhuKienThuVien"
+                                                        Content="ĐẶT TB"
+                                                        Height="36"
+                                                        FontSize="13"
+                                                        FontWeight="Bold"
+                                                        Background="#FF6F42C1"
+                                                        Foreground="White"
+                                                        Margin="0,8,0,0"
+                                                        Cursor="Hand"
+                                                        Click="BtnDatPhuKienThuVien_Click">
+                                                    <Button.ToolTip>
+                                                        <ToolTip>
+                                                            <TextBlock MaxWidth="280"
+                                                                       TextWrapping="Wrap"
+                                                                       Text="ĐẶT TB: Chọn TÊN PK + SIZE rồi bấm nút. Click từng điểm trên bản vẽ để chèn đúng block từ file Thu vien STEEL.dwg nằm cùng thư mục DLL. Enter/ESC để kết thúc. TÊ GIẢM nhập size dạng DN150x80."/>
+                                                        </ToolTip>
+                                                    </Button.ToolTip>
+                                                </Button>
+                                            </StackPanel>
+                                        </Border>
+
+                                        <!-- NÚT VẼ SHOP ĐƯA XUỐNG DƯỚI -->
                                         <Button x:Name="BtnVeShopOngChuaChay"
                                                 Content="VẼ SHOP ỐNG"
                                                 Height="38"
@@ -507,8 +634,9 @@
                                                 Click="BtnVeShopOngChuaChay_Click">
                                             <Button.ToolTip>
                                                 <ToolTip>
-                                                    <TextBlock MaxWidth="260" TextWrapping="Wrap"
-                                                               Text="VẼ SHOP ỐNG: Quét chọn line/polyline tuyến ống và text DN. Tool nhận DN từ chữ/layer, vẽ hai đường song song cách nhau theo DN mm. Nếu hai tuyến nối nhau khác DN thì vẽ thêm côn giảm nối hai mép."/>
+                                                    <TextBlock MaxWidth="280"
+                                                               TextWrapping="Wrap"
+                                                               Text="VẼ SHOP ỐNG: Quét tuyến ống + chữ DN. Tool tạo 2 nét SHOP và tự chèn Co / Tê / Giảm theo topology."/>
                                                 </ToolTip>
                                             </Button.ToolTip>
                                         </Button>
