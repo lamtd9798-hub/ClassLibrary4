@@ -50,7 +50,7 @@ namespace ClassLibrary4
         private const double FixedDnPipeDisplayWidth = 50.0;
         private const string LayerChangeBuild = "DL-20260808-12";
         private const string AutoConvertBuild = "AUTO-20260807-10";
-        private const string TemplateAutoDrawBuild = "MAU-20260807-02";
+        private const string TemplateAutoDrawBuild = "MAU-SHOP-20260810-08";
         private const double SprinklerCenterSearchDistance = 500.0;
         private const double TemplateLengthToleranceRatio = 0.05;
         private const double TemplateAbsoluteLengthTolerance = 100.0;
@@ -61,7 +61,7 @@ namespace ClassLibrary4
         private const double TemplateDuplicateTolerance = 100.0;
 
         // SHOP thông minh: gom các đầu/điểm giao thành nút rồi mới quyết định phụ kiện.
-        private const string ShopSmartBuild = "SHOP-SMART-20260810-40H-WELD-TRUE-PORTS-DN65";
+        private const string ShopSmartBuild = "SHOP-SMART-20260810-40P-CTN-PPR-TRUE-PORT-GAP";
         private const double ShopJointTolerance = 150.0;
         private const double ShopDuplicateNodeTolerance = 100.0;
         private const double ShopStraightAngleToleranceDeg = 12.0;
@@ -5543,6 +5543,762 @@ namespace ClassLibrary4
             }
         }
 
+
+        // ============================================================
+        // FIX40I - VẼ ỐNG MẪU HỖ TRỢ CẢ MẪU SHOP
+        // ============================================================
+
+        private static bool IsTemplateShopCenterline(
+            Curve curve)
+        {
+            if (curve == null)
+                return false;
+
+            string layer =
+                (curve.Layer ?? "")
+                    .Trim();
+
+            return layer.StartsWith(
+                "FF_SHOP_TAM_",
+                StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static bool IsTemplateShopPipeEdge(
+            Curve curve)
+        {
+            if (curve == null)
+                return false;
+
+            string layer =
+                (curve.Layer ?? "")
+                    .Trim()
+                    .ToUpperInvariant();
+
+            return Regex.IsMatch(
+                layer,
+                @"^FF_SHOP_DN\d+(?:[.,]\d+)?$",
+                RegexOptions.IgnoreCase);
+        }
+
+        private static bool IsTemplateShopFitting(
+            Entity entity)
+        {
+            if (!(entity is BlockReference))
+                return false;
+
+            string layer =
+                (entity.Layer ?? "")
+                    .Trim()
+                    .ToUpperInvariant();
+
+            return
+                layer.StartsWith("FF_SHOP_CO90_") ||
+                layer.StartsWith("FF_SHOP_COLOI45_") ||
+                layer.StartsWith("FF_SHOP_TE_") ||
+                layer.StartsWith("FF_SHOP_GIAM_") ||
+                layer.StartsWith("FF_SHOP_PK_");
+        }
+
+        private static bool IsTemplateShopOutputLayer(
+            string layerName)
+        {
+            string layer =
+                (layerName ?? "")
+                    .Trim()
+                    .ToUpperInvariant();
+
+            if (string.IsNullOrWhiteSpace(layer))
+                return false;
+
+            return
+                layer.StartsWith("FF_SHOP_DN") ||
+                layer.StartsWith("FF_SHOP_TAM_") ||
+                layer.StartsWith("FF_SHOP_CO90_") ||
+                layer.StartsWith("FF_SHOP_COLOI45_") ||
+                layer.StartsWith("FF_SHOP_TE_") ||
+                layer.StartsWith("FF_SHOP_GIAM_") ||
+                layer.StartsWith("FF_SHOP_PK_");
+        }
+
+        private static bool IsTemplateShopOutputEntity(
+            Entity entity)
+        {
+            if (entity == null)
+                return false;
+
+            if (entity is Curve curve &&
+                (IsTemplateShopPipeEdge(curve) ||
+                 IsTemplateShopCenterline(curve)))
+            {
+                return true;
+            }
+
+            if (IsTemplateShopFitting(entity))
+                return true;
+
+            if ((entity is DBText ||
+                 entity is MText) &&
+                IsTemplateShopOutputLayer(
+                    entity.Layer))
+            {
+                return true;
+            }
+
+            return false;
+        }
+
+        private Curve BuildVirtualTemplateCenterlineFromShopEdges(
+            List<Curve> shopPipeEdges)
+        {
+            List<Line> lines =
+                (shopPipeEdges ??
+                 new List<Curve>())
+                    .OfType<Line>()
+                    .Where(
+                        line =>
+                            line != null &&
+                            line.Length > 1.0)
+                    .ToList();
+
+            if (lines.Count < 2)
+                return null;
+
+            Line bestCenterline = null;
+            double bestLength = 0.0;
+            double bestSeparationError =
+                double.MaxValue;
+
+            for (int i = 0;
+                i < lines.Count;
+                i++)
+            {
+                Line a = lines[i];
+
+                Vector3d da =
+                    a.EndPoint -
+                    a.StartPoint;
+
+                da =
+                    new Vector3d(
+                        da.X,
+                        da.Y,
+                        0.0);
+
+                if (da.Length < 1e-9)
+                    continue;
+
+                double lenA =
+                    da.Length;
+
+                da =
+                    da.GetNormal();
+
+                for (int j = i + 1;
+                    j < lines.Count;
+                    j++)
+                {
+                    Line b = lines[j];
+
+                    if (!string.Equals(
+                            a.Layer,
+                            b.Layer,
+                            StringComparison.OrdinalIgnoreCase))
+                    {
+                        continue;
+                    }
+
+                    Vector3d dbDir =
+                        b.EndPoint -
+                        b.StartPoint;
+
+                    dbDir =
+                        new Vector3d(
+                            dbDir.X,
+                            dbDir.Y,
+                            0.0);
+
+                    if (dbDir.Length < 1e-9)
+                        continue;
+
+                    double lenB =
+                        dbDir.Length;
+
+                    dbDir =
+                        dbDir.GetNormal();
+
+                    double parallel =
+                        Math.Abs(
+                            da.DotProduct(
+                                dbDir));
+
+                    if (parallel < 0.995)
+                        continue;
+
+                    Point3d bStart =
+                        b.StartPoint;
+
+                    Point3d bEnd =
+                        b.EndPoint;
+
+                    if (da.DotProduct(dbDir) < 0.0)
+                    {
+                        Point3d temp =
+                            bStart;
+
+                        bStart =
+                            bEnd;
+
+                        bEnd =
+                            temp;
+                    }
+
+                    double lengthTolerance =
+                        Math.Max(
+                            20.0,
+                            Math.Max(
+                                lenA,
+                                lenB) *
+                            0.08);
+
+                    if (Math.Abs(
+                            lenA -
+                            lenB) >
+                        lengthTolerance)
+                    {
+                        continue;
+                    }
+
+                    Vector3d normal =
+                        new Vector3d(
+                            -da.Y,
+                            da.X,
+                            0.0);
+
+                    double separation =
+                        Math.Abs(
+                            (bStart - a.StartPoint)
+                                .DotProduct(normal));
+
+                    string sizeToken =
+                        NormalizeShopDnToken(
+                            a.Layer);
+
+                    double expectedOd =
+                        GetFireSteelOutsideDiameterForSize(
+                            sizeToken,
+                            0.0);
+
+                    double separationError =
+                        expectedOd > 0.0
+                            ? Math.Abs(
+                                separation -
+                                expectedOd)
+                            : 0.0;
+
+                    double separationTolerance =
+                        expectedOd > 0.0
+                            ? Math.Max(
+                                5.0,
+                                expectedOd * 0.20)
+                            : Math.Max(
+                                10.0,
+                                separation * 0.25);
+
+                    if (expectedOd > 0.0 &&
+                        separationError >
+                        separationTolerance)
+                    {
+                        continue;
+                    }
+
+                    Point3d centerStart =
+                        MidPoint(
+                            a.StartPoint,
+                            bStart);
+
+                    Point3d centerEnd =
+                        MidPoint(
+                            a.EndPoint,
+                            bEnd);
+
+                    double centerLength =
+                        centerStart.DistanceTo(
+                            centerEnd);
+
+                    if (centerLength <= 1.0)
+                        continue;
+
+                    bool better =
+                        centerLength >
+                            bestLength + 1.0 ||
+                        (Math.Abs(
+                            centerLength -
+                            bestLength) <= 1.0 &&
+                         separationError <
+                            bestSeparationError);
+
+                    if (!better)
+                        continue;
+
+                    bestCenterline?.Dispose();
+
+                    bestCenterline =
+                        new Line(
+                            centerStart,
+                            centerEnd);
+
+                    bestLength =
+                        centerLength;
+
+                    bestSeparationError =
+                        separationError;
+                }
+            }
+
+            return bestCenterline;
+        }
+
+        private Curve SelectShopTemplateReferenceCurve(
+            List<Curve> selectedShopCenterlines,
+            List<Curve> sampleShopEdges,
+            List<Curve> sampleContextCurves)
+        {
+            List<Curve> centerlines =
+                (selectedShopCenterlines ??
+                 new List<Curve>())
+                    .Where(
+                        curve =>
+                            curve != null &&
+                            GetTemplateCurveLength(
+                                curve) > 1.0)
+                    .ToList();
+
+            if (centerlines.Count == 0)
+                return null;
+
+            List<Curve> context =
+                (sampleContextCurves ??
+                 new List<Curve>())
+                    .Where(
+                        curve =>
+                            curve != null)
+                    .ToList();
+
+            // FIX40J:
+            // Nhánh sprinkler thường có MỘT đầu nối vuông góc vào tuyến chính.
+            // Tuyến chính ngang thường bị các nhánh cắt ở GIỮA, không phải endpoint,
+            // nên FindTemplateBranchRootIndex của nó thường = -1.
+            //
+            // Vì vậy ưu tiên centerline có root endpoint rõ ràng,
+            // thay vì lấy "đường dài nhất" như FIX40I.
+            List<Curve> rootedCandidates =
+                centerlines
+                    .Where(
+                        curve =>
+                            FindTemplateBranchRootIndex(
+                                curve,
+                                context) >= 0)
+                    .ToList();
+
+            List<Curve> candidates =
+                rootedCandidates.Count > 0
+                    ? rootedCandidates
+                    : centerlines;
+
+            // Trong các ứng viên branch-root, chọn đoạn có nhiều coverage
+            // với 2 nét SHOP và dài hơn.
+            return candidates
+                .OrderByDescending(
+                    curve =>
+                        GetTemplateCoverageScore(
+                            curve,
+                            sampleShopEdges ??
+                            new List<Curve>()))
+                .ThenByDescending(
+                    GetTemplateCurveLength)
+                .FirstOrDefault();
+        }
+
+
+        private Point3d GetTemplateEntityRepresentativePoint(
+            Entity entity)
+        {
+            if (entity == null)
+                return Point3d.Origin;
+
+            try
+            {
+                if (entity is Curve curve)
+                {
+                    return GetTemplateCurvePoint(
+                        curve,
+                        0.5);
+                }
+
+                if (entity is BlockReference block)
+                    return block.Position;
+
+                if (entity is DBText dbText)
+                    return dbText.Position;
+
+                if (entity is MText mText)
+                    return mText.Location;
+
+                Extents3d ext =
+                    entity.GeometricExtents;
+
+                return new Point3d(
+                    (ext.MinPoint.X + ext.MaxPoint.X) / 2.0,
+                    (ext.MinPoint.Y + ext.MaxPoint.Y) / 2.0,
+                    (ext.MinPoint.Z + ext.MaxPoint.Z) / 2.0);
+            }
+            catch
+            {
+                return Point3d.Origin;
+            }
+        }
+
+        private double GetTemplateSignedStation(
+            Point3d point,
+            Point3d origin,
+            Vector3d direction)
+        {
+            Vector3d d =
+                new Vector3d(
+                    direction.X,
+                    direction.Y,
+                    0.0);
+
+            if (d.Length < 1e-9)
+                return 0.0;
+
+            d = d.GetNormal();
+
+            Vector3d v =
+                point -
+                origin;
+
+            return v.DotProduct(d);
+        }
+
+        private double GetTemplateDistanceToInfiniteAxis(
+            Point3d point,
+            Point3d origin,
+            Vector3d direction)
+        {
+            Point3d closest =
+                GetClosestPointOnManualInfiniteLine(
+                    point,
+                    origin,
+                    direction);
+
+            return GetTemplatePlanDistance(
+                point,
+                closest);
+        }
+
+        private List<Entity> FilterShopTemplateEntitiesToReferenceBranch(
+            Curve referenceCurve,
+            List<Entity> sampleEntities,
+            List<Curve> sampleShopPipeEdges)
+        {
+            List<Entity> result =
+                new List<Entity>();
+
+            if (referenceCurve == null ||
+                sampleEntities == null ||
+                sampleEntities.Count == 0)
+            {
+                return result;
+            }
+
+            if (!TryGetTemplatePlanDirection(
+                    referenceCurve,
+                    out Vector3d refDirection))
+            {
+                return result;
+            }
+
+            Point3d refOrigin =
+                referenceCurve.StartPoint;
+
+            double maxOutsideDiameter = 0.0;
+
+            foreach (Curve edge in
+                sampleShopPipeEdges ??
+                new List<Curve>())
+            {
+                if (edge == null)
+                    continue;
+
+                maxOutsideDiameter =
+                    Math.Max(
+                        maxOutsideDiameter,
+                        GetFireSteelOutsideDiameterForSize(
+                            edge.Layer,
+                            0.0));
+            }
+
+            if (maxOutsideDiameter <= 0.0)
+                maxOutsideDiameter = 100.0;
+
+            // Hành lang chỉ đủ rộng để chứa 2 nét + fitting của CHÍNH nhánh.
+            // Khoảng cách giữa các nhánh trong bản vẽ thường vài mét,
+            // nên corridor này không ăn sang nhánh kế bên.
+            double corridor =
+                Math.Max(
+                    180.0,
+                    maxOutsideDiameter * 1.60);
+
+            double fittingCorridor =
+                Math.Max(
+                    280.0,
+                    maxOutsideDiameter * 2.50);
+
+            double stationPadding =
+                Math.Max(
+                    350.0,
+                    maxOutsideDiameter * 3.50);
+
+            // --------------------------------------------------------
+            // BƯỚC A: tìm span dọc của đúng nhánh bằng các nét/tim SHOP
+            // song song với reference.
+            // --------------------------------------------------------
+            double minStation =
+                double.MaxValue;
+
+            double maxStation =
+                double.MinValue;
+
+            List<Curve> branchLongitudinalCurves =
+                new List<Curve>();
+
+            foreach (Entity entity in sampleEntities)
+            {
+                if (!(entity is Curve curve))
+                    continue;
+
+                if (!IsTemplateShopPipeEdge(curve) &&
+                    !IsTemplateShopCenterline(curve))
+                {
+                    continue;
+                }
+
+                if (!TryGetTemplatePlanDirection(
+                        curve,
+                        out Vector3d curveDirection))
+                {
+                    continue;
+                }
+
+                double directionDot =
+                    Math.Abs(
+                        refDirection.DotProduct(
+                            curveDirection));
+
+                if (directionDot < 0.94)
+                    continue;
+
+                Point3d middle =
+                    GetTemplateCurvePoint(
+                        curve,
+                        0.5);
+
+                double axisDistance =
+                    GetTemplateDistanceToInfiniteAxis(
+                        middle,
+                        refOrigin,
+                        refDirection);
+
+                if (axisDistance >
+                    corridor)
+                {
+                    continue;
+                }
+
+                branchLongitudinalCurves.Add(
+                    curve);
+
+                double s0 =
+                    GetTemplateSignedStation(
+                        curve.StartPoint,
+                        refOrigin,
+                        refDirection);
+
+                double s1 =
+                    GetTemplateSignedStation(
+                        curve.EndPoint,
+                        refOrigin,
+                        refDirection);
+
+                minStation =
+                    Math.Min(
+                        minStation,
+                        Math.Min(s0, s1));
+
+                maxStation =
+                    Math.Max(
+                        maxStation,
+                        Math.Max(s0, s1));
+            }
+
+            if (minStation ==
+                    double.MaxValue ||
+                maxStation ==
+                    double.MinValue)
+            {
+                minStation =
+                    Math.Min(
+                        GetTemplateSignedStation(
+                            referenceCurve.StartPoint,
+                            refOrigin,
+                            refDirection),
+                        GetTemplateSignedStation(
+                            referenceCurve.EndPoint,
+                            refOrigin,
+                            refDirection));
+
+                maxStation =
+                    Math.Max(
+                        GetTemplateSignedStation(
+                            referenceCurve.StartPoint,
+                            refOrigin,
+                            refDirection),
+                        GetTemplateSignedStation(
+                            referenceCurve.EndPoint,
+                            refOrigin,
+                            refDirection));
+            }
+
+            double allowedMin =
+                minStation -
+                stationPadding;
+
+            double allowedMax =
+                maxStation +
+                stationPadding;
+
+            // --------------------------------------------------------
+            // BƯỚC B: chỉ giữ output thuộc hành lang của branch.
+            // Đặc biệt: KHÔNG copy tuyến chính ngang dài đi qua root.
+            // --------------------------------------------------------
+            foreach (Entity entity in sampleEntities)
+            {
+                if (!IsTemplateShopOutputEntity(
+                        entity))
+                {
+                    continue;
+                }
+
+                if (entity is Curve curve)
+                {
+                    Point3d middle =
+                        GetTemplateCurvePoint(
+                            curve,
+                            0.5);
+
+                    double station =
+                        GetTemplateSignedStation(
+                            middle,
+                            refOrigin,
+                            refDirection);
+
+                    double axisDistance =
+                        GetTemplateDistanceToInfiniteAxis(
+                            middle,
+                            refOrigin,
+                            refDirection);
+
+                    bool isLongitudinal =
+                        false;
+
+                    if (TryGetTemplatePlanDirection(
+                            curve,
+                            out Vector3d curveDirection))
+                    {
+                        isLongitudinal =
+                            Math.Abs(
+                                refDirection.DotProduct(
+                                    curveDirection)) >=
+                            0.94;
+                    }
+
+                    if (isLongitudinal)
+                    {
+                        if (axisDistance <=
+                                corridor &&
+                            station >= allowedMin &&
+                            station <= allowedMax)
+                        {
+                            result.Add(entity);
+                        }
+
+                        continue;
+                    }
+
+                    // Đoạn vuông góc/nghiêng chỉ được copy nếu nó RẤT GẦN
+                    // một đầu của span branch (ví dụ đoạn ngắn sát Co).
+                    double toStart =
+                        GetTemplatePlanDistance(
+                            middle,
+                            referenceCurve.StartPoint);
+
+                    double toEnd =
+                        GetTemplatePlanDistance(
+                            middle,
+                            referenceCurve.EndPoint);
+
+                    double shortCrossLimit =
+                        Math.Max(
+                            450.0,
+                            maxOutsideDiameter * 4.0);
+
+                    if (GetTemplateCurveLength(curve) <=
+                            shortCrossLimit &&
+                        Math.Min(
+                            toStart,
+                            toEnd) <=
+                            fittingCorridor)
+                    {
+                        result.Add(entity);
+                    }
+
+                    continue;
+                }
+
+                Point3d point =
+                    GetTemplateEntityRepresentativePoint(
+                        entity);
+
+                double pointStation =
+                    GetTemplateSignedStation(
+                        point,
+                        refOrigin,
+                        refDirection);
+
+                double pointDistance =
+                    GetTemplateDistanceToInfiniteAxis(
+                        point,
+                        refOrigin,
+                        refDirection);
+
+                if (pointDistance <=
+                        fittingCorridor &&
+                    pointStation >=
+                        allowedMin &&
+                    pointStation <=
+                        allowedMax)
+                {
+                    result.Add(entity);
+                }
+            }
+
+            return result
+                .Distinct()
+                .ToList();
+        }
+
+
         private bool IsTemplateReferenceCurve(Entity entity)
         {
             return entity is Line ||
@@ -5583,9 +6339,14 @@ namespace ClassLibrary4
                 return false;
             }
 
-            // Ống do công cụ tạo là Polyline có bề rộng thực tế.
-            // Không dựa vào tên Layer để tránh nhầm đường tim gốc.
-            return GetTemplateCurveWidth(curve) > 0.001;
+            // Kiểu cũ: Polyline có width.
+            if (GetTemplateCurveWidth(curve) > 0.001)
+                return true;
+
+            // FIX40I: SHOP mới là 2 LINE trên FF_SHOP_DNxx.
+            // FF_SHOP_TAM_* là tim tham chiếu, không phải nét biên.
+            return IsTemplateShopPipeEdge(
+                curve);
         }
 
         private double GetTemplateCurveLength(Curve curve)
@@ -6047,6 +6808,319 @@ namespace ClassLibrary4
                 : virtualReferenceCurve;
         }
 
+        private List<Point3d> CollectTemplateShopMarkerCenters(
+            Transaction tr,
+            IEnumerable<Entity> entities)
+        {
+            List<Point3d> centers =
+                new List<Point3d>();
+
+            foreach (Entity entity in
+                entities ??
+                Enumerable.Empty<Entity>())
+            {
+                if (entity == null ||
+                    IsTemplateShopFitting(entity))
+                {
+                    continue;
+                }
+
+                if (entity is Circle circle)
+                {
+                    AddUniquePoint(
+                        centers,
+                        circle.Center,
+                        5.0);
+
+                    continue;
+                }
+
+                if (entity is BlockReference blockReference)
+                {
+                    // FIX40K:
+                    // Với mẫu SHOP KHÔNG dùng Position của mọi block làm marker.
+                    // Chỉ nhận block thật sự có hình tròn bên trong
+                    // (đầu phun/marker). Tránh VT, note, symbol... làm sai span.
+                    List<Point3d> blockCenters =
+                        GetCircularCentersFromBlock(
+                            tr,
+                            blockReference);
+
+                    foreach (Point3d center
+                        in blockCenters)
+                    {
+                        AddUniquePoint(
+                            centers,
+                            center,
+                            5.0);
+                    }
+                }
+            }
+
+            return centers;
+        }
+
+        private Curve BuildTemplateMarkerBoundReferenceCurve(
+            Curve baseCurve,
+            List<Point3d> markers)
+        {
+            if (baseCurve == null ||
+                markers == null ||
+                markers.Count < 2)
+            {
+                return null;
+            }
+
+            if (!TryGetTemplatePlanDirection(
+                    baseCurve,
+                    out Vector3d direction))
+            {
+                return null;
+            }
+
+            Point3d origin =
+                baseCurve.StartPoint;
+
+            List<double> stations =
+                new List<double>();
+
+            foreach (Point3d marker
+                in markers)
+            {
+                if (!TryGetClosestPointInPlan(
+                        baseCurve,
+                        marker,
+                        out Point3d closest,
+                        out double distance))
+                {
+                    continue;
+                }
+
+                if (distance >
+                    TemplateMarkerSearchDistance)
+                {
+                    continue;
+                }
+
+                stations.Add(
+                    GetTemplateSignedStation(
+                        closest,
+                        origin,
+                        direction));
+            }
+
+            if (stations.Count < 2)
+                return null;
+
+            double minStation =
+                stations.Min();
+
+            double maxStation =
+                stations.Max();
+
+            if (maxStation -
+                minStation <
+                50.0)
+            {
+                return null;
+            }
+
+            Point3d start =
+                origin +
+                direction *
+                minStation;
+
+            Point3d end =
+                origin +
+                direction *
+                maxStation;
+
+            return new Line(
+                start,
+                end);
+        }
+
+        private Entity CloneTemplateEntityInsideReferenceSpan(
+            Entity sourceEntity,
+            Curve referenceCurve,
+            bool strictShopSpan)
+        {
+            if (sourceEntity == null)
+                return null;
+
+            if (!strictShopSpan ||
+                referenceCurve == null)
+            {
+                return sourceEntity.Clone()
+                    as Entity;
+            }
+
+            if (!TryGetTemplatePlanDirection(
+                    referenceCurve,
+                    out Vector3d refDirection))
+            {
+                return sourceEntity.Clone()
+                    as Entity;
+            }
+
+            Point3d origin =
+                referenceCurve.StartPoint;
+
+            double span =
+                GetTemplateSignedStation(
+                    referenceCurve.EndPoint,
+                    origin,
+                    refDirection);
+
+            if (span < 0.0)
+            {
+                refDirection =
+                    refDirection.Negate();
+
+                span =
+                    -span;
+            }
+
+            if (span <= 1.0)
+                return null;
+
+            // --------------------------------------------------------
+            // LINE SHOP:
+            // Nếu entity dài xuyên ra ngoài vùng user đã quét,
+            // chỉ clone phần nằm trong marker-span.
+            // --------------------------------------------------------
+            if (sourceEntity is Line sourceLine)
+            {
+                Vector3d lineVector =
+                    sourceLine.EndPoint -
+                    sourceLine.StartPoint;
+
+                lineVector =
+                    new Vector3d(
+                        lineVector.X,
+                        lineVector.Y,
+                        0.0);
+
+                if (lineVector.Length < 1e-9)
+                    return null;
+
+                Vector3d lineDirection =
+                    lineVector.GetNormal();
+
+                double parallel =
+                    Math.Abs(
+                        refDirection.DotProduct(
+                            lineDirection));
+
+                if (parallel >= 0.94)
+                {
+                    double s0 =
+                        GetTemplateSignedStation(
+                            sourceLine.StartPoint,
+                            origin,
+                            refDirection);
+
+                    double s1 =
+                        GetTemplateSignedStation(
+                            sourceLine.EndPoint,
+                            origin,
+                            refDirection);
+
+                    double ds =
+                        s1 - s0;
+
+                    if (Math.Abs(ds) < 1e-9)
+                        return null;
+
+                    double tAtMin =
+                        (0.0 - s0) /
+                        ds;
+
+                    double tAtMax =
+                        (span - s0) /
+                        ds;
+
+                    double tLow =
+                        Math.Max(
+                            0.0,
+                            Math.Min(
+                                tAtMin,
+                                tAtMax));
+
+                    double tHigh =
+                        Math.Min(
+                            1.0,
+                            Math.Max(
+                                tAtMin,
+                                tAtMax));
+
+                    if (tHigh -
+                        tLow <=
+                        1e-6)
+                    {
+                        return null;
+                    }
+
+                    Point3d p0 =
+                        sourceLine.StartPoint +
+                        (sourceLine.EndPoint -
+                         sourceLine.StartPoint) *
+                        tLow;
+
+                    Point3d p1 =
+                        sourceLine.StartPoint +
+                        (sourceLine.EndPoint -
+                         sourceLine.StartPoint) *
+                        tHigh;
+
+                    Line clipped =
+                        sourceLine.Clone()
+                            as Line;
+
+                    if (clipped == null)
+                        return null;
+
+                    clipped.StartPoint =
+                        p0;
+
+                    clipped.EndPoint =
+                        p1;
+
+                    return clipped;
+                }
+            }
+
+            // --------------------------------------------------------
+            // BLOCK/TEXT/FITTING và curve không song song:
+            // chỉ giữ nếu tâm đại diện nằm trong đúng marker-span.
+            // --------------------------------------------------------
+            Point3d representative =
+                GetTemplateEntityRepresentativePoint(
+                    sourceEntity);
+
+            double station =
+                GetTemplateSignedStation(
+                    representative,
+                    origin,
+                    refDirection);
+
+            double alongTolerance =
+                50.0;
+
+            if (station <
+                    -alongTolerance ||
+                station >
+                    span +
+                    alongTolerance)
+            {
+                return null;
+            }
+
+            return sourceEntity.Clone()
+                as Entity;
+        }
+
+
         private List<Point3d> CollectTemplateMarkerCenters(
             Transaction tr,
             IEnumerable<Entity> entities)
@@ -6058,6 +7132,17 @@ namespace ClassLibrary4
                 entities ??
                 Enumerable.Empty<Entity>())
             {
+                // FIX40I:
+                // Co/Tê/Giảm của mẫu SHOP là OUTPUT cần copy,
+                // KHÔNG phải marker nhận diện (đầu phun).
+                // Nếu tính fitting là marker thì target line gốc sẽ thiếu
+                // marker tương ứng và bị loại sai ở TryMatchTemplateBranch.
+                if (IsTemplateShopFitting(
+                        entity))
+                {
+                    continue;
+                }
+
                 if (entity is Circle circle)
                 {
                     AddUniquePoint(
@@ -6666,6 +7751,727 @@ namespace ClassLibrary4
             }
         }
 
+        private int ReplaceTemplateRawTargetLineWithShop(
+            Transaction tr,
+            BlockTableRecord targetSpace,
+            Curve targetCurve,
+            Curve sourceReferenceCurve,
+            Matrix3d transform)
+        {
+            if (tr == null ||
+                targetSpace == null ||
+                targetCurve == null ||
+                sourceReferenceCurve == null)
+            {
+                return 0;
+            }
+
+            // FIX40L:
+            // Chế độ SHOP phải THAY line/tim gốc bằng bộ SHOP.
+            // Không để line gốc nằm giữa 2 nét SHOP như FIX40K.
+            //
+            // Hiện bản vẽ đầu vào của user dùng LINE cho tim nhánh,
+            // nên xử lý LINE thật chắc trước. Curve khác không xóa bừa.
+            if (!(targetCurve is Line sourceLine))
+                return 0;
+
+            try
+            {
+                Point3d appliedStart =
+                    sourceReferenceCurve
+                        .StartPoint
+                        .TransformBy(transform);
+
+                Point3d appliedEnd =
+                    sourceReferenceCurve
+                        .EndPoint
+                        .TransformBy(transform);
+
+                Point3d lineStart =
+                    sourceLine.StartPoint;
+
+                Point3d lineEnd =
+                    sourceLine.EndPoint;
+
+                Vector3d lineVector =
+                    lineEnd -
+                    lineStart;
+
+                if (lineVector.Length < 1e-6)
+                    return 0;
+
+                double lengthSquared =
+                    lineVector.DotProduct(
+                        lineVector);
+
+                if (lengthSquared < 1e-9)
+                    return 0;
+
+                double GetParameter(Point3d point)
+                {
+                    return
+                        (point - lineStart)
+                            .DotProduct(lineVector) /
+                        lengthSquared;
+                }
+
+                double t0 =
+                    GetParameter(
+                        appliedStart);
+
+                double t1 =
+                    GetParameter(
+                        appliedEnd);
+
+                double low =
+                    Math.Max(
+                        0.0,
+                        Math.Min(
+                            t0,
+                            t1));
+
+                double high =
+                    Math.Min(
+                        1.0,
+                        Math.Max(
+                            t0,
+                            t1));
+
+                if (high <= low)
+                    return 0;
+
+                double sourceLength =
+                    lineVector.Length;
+
+                double removedLength =
+                    (high - low) *
+                    sourceLength;
+
+                if (removedLength < 5.0)
+                    return 0;
+
+                Point3d cutLow =
+                    lineStart +
+                    lineVector *
+                    low;
+
+                Point3d cutHigh =
+                    lineStart +
+                    lineVector *
+                    high;
+
+                int residualCount = 0;
+
+                // Giữ phần line TRƯỚC vùng SHOP nếu có.
+                if (low * sourceLength >
+                    5.0)
+                {
+                    Line before =
+                        sourceLine.Clone()
+                            as Line;
+
+                    if (before != null)
+                    {
+                        before.StartPoint =
+                            lineStart;
+
+                        before.EndPoint =
+                            cutLow;
+
+                        targetSpace.AppendEntity(
+                            before);
+
+                        tr.AddNewlyCreatedDBObject(
+                            before,
+                            true);
+
+                        residualCount++;
+                    }
+                }
+
+                // Giữ phần line SAU vùng SHOP nếu có.
+                if ((1.0 - high) *
+                    sourceLength >
+                    5.0)
+                {
+                    Line after =
+                        sourceLine.Clone()
+                            as Line;
+
+                    if (after != null)
+                    {
+                        after.StartPoint =
+                            cutHigh;
+
+                        after.EndPoint =
+                            lineEnd;
+
+                        targetSpace.AppendEntity(
+                            after);
+
+                        tr.AddNewlyCreatedDBObject(
+                            after,
+                            true);
+
+                        residualCount++;
+                    }
+                }
+
+                if (!sourceLine.IsWriteEnabled)
+                    sourceLine.UpgradeOpen();
+
+                sourceLine.Erase();
+
+                try
+                {
+                    Autodesk.AutoCAD.ApplicationServices.Core.Application
+                        .DocumentManager
+                        .MdiActiveDocument?
+                        .Editor
+                        .WriteMessage(
+                            $"\n[{TemplateAutoDrawBuild}] " +
+                            $"Đã thay LINE gốc bằng SHOP: " +
+                            $"xóa đoạn {removedLength:0.##} mm, " +
+                            $"giữ {residualCount} đoạn ngoài.");
+                }
+                catch
+                {
+                }
+
+                return 1;
+            }
+            catch
+            {
+                return 0;
+            }
+        }
+
+
+        private List<TextData> CollectTemplateShopTextsNearCurve(
+            PipeUiContext ctx,
+            Transaction tr,
+            IEnumerable<Entity> entities,
+            Curve branchCurve,
+            double maxPlanDistance)
+        {
+            List<TextData> result =
+                new List<TextData>();
+
+            if (branchCurve == null)
+                return result;
+
+            if (!TryGetTemplatePlanDirection(
+                    branchCurve,
+                    out Vector3d direction))
+            {
+                return result;
+            }
+
+            Point3d origin =
+                branchCurve.StartPoint;
+
+            double span =
+                GetTemplateSignedStation(
+                    branchCurve.EndPoint,
+                    origin,
+                    direction);
+
+            if (span < 0.0)
+            {
+                direction =
+                    direction.Negate();
+
+                span =
+                    -span;
+            }
+
+            double stationPadding =
+                500.0;
+
+            Action<string, Point3d, double> tryAdd =
+                (rawText, position, rotation) =>
+                {
+                    Point3d closest;
+
+                    double planDistance;
+
+                    if (!TryGetClosestPointInPlan(
+                            branchCurve,
+                            position,
+                            out closest,
+                            out planDistance))
+                    {
+                        return;
+                    }
+
+                    if (planDistance >
+                        maxPlanDistance)
+                    {
+                        return;
+                    }
+
+                    double station =
+                        GetTemplateSignedStation(
+                            closest,
+                            origin,
+                            direction);
+
+                    if (station <
+                            -stationPadding ||
+                        station >
+                            span +
+                            stationPadding)
+                    {
+                        return;
+                    }
+
+                    int before =
+                        result.Count;
+
+                    TryAddShopPipeSizeText(
+                        ctx,
+                        rawText,
+                        position,
+                        rotation,
+                        result);
+
+                    // Nếu text không song song với branch thì MapTextsToOriginalCurves
+                    // sẽ loại tiếp. Ở đây chỉ giới hạn theo hành lang.
+                };
+
+            foreach (Entity entity in
+                entities ??
+                Enumerable.Empty<Entity>())
+            {
+                if (entity == null)
+                    continue;
+
+                if (entity is DBText dbText)
+                {
+                    Point3d pt =
+                        (dbText.Justify !=
+                            AttachmentPoint.BaseLeft &&
+                         (dbText.AlignmentPoint.X != 0.0 ||
+                          dbText.AlignmentPoint.Y != 0.0))
+                            ? dbText.AlignmentPoint
+                            : dbText.Position;
+
+                    tryAdd(
+                        dbText.TextString,
+                        pt,
+                        dbText.Rotation);
+
+                    continue;
+                }
+
+                if (entity is MText mText)
+                {
+                    tryAdd(
+                        mText.Text,
+                        mText.Location,
+                        mText.Rotation);
+
+                    continue;
+                }
+
+                if (entity is BlockReference blockReference)
+                {
+                    foreach (ObjectId attId
+                        in blockReference.AttributeCollection)
+                    {
+                        AttributeReference att =
+                            tr.GetObject(
+                                attId,
+                                OpenMode.ForRead,
+                                false)
+                                as AttributeReference;
+
+                        if (att == null)
+                            continue;
+
+                        tryAdd(
+                            att.TextString,
+                            att.Position,
+                            att.Rotation);
+                    }
+                }
+            }
+
+            return result;
+        }
+
+        private List<Point3d> CollectTemplateShopSprinklersNearCurve(
+            Transaction tr,
+            IEnumerable<Entity> entities,
+            Curve branchCurve,
+            double maxPlanDistance)
+        {
+            List<Point3d> result =
+                new List<Point3d>();
+
+            if (branchCurve == null)
+                return result;
+
+            if (!TryGetTemplatePlanDirection(
+                    branchCurve,
+                    out Vector3d direction))
+            {
+                return result;
+            }
+
+            Point3d origin =
+                branchCurve.StartPoint;
+
+            double span =
+                GetTemplateSignedStation(
+                    branchCurve.EndPoint,
+                    origin,
+                    direction);
+
+            if (span < 0.0)
+            {
+                direction =
+                    direction.Negate();
+
+                span =
+                    -span;
+            }
+
+            double stationPadding =
+                650.0;
+
+            Action<Point3d> tryAdd =
+                center =>
+                {
+                    if (!TryGetClosestPointInPlan(
+                            branchCurve,
+                            center,
+                            out Point3d closest,
+                            out double planDistance))
+                    {
+                        return;
+                    }
+
+                    if (planDistance >
+                        maxPlanDistance)
+                    {
+                        return;
+                    }
+
+                    double station =
+                        GetTemplateSignedStation(
+                            closest,
+                            origin,
+                            direction);
+
+                    if (station <
+                            -stationPadding ||
+                        station >
+                            span +
+                            stationPadding)
+                    {
+                        return;
+                    }
+
+                    AddUniquePoint(
+                        result,
+                        center,
+                        5.0);
+                };
+
+            foreach (Entity entity in
+                entities ??
+                Enumerable.Empty<Entity>())
+            {
+                if (entity == null ||
+                    IsTemplateShopFitting(entity))
+                {
+                    continue;
+                }
+
+                if (entity is Circle circle)
+                {
+                    tryAdd(circle.Center);
+                    continue;
+                }
+
+                if (entity is BlockReference blockReference)
+                {
+                    foreach (Point3d center in
+                        GetCircularCentersFromBlock(
+                            tr,
+                            blockReference))
+                    {
+                        tryAdd(center);
+                    }
+
+                    if (IsLikelyShopSprinklerBlock(
+                            tr,
+                            blockReference))
+                    {
+                        tryAdd(
+                            blockReference.Position);
+                    }
+                }
+            }
+
+            return result;
+        }
+
+        private int DrawTemplateShopUsingRealShopEngine(
+            Transaction tr,
+            Database db,
+            BlockTableRecord targetSpace,
+            List<Entity> targetEntities,
+            Curve rawTargetCurve,
+            Curve sourceReferenceCurve,
+            Matrix3d transform,
+            out int fittingCount,
+            out int erasedRawCount)
+        {
+            fittingCount = 0;
+            erasedRawCount = 0;
+
+            if (tr == null ||
+                db == null ||
+                targetSpace == null ||
+                targetEntities == null ||
+                rawTargetCurve == null ||
+                sourceReferenceCurve == null)
+            {
+                return 0;
+            }
+
+            // ========================================================
+            // FIX40M:
+            // KHÔNG clone 2 nét SHOP của mẫu nữa.
+            //
+            // Mẫu chỉ dùng để tìm đúng nhánh target.
+            // Sau đó dựng một TIM target đúng theo span mẫu đã match,
+            // rồi chạy CHÍNH ENGINE VẼ SHOP đang dùng ở nút VẼ SHOP ỐNG.
+            // ========================================================
+            Point3d targetStart =
+                sourceReferenceCurve
+                    .StartPoint
+                    .TransformBy(transform);
+
+            Point3d targetEnd =
+                sourceReferenceCurve
+                    .EndPoint
+                    .TransformBy(transform);
+
+            if (targetStart.DistanceTo(
+                    targetEnd) <
+                5.0)
+            {
+                return 0;
+            }
+
+            using (Line branchCurve =
+                new Line(
+                    targetStart,
+                    targetEnd))
+            {
+                // Giữ layer line gốc để còn fallback nhận DN từ layer.
+                try
+                {
+                    branchCurve.Layer =
+                        rawTargetCurve.Layer;
+                }
+                catch
+                {
+                }
+
+                PipeUiContext ctx =
+                    _ctxFF;
+
+                List<TextData> texts =
+                    CollectTemplateShopTextsNearCurve(
+                        ctx,
+                        tr,
+                        targetEntities,
+                        branchCurve,
+                        1200.0);
+
+                Dictionary<Curve, List<TextProjectionData>>
+                    textMap =
+                        MapTextsToOriginalCurves(
+                            new List<Curve>
+                            {
+                                branchCurve
+                            },
+                            texts);
+
+                List<ShopPipeCandidate> shopPipes =
+                    new List<ShopPipeCandidate>();
+
+                if (textMap.TryGetValue(
+                        branchCurve,
+                        out List<TextProjectionData> projections) &&
+                    projections != null &&
+                    projections.Count > 0)
+                {
+                    List<ShopPipeCandidate> splitCandidates =
+                        CreateShopSplitCandidatesFromTexts(
+                            branchCurve,
+                            projections);
+
+                    if (splitCandidates.Count > 0)
+                    {
+                        shopPipes.AddRange(
+                            splitCandidates);
+                    }
+                    else
+                    {
+                        TextProjectionData best =
+                            projections
+                                .OrderBy(x => x.MatchScore)
+                                .ThenBy(
+                                    x => x.DistanceAlongCurve)
+                                .First();
+
+                        ShopPipeCandidate candidate =
+                            CreateShopPipeCandidate(
+                                branchCurve,
+                                best.Text.TextString,
+                                best.Text.Width);
+
+                        if (candidate != null)
+                            shopPipes.Add(candidate);
+                    }
+                }
+
+                // Fallback theo layer target nếu khu vực không quét trúng chữ DN.
+                if (shopPipes.Count == 0 &&
+                    TryParseAutomaticPipeSize(
+                        ctx,
+                        rawTargetCurve.Layer,
+                        out string layerSize,
+                        out double layerWidth))
+                {
+                    ShopPipeCandidate candidate =
+                        CreateShopPipeCandidate(
+                            branchCurve,
+                            layerSize,
+                            layerWidth);
+
+                    if (candidate != null)
+                        shopPipes.Add(candidate);
+                }
+
+                if (shopPipes.Count == 0)
+                {
+                    try
+                    {
+                        Autodesk.AutoCAD.ApplicationServices.Core.Application
+                            .DocumentManager
+                            .MdiActiveDocument?
+                            .Editor
+                            .WriteMessage(
+                                $"\n[{TemplateAutoDrawBuild}] " +
+                                "Bỏ nhánh: không nhận được DN trên target.");
+                    }
+                    catch
+                    {
+                    }
+
+                    return 0;
+                }
+
+                List<Point3d> sprinklerCenters =
+                    CollectTemplateShopSprinklersNearCurve(
+                        tr,
+                        targetEntities,
+                        branchCurve,
+                        1200.0);
+
+                string shopMaterial =
+                    InferShopMaterialFromPipes(
+                        shopPipes,
+                        GetSelectedPipeMaterialName(
+                            ctx));
+
+                string shopLibraryPath =
+                    FindShopFittingLibraryPath(
+                        shopMaterial,
+                        db);
+
+                List<ShopFittingGapInfo> fittingGaps =
+                    new List<ShopFittingGapInfo>();
+
+                int reducerCount;
+                int elbow90Count;
+                int elbow45Count;
+                int teeCount;
+                int sprinklerElbowCount;
+
+                fittingCount =
+                    DrawSmartShopFittings(
+                        tr,
+                        db,
+                        targetSpace,
+                        shopPipes,
+                        sprinklerCenters,
+                        shopLibraryPath,
+                        fittingGaps,
+                        out reducerCount,
+                        out elbow90Count,
+                        out elbow45Count,
+                        out teeCount,
+                        out sprinklerElbowCount);
+
+                int edgeCount = 0;
+
+                foreach (ShopPipeCandidate pipe
+                    in shopPipes)
+                {
+                    EnsureShopLayerExists(
+                        tr,
+                        db,
+                        pipe.LayerName);
+
+                    edgeCount +=
+                        DrawShopParallelPipeWithGaps(
+                            tr,
+                            db,
+                            targetSpace,
+                            pipe,
+                            fittingGaps);
+                }
+
+                if (edgeCount <= 0)
+                    return 0;
+
+                // Chỉ sau khi engine SHOP đã vẽ thành công mới bỏ line gốc.
+                erasedRawCount =
+                    ReplaceTemplateRawTargetLineWithShop(
+                        tr,
+                        targetSpace,
+                        rawTargetCurve,
+                        sourceReferenceCurve,
+                        transform);
+
+                try
+                {
+                    Autodesk.AutoCAD.ApplicationServices.Core.Application
+                        .DocumentManager
+                        .MdiActiveDocument?
+                        .Editor
+                        .WriteMessage(
+                            $"\n[{TemplateAutoDrawBuild}] REAL-SHOP: " +
+                            $"edge={edgeCount}, fitting={fittingCount}, " +
+                            $"DN-segment={shopPipes.Count}, " +
+                            $"raw-replaced={erasedRawCount}.");
+                }
+                catch
+                {
+                }
+
+                return edgeCount;
+            }
+        }
+
+
         private void BtnAutoDrawByTemplate_Click(
             object sender,
             RoutedEventArgs e)
@@ -6725,9 +8531,8 @@ namespace ClassLibrary4
                 new PromptSelectionOptions();
 
             sampleOptions.MessageForAdding =
-                "\nBƯỚC 1 - Quét chọn NHÁNH MẪU: " +
-                "ống/chữ đã vẽ, các đầu phun và " +
-                "đường tim gốc nếu vẫn còn: ";
+                "\nBƯỚC 1 - Quét chọn NHÁNH MẪU " +
+                "(mẫu thường HOẶC mẫu SHOP 2 nét + phụ kiện): ";
 
             PromptSelectionResult sampleResult =
                 ed.GetSelection(
@@ -6744,8 +8549,8 @@ namespace ClassLibrary4
                 new PromptSelectionOptions();
 
             targetOptions.MessageForAdding =
-                "\nBƯỚC 2 - Quét chọn KHU VỰC cần tìm " +
-                "và vẽ các nhánh tương tự: ";
+                "\nBƯỚC 2 - Quét KHU VỰC line/tim gốc " +
+                "cần tìm các nhánh tương tự để áp mẫu: ";
 
             PromptSelectionResult targetResult =
                 ed.GetSelection(
@@ -6759,6 +8564,7 @@ namespace ClassLibrary4
             }
 
             Curve virtualReferenceCurve = null;
+            Curve markerBoundReferenceCurve = null;
 
             try
             {
@@ -6796,12 +8602,27 @@ namespace ClassLibrary4
                             .Where(IsTemplatePipeCurve)
                             .ToList();
 
+                    List<Curve> sampleShopCenterlines =
+                        sampleEntities
+                            .OfType<Curve>()
+                            .Where(
+                                IsTemplateShopCenterline)
+                            .ToList();
+
+                    bool isShopTemplate =
+                        samplePipeCurves.Any(
+                            IsTemplateShopPipeEdge) ||
+                        sampleEntities.Any(
+                            IsTemplateShopFitting) ||
+                        sampleShopCenterlines.Count > 0;
+
                     if (samplePipeCurves.Count == 0)
                     {
                         MessageBox.Show(
-                            "Không tìm thấy ống mẫu đã vẽ.\n" +
-                            "Hãy chọn cả Polyline ống có bề rộng " +
-                            "và Layer kích thước.",
+                            "Không tìm thấy ống mẫu đã vẽ.\n\n" +
+                            "Mẫu thường: chọn Polyline ống có bề rộng.\n" +
+                            "Mẫu SHOP: chọn đủ 2 nét FF_SHOP_DN... " +
+                            "và phụ kiện/tim SHOP nếu có.",
                             "Vẽ ống tự động theo mẫu");
 
                         return;
@@ -6813,60 +8634,32 @@ namespace ClassLibrary4
                                 curve => curve.Layer),
                             StringComparer.OrdinalIgnoreCase);
 
-                    List<Entity> templateEntitiesToCopy =
-                        sampleEntities
-                            .Where(
-                                entity =>
-                                    (entity is Curve curve &&
-                                     samplePipeCurves.Contains(
-                                         curve)) ||
-                                    ((entity is DBText ||
-                                      entity is MText) &&
-                                     templatePipeLayers.Contains(
-                                         entity.Layer)))
-                            .ToList();
+                    List<Entity> templateEntitiesToCopy;
 
-                    List<Curve> sampleSourceCurves =
-                        sampleEntities
-                            .Where(IsTemplateReferenceCurve)
-                            .Cast<Curve>()
-                            .Where(
-                                curve =>
-                                    !samplePipeCurves.Contains(
-                                        curve))
-                            .ToList();
-
-                    Curve sourceReferenceCurve =
-                        sampleSourceCurves.Count > 0
-                            ? SelectTemplateReferenceCurve(
-                                sampleSourceCurves,
-                                samplePipeCurves)
-                            : null;
-
-                    // Dựng đường tim ảo từ những Polyline ống đã vẽ.
-                    // Vì vậy dù chức năng tự động đã xóa LINE gốc,
-                    // chức năng vẽ theo mẫu vẫn nhận diện được nhánh mẫu.
-                    virtualReferenceCurve =
-                        BuildVirtualTemplateCenterline(
-                            samplePipeCurves);
-
-                    Curve referenceCurve =
-                        SelectUsableTemplateReferenceCurve(
-                            sourceReferenceCurve,
-                            virtualReferenceCurve,
-                            samplePipeCurves);
-
-                    if (referenceCurve == null ||
-                        templateEntitiesToCopy.Count == 0)
+                    if (isShopTemplate)
                     {
-                        MessageBox.Show(
-                            "Không dựng được đường tim ảo từ " +
-                            "các đoạn ống mẫu.\n" +
-                            "Hãy quét đủ toàn bộ các đoạn DN " +
-                            "trên cùng một nhánh.",
-                            "Vẽ ống tự động theo mẫu");
-
-                        return;
+                        templateEntitiesToCopy =
+                            sampleEntities
+                                .Where(
+                                    entity =>
+                                        IsTemplateShopOutputEntity(
+                                            entity))
+                                .ToList();
+                    }
+                    else
+                    {
+                        templateEntitiesToCopy =
+                            sampleEntities
+                                .Where(
+                                    entity =>
+                                        (entity is Curve curve &&
+                                         samplePipeCurves.Contains(
+                                             curve)) ||
+                                        ((entity is DBText ||
+                                          entity is MText) &&
+                                         templatePipeLayers.Contains(
+                                             entity.Layer)))
+                                .ToList();
                     }
 
                     List<Curve> sampleContextCurves =
@@ -6875,20 +8668,145 @@ namespace ClassLibrary4
                             .Cast<Curve>()
                             .ToList();
 
+                    List<Curve> sampleSourceCurves =
+                        sampleContextCurves
+                            .Where(
+                                curve =>
+                                    !samplePipeCurves.Contains(
+                                        curve) &&
+                                    !IsTemplateShopCenterline(
+                                        curve))
+                            .ToList();
+
+                    Curve sourceReferenceCurve =
+                        null;
+
+                    if (isShopTemplate)
+                    {
+                        sourceReferenceCurve =
+                            SelectShopTemplateReferenceCurve(
+                                sampleShopCenterlines,
+                                samplePipeCurves,
+                                sampleContextCurves);
+                    }
+                    else if (sampleSourceCurves.Count > 0)
+                    {
+                        sourceReferenceCurve =
+                            SelectTemplateReferenceCurve(
+                                sampleSourceCurves,
+                                samplePipeCurves);
+                    }
+
+                    if (isShopTemplate)
+                    {
+                        if (sourceReferenceCurve == null)
+                        {
+                            virtualReferenceCurve =
+                                BuildVirtualTemplateCenterlineFromShopEdges(
+                                    samplePipeCurves);
+                        }
+                    }
+                    else
+                    {
+                        virtualReferenceCurve =
+                            BuildVirtualTemplateCenterline(
+                                samplePipeCurves);
+                    }
+
+                    Curve referenceCurve;
+
+                    if (isShopTemplate)
+                    {
+                        referenceCurve =
+                            sourceReferenceCurve ??
+                            virtualReferenceCurve;
+                    }
+                    else
+                    {
+                        referenceCurve =
+                            SelectUsableTemplateReferenceCurve(
+                                sourceReferenceCurve,
+                                virtualReferenceCurve,
+                                samplePipeCurves);
+                    }
+
+                    if (isShopTemplate &&
+                        referenceCurve != null)
+                    {
+                        templateEntitiesToCopy =
+                            FilterShopTemplateEntitiesToReferenceBranch(
+                                referenceCurve,
+                                sampleEntities,
+                                samplePipeCurves);
+                    }
+
+                    if (referenceCurve == null ||
+                        templateEntitiesToCopy.Count == 0)
+                    {
+                        MessageBox.Show(
+                            "Không dựng được TIM của nhánh mẫu.\n\n" +
+                            "Nếu là mẫu SHOP, hãy quét đủ 2 nét song song " +
+                            "của cùng DN và FF_SHOP_TAM_* nếu đang có.\n" +
+                            "Nếu là mẫu thường, hãy quét đủ ống mẫu.",
+                            "Vẽ ống tự động theo mẫu");
+
+                        return;
+                    }
+
                     List<Point3d> allSampleMarkers =
-                        CollectTemplateMarkerCenters(
-                            tr,
-                            sampleEntities);
+                        isShopTemplate
+                            ? CollectTemplateShopMarkerCenters(
+                                tr,
+                                sampleEntities)
+                            : CollectTemplateMarkerCenters(
+                                tr,
+                                sampleEntities);
 
                     List<Point3d> sampleMarkers =
                         GetTemplateMarkersNearCurve(
                             referenceCurve,
                             allSampleMarkers);
 
+                    bool strictShopSelectionSpan =
+                        false;
+
+                    if (isShopTemplate &&
+                        sampleMarkers.Count >= 2)
+                    {
+                        markerBoundReferenceCurve =
+                            BuildTemplateMarkerBoundReferenceCurve(
+                                referenceCurve,
+                                sampleMarkers);
+
+                        if (markerBoundReferenceCurve != null)
+                        {
+                            referenceCurve =
+                                markerBoundReferenceCurve;
+
+                            strictShopSelectionSpan =
+                                true;
+
+                            sampleMarkers =
+                                GetTemplateMarkersNearCurve(
+                                    referenceCurve,
+                                    allSampleMarkers);
+
+                            // Sau khi khóa span bằng đúng marker nằm trong vùng quét,
+                            // lọc lại bộ SHOP theo reference mới.
+                            templateEntitiesToCopy =
+                                FilterShopTemplateEntitiesToReferenceBranch(
+                                    referenceCurve,
+                                    sampleEntities,
+                                    samplePipeCurves);
+                        }
+                    }
+
                     int sourceRootIndex =
-                        FindTemplateBranchRootIndex(
-                            referenceCurve,
-                            sampleContextCurves);
+                        strictShopSelectionSpan
+                            ? -1
+                            : FindTemplateBranchRootIndex(
+                                referenceCurve,
+                                sampleContextCurves);
 
                     List<Curve> targetSourceCurves =
                         targetEntities
@@ -6896,7 +8814,9 @@ namespace ClassLibrary4
                             .Cast<Curve>()
                             .Where(
                                 curve =>
-                                    !IsTemplatePipeCurve(curve))
+                                    !IsTemplatePipeCurve(curve) &&
+                                    !IsTemplateShopCenterline(
+                                        curve))
                             .ToList();
 
                     List<Curve> existingTargetPipeCurves =
@@ -6906,9 +8826,13 @@ namespace ClassLibrary4
                             .ToList();
 
                     List<Point3d> allTargetMarkers =
-                        CollectTemplateMarkerCenters(
-                            tr,
-                            targetEntities);
+                        isShopTemplate
+                            ? CollectTemplateShopMarkerCenters(
+                                tr,
+                                targetEntities)
+                            : CollectTemplateMarkerCenters(
+                                tr,
+                                targetEntities);
 
                     if (targetSourceCurves.Count == 0)
                     {
@@ -6920,11 +8844,49 @@ namespace ClassLibrary4
                         return;
                     }
 
-                    Curve probeCurve =
-                        samplePipeCurves
-                            .OrderByDescending(
-                                GetTemplateCurveLength)
-                            .First();
+                    Curve probeCurve;
+
+                    if (isShopTemplate)
+                    {
+                        Vector3d referenceDirection =
+                            Vector3d.XAxis;
+
+                        TryGetTemplatePlanDirection(
+                            referenceCurve,
+                            out referenceDirection);
+
+                        probeCurve =
+                            samplePipeCurves
+                                .Where(
+                                    curve =>
+                                    {
+                                        if (!TryGetTemplatePlanDirection(
+                                                curve,
+                                                out Vector3d d))
+                                        {
+                                            return false;
+                                        }
+
+                                        return Math.Abs(
+                                            referenceDirection.DotProduct(d)) >=
+                                            0.94;
+                                    })
+                                .OrderByDescending(
+                                    GetTemplateCurveLength)
+                                .FirstOrDefault() ??
+                            samplePipeCurves
+                                .OrderByDescending(
+                                    GetTemplateCurveLength)
+                                .First();
+                    }
+                    else
+                    {
+                        probeCurve =
+                            samplePipeCurves
+                                .OrderByDescending(
+                                    GetTemplateCurveLength)
+                                .First();
+                    }
 
                     List<TemplateBranchMatchData> matches =
                         new List<TemplateBranchMatchData>();
@@ -6955,15 +8917,61 @@ namespace ClassLibrary4
                                 targetCurve,
                                 targetSourceCurves);
 
-                        if (!TryMatchTemplateBranch(
-                            referenceCurve,
-                            targetCurve,
-                            sourceRootIndex,
-                            targetRootIndex,
-                            sampleMarkers,
-                            targetMarkers,
-                            out Matrix3d transform,
-                            out double score))
+                        Curve targetMatchCurve =
+                            targetCurve;
+
+                        Curve temporaryTargetReference =
+                            null;
+
+                        if (strictShopSelectionSpan)
+                        {
+                            // FIX40K:
+                            // LINE target có thể dài xuyên ra ngoài khung quét.
+                            // Chỉ dùng đoạn từ marker đầu -> marker cuối
+                            // thật sự nằm trong SelectionSet của user.
+                            if (targetMarkers.Count < 2)
+                                continue;
+
+                            temporaryTargetReference =
+                                BuildTemplateMarkerBoundReferenceCurve(
+                                    targetCurve,
+                                    targetMarkers);
+
+                            if (temporaryTargetReference == null)
+                                continue;
+
+                            targetMatchCurve =
+                                temporaryTargetReference;
+
+                            targetMarkers =
+                                GetTemplateMarkersNearCurve(
+                                    targetMatchCurve,
+                                    allTargetMarkers);
+
+                            targetRootIndex =
+                                -1;
+                        }
+                        else if (isShopTemplate &&
+                                 sourceRootIndex >= 0 &&
+                                 targetRootIndex < 0)
+                        {
+                            continue;
+                        }
+
+                        bool matched =
+                            TryMatchTemplateBranch(
+                                referenceCurve,
+                                targetMatchCurve,
+                                sourceRootIndex,
+                                targetRootIndex,
+                                sampleMarkers,
+                                targetMarkers,
+                                out Matrix3d transform,
+                                out double score);
+
+                        temporaryTargetReference?.Dispose();
+
+                        if (!matched)
                         {
                             continue;
                         }
@@ -7031,6 +9039,43 @@ namespace ClassLibrary4
                         in matches.OrderBy(
                             item => item.Score))
                     {
+                        if (isShopTemplate)
+                        {
+                            // ==================================================
+                            // FIX40M:
+                            // Không copy geometry mẫu.
+                            // Chạy engine VẼ SHOP thật trên chính tim target.
+                            // ==================================================
+                            int targetFittingCount;
+                            int targetRawReplaced;
+
+                            int createdEdges =
+                                DrawTemplateShopUsingRealShopEngine(
+                                    tr,
+                                    db,
+                                    targetSpace,
+                                    targetEntities,
+                                    match.TargetCurve,
+                                    referenceCurve,
+                                    match.Transform,
+                                    out targetFittingCount,
+                                    out targetRawReplaced);
+
+                            if (createdEdges > 0)
+                            {
+                                copiedBranchCount++;
+
+                                copiedEntityCount +=
+                                    createdEdges +
+                                    targetFittingCount;
+                            }
+
+                            continue;
+                        }
+
+                        // ======================================================
+                        // MẪU THƯỜNG: giữ nguyên cơ chế clone cũ.
+                        // ======================================================
                         int copiedOnCurrentBranch = 0;
 
                         foreach (
@@ -7038,8 +9083,10 @@ namespace ClassLibrary4
                             in templateEntitiesToCopy)
                         {
                             Entity copiedEntity =
-                                templateEntity.Clone()
-                                    as Entity;
+                                CloneTemplateEntityInsideReferenceSpan(
+                                    templateEntity,
+                                    referenceCurve,
+                                    false);
 
                             if (copiedEntity == null)
                                 continue;
@@ -7074,11 +9121,31 @@ namespace ClassLibrary4
                     tr.Commit();
                     ed.Regen();
 
+                    string templateModeText =
+                        isShopTemplate
+                            ? "[MẪU SHOP]"
+                            : "[MẪU THƯỜNG]";
+
+                    string templateCopiedText =
+                        isShopTemplate
+                            ? " SHOP dựng lại bằng chính engine VẼ SHOP ỐNG."
+                            : " ống/chữ.";
+
                     ed.WriteMessage(
-                        $"\n[{TemplateAutoDrawBuild}] Hoàn tất: " +
+                        $"\n[{TemplateAutoDrawBuild}] Hoàn tất " +
+                        $"{templateModeText}: " +
                         $"đã nhận diện {copiedBranchCount} " +
                         $"nhánh tương tự và sao chép " +
-                        $"{copiedEntityCount} đối tượng ống/chữ.");
+                        $"{copiedEntityCount} đối tượng" +
+                        templateCopiedText +
+                        (isShopTemplate
+                            ? $" | Bộ mẫu sau lọc={templateEntitiesToCopy.Count}" +
+                              (strictShopSelectionSpan
+                                  ? " | KHÓA THEO MARKER VÙNG QUÉT=YES"
+                                  : " | KHÓA THEO MARKER VÙNG QUÉT=NO") +
+                              " | THAY LINE GỐC=YES" +
+                              " | REAL SHOP ENGINE=YES"
+                            : ""));
                 }
             }
             catch (System.Exception ex)
@@ -7090,6 +9157,7 @@ namespace ClassLibrary4
             }
             finally
             {
+                markerBoundReferenceCurve?.Dispose();
                 virtualReferenceCurve?.Dispose();
             }
         }
@@ -16151,6 +18219,829 @@ namespace ClassLibrary4
         }
 
 
+
+        // ============================================================
+        // FIX40O - CTN SHOP PPR
+        // ============================================================
+
+        private static bool TryMapCtnPprNominalDnToOutsideD(
+            double nominalDn,
+            out double outsideD)
+        {
+            outsideD = 0.0;
+
+            // Mapping thực dụng cho PPR:
+            // DN15 -> D20, DN20 -> D25, DN25 -> D32,
+            // DN32 -> D40, DN40 -> D50, DN50 -> D63,
+            // DN65 -> D75, DN80 -> D90, DN100 -> D110.
+            //
+            // Với size ngoài bảng (ví dụ DN125), fallback dùng chính số
+            // để vẫn tìm được block D125 nếu thư viện có.
+            double[][] map =
+                new double[][]
+                {
+                    new double[] { 15, 20 },
+                    new double[] { 20, 25 },
+                    new double[] { 25, 32 },
+                    new double[] { 32, 40 },
+                    new double[] { 40, 50 },
+                    new double[] { 50, 63 },
+                    new double[] { 65, 75 },
+                    new double[] { 80, 90 },
+                    new double[] { 100, 110 }
+                };
+
+            foreach (double[] row in map)
+            {
+                if (Math.Abs(
+                        row[0] -
+                        nominalDn) <= 0.01)
+                {
+                    outsideD =
+                        row[1];
+
+                    return true;
+                }
+            }
+
+            if (nominalDn > 0.0)
+            {
+                outsideD =
+                    nominalDn;
+
+                return true;
+            }
+
+            return false;
+        }
+
+        private bool TryParseCtnPprShopSize(
+            string sourceText,
+            out string sizeText,
+            out double outsideDiameter)
+        {
+            sizeText = "";
+            outsideDiameter = 0.0;
+
+            string normalized =
+                NormalizePipeLabel(
+                    sourceText ?? "")
+                    .Replace(',', '.')
+                    .ToUpperInvariant();
+
+            if (string.IsNullOrWhiteSpace(
+                    normalized))
+            {
+                return false;
+            }
+
+            // 1) PPR ghi đúng theo Ø ngoài: D20 / D25 / Ø32 / Φ40...
+            Match dMatch =
+                Regex.Match(
+                    normalized,
+                    @"(?<![A-Z0-9])(?:D|Ø|Φ)\s*(?<SIZE>\d{1,4}(?:\.\d+)?)(?:\s*MM)?(?![A-Z0-9])",
+                    RegexOptions.IgnoreCase);
+
+            if (dMatch.Success &&
+                double.TryParse(
+                    dMatch.Groups["SIZE"].Value,
+                    NumberStyles.AllowDecimalPoint,
+                    CultureInfo.InvariantCulture,
+                    out double dSize) &&
+                dSize > 0.0)
+            {
+                outsideDiameter =
+                    dSize;
+
+                sizeText =
+                    "D" +
+                    FormatShopDnNumber(
+                        dSize);
+
+                return true;
+            }
+
+            // 2) Nếu bản vẽ đang ghi DN thì đổi sang Ø ngoài PPR.
+            Match dnMatch =
+                Regex.Match(
+                    normalized,
+                    @"(?<![A-Z0-9])DN\s*(?<SIZE>\d{1,4}(?:\.\d+)?)(?:\s*MM)?(?![A-Z0-9])",
+                    RegexOptions.IgnoreCase);
+
+            if (dnMatch.Success &&
+                double.TryParse(
+                    dnMatch.Groups["SIZE"].Value,
+                    NumberStyles.AllowDecimalPoint,
+                    CultureInfo.InvariantCulture,
+                    out double nominalDn) &&
+                TryMapCtnPprNominalDnToOutsideD(
+                    nominalDn,
+                    out double mappedD))
+            {
+                outsideDiameter =
+                    mappedD;
+
+                sizeText =
+                    "D" +
+                    FormatShopDnNumber(
+                        mappedD);
+
+                return true;
+            }
+
+            // 3) Layer CTN có thể chứa "_D20_" hoặc "_DN20_".
+            Match embeddedD =
+                Regex.Match(
+                    normalized,
+                    @"(?:^|[_\-\s])D\s*(?<SIZE>\d{1,4}(?:\.\d+)?)(?:$|[_\-\s])",
+                    RegexOptions.IgnoreCase);
+
+            if (embeddedD.Success &&
+                double.TryParse(
+                    embeddedD.Groups["SIZE"].Value,
+                    NumberStyles.AllowDecimalPoint,
+                    CultureInfo.InvariantCulture,
+                    out double embeddedDSize) &&
+                embeddedDSize > 0.0)
+            {
+                outsideDiameter =
+                    embeddedDSize;
+
+                sizeText =
+                    "D" +
+                    FormatShopDnNumber(
+                        embeddedDSize);
+
+                return true;
+            }
+
+            Match embeddedDn =
+                Regex.Match(
+                    normalized,
+                    @"(?:^|[_\-\s])DN\s*(?<SIZE>\d{1,4}(?:\.\d+)?)(?:$|[_\-\s])",
+                    RegexOptions.IgnoreCase);
+
+            if (embeddedDn.Success &&
+                double.TryParse(
+                    embeddedDn.Groups["SIZE"].Value,
+                    NumberStyles.AllowDecimalPoint,
+                    CultureInfo.InvariantCulture,
+                    out double embeddedNominal) &&
+                TryMapCtnPprNominalDnToOutsideD(
+                    embeddedNominal,
+                    out double embeddedMappedD))
+            {
+                outsideDiameter =
+                    embeddedMappedD;
+
+                sizeText =
+                    "D" +
+                    FormatShopDnNumber(
+                        embeddedMappedD);
+
+                return true;
+            }
+
+            return false;
+        }
+
+        private void TryAddCtnPprShopSizeText(
+            string rawText,
+            Point3d position,
+            double rotation,
+            List<TextData> texts)
+        {
+            if (texts == null)
+                return;
+
+            if (!TryParseCtnPprShopSize(
+                    rawText,
+                    out string detectedSize,
+                    out double outsideD))
+            {
+                return;
+            }
+
+            texts.Add(
+                new TextData
+                {
+                    Position = position,
+                    Rotation = rotation,
+                    TextString = detectedSize,
+                    LayerName =
+                        "CTN_SHOP_PPR_" +
+                        CleanLayerText(
+                            detectedSize),
+                    Width = outsideD
+                });
+        }
+
+        private ShopPipeCandidate CreateCtnPprShopPipeCandidate(
+            Curve curve,
+            string sizeText,
+            double outsideDiameter)
+        {
+            if (curve == null ||
+                string.IsNullOrWhiteSpace(
+                    sizeText) ||
+                outsideDiameter <= 0.0)
+            {
+                return null;
+            }
+
+            try
+            {
+                Point3d start =
+                    curve.StartPoint;
+
+                Point3d end =
+                    curve.EndPoint;
+
+                Vector3d startDir =
+                    GetShopCurveDirection(
+                        curve,
+                        true);
+
+                Vector3d endDir =
+                    GetShopCurveDirection(
+                        curve,
+                        false);
+
+                if (startDir.Length < 1e-9 ||
+                    endDir.Length < 1e-9)
+                {
+                    return null;
+                }
+
+                Vector3d startNormal =
+                    GetPlanNormal(
+                        startDir);
+
+                Vector3d endNormal =
+                    GetPlanNormal(
+                        endDir);
+
+                double half =
+                    outsideDiameter /
+                    2.0;
+
+                string cleanSize =
+                    CleanLayerText(
+                        sizeText);
+
+                return new ShopPipeCandidate
+                {
+                    Curve = curve,
+                    SizeText = sizeText,
+                    Width = outsideDiameter,
+                    LayerName =
+                        "CTN_SHOP_PPR_" +
+                        cleanSize,
+                    Start = start,
+                    End = end,
+                    StartLeft =
+                        start +
+                        startNormal * half,
+                    StartRight =
+                        start -
+                        startNormal * half,
+                    EndLeft =
+                        end +
+                        endNormal * half,
+                    EndRight =
+                        end -
+                        endNormal * half
+                };
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private List<ShopPipeCandidate>
+            CreateCtnPprShopSplitCandidatesFromTexts(
+                Curve curve,
+                List<TextProjectionData> projections)
+        {
+            List<ShopPipeCandidate> result =
+                new List<ShopPipeCandidate>();
+
+            if (curve == null ||
+                projections == null ||
+                projections.Count < 2 ||
+                !(curve is Line ||
+                  curve is Polyline ||
+                  curve is Polyline2d ||
+                  curve is Polyline3d))
+            {
+                return result;
+            }
+
+            if (!IsShopStraightCurve(
+                    curve))
+            {
+                return result;
+            }
+
+            List<TextProjectionData> ordered =
+                projections
+                    .Where(
+                        x =>
+                            x != null &&
+                            x.Text != null &&
+                            x.Text.Width > 0.0)
+                    .OrderBy(
+                        x =>
+                            x.DistanceAlongCurve)
+                    .ToList();
+
+            if (ordered.Count < 2)
+                return result;
+
+            try
+            {
+                double totalLength =
+                    curve.GetDistanceAtParameter(
+                        curve.EndParam);
+
+                if (totalLength < 10.0)
+                    return result;
+
+                List<double> boundaries =
+                    new List<double>
+                    {
+                        0.0
+                    };
+
+                for (int i = 0;
+                    i < ordered.Count - 1;
+                    i++)
+                {
+                    double middle =
+                        (ordered[i]
+                            .DistanceAlongCurve +
+                         ordered[i + 1]
+                            .DistanceAlongCurve) /
+                        2.0;
+
+                    if (middle > 1.0 &&
+                        middle <
+                            totalLength -
+                            1.0)
+                    {
+                        boundaries.Add(
+                            middle);
+                    }
+                }
+
+                boundaries.Add(
+                    totalLength);
+
+                if (boundaries.Count !=
+                    ordered.Count + 1)
+                {
+                    return result;
+                }
+
+                for (int i = 0;
+                    i < ordered.Count;
+                    i++)
+                {
+                    double d1 =
+                        boundaries[i];
+
+                    double d2 =
+                        boundaries[i + 1];
+
+                    if (d2 - d1 <
+                        5.0)
+                    {
+                        continue;
+                    }
+
+                    Point3d p1 =
+                        curve.GetPointAtDist(
+                            d1);
+
+                    Point3d p2 =
+                        curve.GetPointAtDist(
+                            d2);
+
+                    if (p1.DistanceTo(p2) <
+                        5.0)
+                    {
+                        continue;
+                    }
+
+                    Line segment =
+                        new Line(
+                            p1,
+                            p2);
+
+                    ShopPipeCandidate candidate =
+                        CreateCtnPprShopPipeCandidate(
+                            segment,
+                            ordered[i]
+                                .Text
+                                .TextString,
+                            ordered[i]
+                                .Text
+                                .Width);
+
+                    if (candidate != null)
+                        result.Add(candidate);
+                }
+            }
+            catch
+            {
+                result.Clear();
+            }
+
+            return result;
+        }
+
+        private void BtnVeShopOngPprCTN_Click(
+            object sender,
+            RoutedEventArgs e)
+        {
+            var doc =
+                Autodesk.AutoCAD.ApplicationServices.Core.Application
+                    .DocumentManager
+                    .MdiActiveDocument;
+
+            if (doc == null)
+                return;
+
+            var ed =
+                doc.Editor;
+
+            var db =
+                doc.Database;
+
+            Autodesk.AutoCAD.Internal.Utils
+                .SetFocusToDwgView();
+
+            PromptSelectionOptions pso =
+                new PromptSelectionOptions();
+
+            pso.MessageForAdding =
+                "\n[SHOP CTN PPR] Quét line/polyline tuyến PPR + chữ D/DN: ";
+
+            TypedValue[] tvs =
+                new TypedValue[]
+                {
+                    new TypedValue(
+                        (int)DxfCode.Operator,
+                        "<OR"),
+                    new TypedValue(
+                        (int)DxfCode.Start,
+                        "LINE"),
+                    new TypedValue(
+                        (int)DxfCode.Start,
+                        "LWPOLYLINE"),
+                    new TypedValue(
+                        (int)DxfCode.Start,
+                        "POLYLINE"),
+                    new TypedValue(
+                        (int)DxfCode.Start,
+                        "ARC"),
+                    new TypedValue(
+                        (int)DxfCode.Start,
+                        "TEXT"),
+                    new TypedValue(
+                        (int)DxfCode.Start,
+                        "MTEXT"),
+                    new TypedValue(
+                        (int)DxfCode.Start,
+                        "INSERT"),
+                    new TypedValue(
+                        (int)DxfCode.Operator,
+                        "OR>")
+                };
+
+            PromptSelectionResult psr =
+                ed.GetSelection(
+                    pso,
+                    new SelectionFilter(
+                        tvs));
+
+            if (psr.Status !=
+                    PromptStatus.OK ||
+                psr.Value == null ||
+                psr.Value.Count == 0)
+            {
+                return;
+            }
+
+            using (doc.LockDocument())
+            using (Transaction tr =
+                db.TransactionManager
+                    .StartTransaction())
+            {
+                BlockTableRecord btr =
+                    (BlockTableRecord)
+                    tr.GetObject(
+                        db.CurrentSpaceId,
+                        OpenMode.ForWrite);
+
+                List<Curve> curves =
+                    new List<Curve>();
+
+                List<ObjectId> sourceCurveIds =
+                    new List<ObjectId>();
+
+                List<TextData> texts =
+                    new List<TextData>();
+
+                foreach (SelectedObject so
+                    in psr.Value)
+                {
+                    if (so == null ||
+                        so.ObjectId.IsNull)
+                    {
+                        continue;
+                    }
+
+                    Entity ent =
+                        tr.GetObject(
+                            so.ObjectId,
+                            OpenMode.ForRead)
+                            as Entity;
+
+                    if (ent == null)
+                        continue;
+
+                    if ((ent is Line ||
+                         ent is Polyline ||
+                         ent is Polyline2d ||
+                         ent is Polyline3d ||
+                         ent is Arc) &&
+                        ent is Curve curveEnt)
+                    {
+                        curves.Add(
+                            curveEnt);
+
+                        sourceCurveIds.Add(
+                            so.ObjectId);
+                    }
+                    else if (ent is DBText dbText)
+                    {
+                        Point3d pt =
+                            (dbText.Justify !=
+                                AttachmentPoint.BaseLeft &&
+                             (dbText.AlignmentPoint.X != 0.0 ||
+                              dbText.AlignmentPoint.Y != 0.0))
+                                ? dbText.AlignmentPoint
+                                : dbText.Position;
+
+                        TryAddCtnPprShopSizeText(
+                            dbText.TextString,
+                            pt,
+                            dbText.Rotation,
+                            texts);
+                    }
+                    else if (ent is MText mText)
+                    {
+                        TryAddCtnPprShopSizeText(
+                            mText.Text,
+                            mText.Location,
+                            mText.Rotation,
+                            texts);
+                    }
+                    else if (ent is BlockReference blockRef)
+                    {
+                        foreach (ObjectId attId
+                            in blockRef
+                                .AttributeCollection)
+                        {
+                            AttributeReference att =
+                                tr.GetObject(
+                                    attId,
+                                    OpenMode.ForRead,
+                                    false)
+                                    as AttributeReference;
+
+                            if (att == null)
+                                continue;
+
+                            TryAddCtnPprShopSizeText(
+                                att.TextString,
+                                att.Position,
+                                att.Rotation,
+                                texts);
+                        }
+                    }
+                }
+
+                if (curves.Count == 0)
+                {
+                    MessageBox.Show(
+                        "Phải quét trúng ít nhất 1 line/polyline tuyến PPR.",
+                        "VẼ SHOP CTN - PPR");
+
+                    return;
+                }
+
+                Dictionary<Curve, List<TextProjectionData>>
+                    textMap =
+                        MapTextsToOriginalCurves(
+                            curves,
+                            texts);
+
+                List<ShopPipeCandidate> shopPipes =
+                    new List<ShopPipeCandidate>();
+
+                foreach (Curve curve
+                    in curves)
+                {
+                    List<TextProjectionData>
+                        projections =
+                            null;
+
+                    if (textMap.TryGetValue(
+                            curve,
+                            out projections) &&
+                        projections != null &&
+                        projections.Count > 0)
+                    {
+                        List<ShopPipeCandidate>
+                            splitCandidates =
+                                CreateCtnPprShopSplitCandidatesFromTexts(
+                                    curve,
+                                    projections);
+
+                        if (splitCandidates.Count >
+                            0)
+                        {
+                            shopPipes.AddRange(
+                                splitCandidates);
+
+                            continue;
+                        }
+
+                        TextProjectionData best =
+                            projections
+                                .OrderBy(
+                                    x =>
+                                        x.MatchScore)
+                                .ThenBy(
+                                    x =>
+                                        x.DistanceAlongCurve)
+                                .First();
+
+                        ShopPipeCandidate
+                            candidate =
+                                CreateCtnPprShopPipeCandidate(
+                                    curve,
+                                    best.Text
+                                        .TextString,
+                                    best.Text
+                                        .Width);
+
+                        if (candidate != null)
+                        {
+                            shopPipes.Add(
+                                candidate);
+                        }
+
+                        continue;
+                    }
+
+                    // Fallback đọc D/DN ngay từ tên layer CTN.
+                    if (TryParseCtnPprShopSize(
+                            curve.Layer,
+                            out string layerSize,
+                            out double layerOutsideD))
+                    {
+                        ShopPipeCandidate
+                            candidate =
+                                CreateCtnPprShopPipeCandidate(
+                                    curve,
+                                    layerSize,
+                                    layerOutsideD);
+
+                        if (candidate != null)
+                        {
+                            shopPipes.Add(
+                                candidate);
+                        }
+                    }
+                }
+
+                if (shopPipes.Count == 0)
+                {
+                    MessageBox.Show(
+                        "Không nhận được size PPR.\n\n" +
+                        "Hãy quét thêm chữ dạng D20 / D25 / D32... " +
+                        "hoặc DN15 / DN20... gần tuyến ống.",
+                        "VẼ SHOP CTN - PPR");
+
+                    return;
+                }
+
+                string shopLibraryPath =
+                    FindShopFittingLibraryPath(
+                        "PPR",
+                        db);
+
+                if (string.IsNullOrWhiteSpace(
+                        shopLibraryPath))
+                {
+                    MessageBox.Show(
+                        "Không tìm thấy file Thu vien PPR.dwg trong thư mục DLL.",
+                        "VẼ SHOP CTN - PPR");
+
+                    return;
+                }
+
+                ed.WriteMessage(
+                    "\n[CTN SHOP PPR] Thư viện: " +
+                    Path.GetFileName(
+                        shopLibraryPath));
+
+                List<ShopFittingGapInfo>
+                    fittingGaps =
+                        new List<ShopFittingGapInfo>();
+
+                int reducerCount;
+                int elbow90Count;
+                int elbow45Count;
+                int teeCount;
+                int sprinklerElbowCount;
+
+                // CTN không dùng logic co đầu phun:
+                // truyền danh sách đầu phun rỗng.
+                int fittingCount =
+                    DrawSmartShopFittings(
+                        tr,
+                        db,
+                        btr,
+                        shopPipes,
+                        new List<Point3d>(),
+                        shopLibraryPath,
+                        fittingGaps,
+                        out reducerCount,
+                        out elbow90Count,
+                        out elbow45Count,
+                        out teeCount,
+                        out sprinklerElbowCount);
+
+                int edgeCount =
+                    0;
+
+                foreach (ShopPipeCandidate pipe
+                    in shopPipes)
+                {
+                    EnsureShopLayerExists(
+                        tr,
+                        db,
+                        pipe.LayerName);
+
+                    edgeCount +=
+                        DrawShopParallelPipeWithGaps(
+                            tr,
+                            db,
+                            btr,
+                            pipe,
+                            fittingGaps);
+                }
+
+                int erasedSourceCount =
+                    EraseShopSourceCurves(
+                        tr,
+                        sourceCurveIds);
+
+                tr.Commit();
+
+                try
+                {
+                    ed.Regen();
+                }
+                catch
+                {
+                }
+
+                ed.WriteMessage(
+                    $"\n[{ShopSmartBuild}] CTN PPR: " +
+                    $"đã vẽ {edgeCount} nét SHOP cho {shopPipes.Count} đoạn; " +
+                    $"phụ kiện={fittingCount} " +
+                    $"(giảm {reducerCount}, co90 {elbow90Count}, " +
+                    $"lơi45 {elbow45Count}, tê {teeCount}); " +
+                    $"xóa {erasedSourceCount} nét gốc. " +
+                    $"Khoảng cách 2 nét = đúng Ø ngoài PPR.");
+
+                if (fittingCount == 0)
+                {
+                    ed.WriteMessage(
+                        "\n[CTN SHOP PPR] Không có phụ kiện được chèn. " +
+                        "Nếu tuyến có Co/Tê/Giảm mà vẫn =0, kiểm tra Command Line " +
+                        "để xem tên block PPR được tìm thấy hay chưa.");
+                }
+            }
+        }
+
+
         private void BtnVeShopOngChuaChay_Click(
             object sender,
             RoutedEventArgs e)
@@ -18023,6 +20914,46 @@ namespace ClassLibrary4
             }
         }
 
+        private static string GetShopSystemLayerPrefix(
+            ShopJointArm arm)
+        {
+            string layer =
+                arm?.Pipe?.LayerName ??
+                "";
+
+            if (layer.StartsWith(
+                    "CTN_SHOP_",
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                return "CTN_SHOP_";
+            }
+
+            return "FF_SHOP_";
+        }
+
+        private static string GetShopMaterialLayerToken(
+            ShopJointArm arm)
+        {
+            string layer =
+                (arm?.Pipe?.LayerName ?? "")
+                    .ToUpperInvariant();
+
+            if (layer.Contains(
+                    "_PPR_"))
+            {
+                return "PPR_";
+            }
+
+            if (layer.Contains(
+                    "_UPVC_"))
+            {
+                return "UPVC_";
+            }
+
+            return "";
+        }
+
+
         private int DrawSmartShopReducer(
             Transaction tr,
             Database db,
@@ -18054,7 +20985,11 @@ namespace ClassLibrary4
                     largeToSmall.X);
 
             string layerName =
-                "FF_SHOP_GIAM_" +
+                GetShopSystemLayerPrefix(
+                    large) +
+                "GIAM_" +
+                GetShopMaterialLayerToken(
+                    large) +
                 CleanLayerText(large.SizeText) +
                 "-" +
                 CleanLayerText(small.SizeText);
@@ -18143,11 +21078,23 @@ namespace ClassLibrary4
             string fittingType =
                 angle == 45 ? "ELBOW45" : "ELBOW90";
 
+            string shopPrefix =
+                GetShopSystemLayerPrefix(
+                    a);
+
+            string materialToken =
+                GetShopMaterialLayerToken(
+                    a);
+
             string layerName =
                 angle == 45
-                    ? "FF_SHOP_COLOI45_" +
+                    ? shopPrefix +
+                      "COLOI45_" +
+                      materialToken +
                       CleanLayerText(a.SizeText)
-                    : "FF_SHOP_CO90_" +
+                    : shopPrefix +
+                      "CO90_" +
+                      materialToken +
                       CleanLayerText(a.SizeText);
 
             EnsureShopLayerExists(tr, db, layerName);
@@ -18327,7 +21274,11 @@ namespace ClassLibrary4
                 branch.SizeText;
 
             string layerName =
-                "FF_SHOP_TE_" +
+                GetShopSystemLayerPrefix(
+                    main) +
+                "TE_" +
+                GetShopMaterialLayerToken(
+                    main) +
                 CleanLayerText(mainSize) +
                 "-" +
                 CleanLayerText(branchSize);
@@ -19882,11 +22833,31 @@ namespace ClassLibrary4
             if (start.DistanceTo(end) < 1e-6)
                 return;
 
-            string centerLayer =
-                "FF_SHOP_TAM_" +
-                CleanLayerText(
-                    (pipeLayerName ?? "")
-                        .Replace("FF_SHOP_", ""));
+            string pipeLayer =
+                (pipeLayerName ?? "")
+                    .Trim();
+
+            string centerLayer;
+
+            if (pipeLayer.StartsWith(
+                    "CTN_SHOP_",
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                centerLayer =
+                    "CTN_SHOP_TAM_" +
+                    CleanLayerText(
+                        pipeLayer.Substring(
+                            "CTN_SHOP_".Length));
+            }
+            else
+            {
+                centerLayer =
+                    "FF_SHOP_TAM_" +
+                    CleanLayerText(
+                        pipeLayer.Replace(
+                            "FF_SHOP_",
+                            ""));
+            }
 
             EnsureShopLayerExists(tr, db, centerLayer);
 
@@ -20497,6 +23468,24 @@ namespace ClassLibrary4
                     fromSize,
                     toSize);
 
+            // FIX40P: PPR phải đọc đúng tâm các mặt nối ngoài thật.
+            bool isCtnPprFitting =
+                IsCtnPprLibraryBlockName(
+                    blockName);
+
+            if (isCtnPprFitting)
+            {
+                ShopFittingPlacementInfo pprPlacement =
+                    AnalyzeCtnPprFittingTruePorts(
+                        blockId,
+                        fittingType,
+                        fromSize,
+                        toSize);
+
+                if (pprPlacement != null)
+                    placement = pprPlacement;
+            }
+
             double desiredPrimaryAngle = rotation;
             double finalRotation = rotation;
 
@@ -20526,6 +23515,7 @@ namespace ClassLibrary4
             basePoint = insertPoint;
 
             if (isReducer &&
+                !isCtnPprFitting &&
                 IsShopSimpleCenterBlock(blockName, fittingType))
             {
                 Point3d localCenter;
@@ -20555,10 +23545,12 @@ namespace ClassLibrary4
                         halfAlong);
                 }
             }
-            else if (isElbowOrTee)
+            else if (isElbowOrTee ||
+                     (isCtnPprFitting &&
+                      isReducer))
             {
-                // FIX23 chỉ sửa CO/TÊ.
-                // Reducer ở nhánh phía trên GIỮ NGUYÊN hoàn toàn.
+                // FIX40P: CO/TÊ và riêng reducer PPR đều căn theo port thật.
+                // Reducer thép vẫn giữ nguyên logic cũ.
 
                 if (placement != null &&
                     placement.Ports != null &&
@@ -20738,7 +23730,12 @@ namespace ClassLibrary4
 
             // FIX23: CO/TÊ rút từng ống đúng tới mặt cổng thật.
             // REDUCER không đi qua đoạn này => giữ nguyên cơ chế đang chạy tốt.
-            if (isElbowOrTee &&
+            bool useTrueDirectionalPortGaps =
+                isElbowOrTee ||
+                (isCtnPprFitting &&
+                 isReducer);
+
+            if (useTrueDirectionalPortGaps &&
                 !isSprinklerDropElbow &&
                 placement != null &&
                 placement.Ports != null &&
@@ -20800,17 +23797,53 @@ namespace ClassLibrary4
                                 ? toSize
                                 : fromSize;
                     }
+                    else if (isCtnPprFitting &&
+                             isReducer)
+                    {
+                        // RED-D25x20 PPR: gán đúng size cho từng mặt nối.
+                        portSize =
+                            GetCtnPprGapPortSize(
+                                port,
+                                fromSize,
+                                toSize);
+                    }
 
-                    // Trừ 0.5 để 2 nét ống chạm/đè cực nhẹ vào mặt phụ kiện,
-                    // không tạo khe trắng do regen.
+                    // PPR cho overlap 1.5 mm vào mặt phụ kiện để không hở khi regen.
+                    double faceOverlap =
+                        isCtnPprFitting
+                            ? 1.5
+                            : 0.5;
+
+                    double finalPortGap =
+                        Math.Max(
+                            1.0,
+                            portGap -
+                            faceOverlap);
+
                     RecordShopFittingGapDirectional(
                         fittingGaps,
                         insertPoint,
-                        Math.Max(
-                            1.0,
-                            portGap - 0.5),
+                        finalPortGap,
                         portDir,
                         portSize);
+
+                    if (isCtnPprFitting)
+                    {
+                        try
+                        {
+                            Autodesk.AutoCAD.ApplicationServices.Core.Application
+                                .DocumentManager
+                                .MdiActiveDocument?
+                                .Editor
+                                .WriteMessage(
+                                    $"\n[CTN PPR GAP FIX40P] " +
+                                    $"{blockName} | port={portIndex + 1} | " +
+                                    $"size={portSize} | gap={finalPortGap:0.##}");
+                        }
+                        catch
+                        {
+                        }
+                    }
                 }
             }
 
@@ -20872,7 +23905,7 @@ namespace ClassLibrary4
                         continue;
                     }
 
-                    if (!isElbowOrTee ||
+                    if (!useTrueDirectionalPortGaps ||
                         isSprinklerDropElbow ||
                         g.Direction.Length > 1e-9)
                     {
@@ -20983,6 +24016,149 @@ namespace ClassLibrary4
                 refN = 25;
             return Math.Max(12.0, Math.Min(80.0, refN * 0.70));
         }
+
+        private static bool IsCtnPprLibraryBlockName(string blockName)
+        {
+            if (string.IsNullOrWhiteSpace(blockName)) return false;
+            string u = blockName.Trim().ToUpperInvariant();
+            return u.Contains(" PPR") || u.EndsWith("PPR", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private ShopFittingPlacementInfo AnalyzeCtnPprFittingTruePorts(
+            ObjectId blockId,
+            string fittingType,
+            string fromSize,
+            string toSize)
+        {
+            if (blockId.IsNull) return null;
+
+            string key = NormalizeShopKey(fittingType ?? "");
+
+            double d1 = ParseShopDnNumber(NormalizeShopDnToken(fromSize));
+            double d2 = ParseShopDnNumber(NormalizeShopDnToken(toSize));
+            double refD = Math.Max(d1, d2);
+            if (refD <= 0.0) refD = 20.0;
+
+            ShopFittingPlacementInfo placement = null;
+
+            if (IsElbow45Key(key))
+            {
+                List<ShopFittingPortInfo> obliquePorts =
+                    BuildShopElbow45ObliquePorts(blockId, refD);
+
+                placement = AnalyzeShopElbowPorts(obliquePorts, 135.0);
+                if (placement != null)
+                {
+                    WriteCtnPprTruePortDiagnostic(
+                        "ELB45-OBLIQUE",
+                        fromSize,
+                        toSize,
+                        placement);
+                    return placement;
+                }
+            }
+
+            List<ShopFittingPortInfo> boundaryPorts =
+                BuildShopFittingBoundaryPortsForLargeWeld(blockId, refD);
+
+            placement =
+                AnalyzeShopPlacementFromPorts(
+                    boundaryPorts,
+                    key,
+                    fromSize,
+                    toSize);
+
+            if (placement != null)
+            {
+                WriteCtnPprTruePortDiagnostic(
+                    "BOUNDARY",
+                    fromSize,
+                    toSize,
+                    placement);
+                return placement;
+            }
+
+            List<ShopFittingEndpointSample> samples =
+                CollectShopFittingEndpointSamples(blockId, false);
+
+            List<ShopFittingPortInfo> ports =
+                BuildShopFittingPorts(samples);
+
+            placement =
+                AnalyzeShopPlacementFromPorts(
+                    ports,
+                    key,
+                    fromSize,
+                    toSize);
+
+            if (placement != null)
+            {
+                WriteCtnPprTruePortDiagnostic(
+                    "GENERIC-FALLBACK",
+                    fromSize,
+                    toSize,
+                    placement);
+            }
+
+            return placement;
+        }
+
+        private void WriteCtnPprTruePortDiagnostic(
+            string mode,
+            string fromSize,
+            string toSize,
+            ShopFittingPlacementInfo placement)
+        {
+            if (placement == null) return;
+
+            try
+            {
+                string ports =
+                    string.Join(
+                        " ; ",
+                        placement.Ports.Select(
+                            (p, i) =>
+                                $"P{i + 1}=({p.Center.X:0.##},{p.Center.Y:0.##})/W={p.Width:0.##}"));
+
+                Autodesk.AutoCAD.ApplicationServices.Core.Application
+                    .DocumentManager
+                    .MdiActiveDocument?
+                    .Editor
+                    .WriteMessage(
+                        $"\n[CTN PPR PORT FIX40P] {mode} " +
+                        $"{fromSize}->{toSize} | " +
+                        $"Anchor=({placement.Anchor.X:0.##},{placement.Anchor.Y:0.##}) | " +
+                        $"{ports}");
+            }
+            catch
+            {
+            }
+        }
+
+        private string GetCtnPprGapPortSize(
+            ShopFittingPortInfo port,
+            string fromSize,
+            string toSize)
+        {
+            if (port == null) return fromSize ?? "";
+
+            double fromD = ParseShopDnNumber(NormalizeShopDnToken(fromSize));
+            double toD = ParseShopDnNumber(NormalizeShopDnToken(toSize));
+
+            if (fromD <= 0.0) return toSize ?? "";
+            if (toD <= 0.0 || Math.Abs(fromD - toD) <= 0.01)
+                return fromSize ?? "";
+
+            if (port.Width > 0.0)
+            {
+                double eFrom = Math.Abs(port.Width - fromD);
+                double eTo = Math.Abs(port.Width - toD);
+                return eTo < eFrom ? (toSize ?? "") : (fromSize ?? "");
+            }
+
+            return fromSize ?? "";
+        }
+
 
         private ShopFittingPlacementInfo AnalyzeShopFittingPlacement(
             ObjectId blockId,
@@ -23737,6 +26913,23 @@ namespace ClassLibrary4
                 if (string.IsNullOrWhiteSpace(sizeTok) && n2 > 0)
                     sizeTok = dn2;
 
+                // PPR library thật:
+                // ELB90-D20 PPR
+                string pprD =
+                    "D" +
+                    FormatShopDnNumber(
+                        n1 > 0 ? n1 : n2);
+
+                candidates.Add(
+                    "ELB90-" +
+                    pprD +
+                    " PPR");
+
+                candidates.Add(
+                    "ELB90-" +
+                    pprD +
+                    "PPR");
+
                 foreach (string p in prefixes)
                 {
                     candidates.Add(p + "-ELB90-" + sizeTok);
@@ -23753,6 +26946,23 @@ namespace ClassLibrary4
                 string sizeTok = dn;
                 if (string.IsNullOrWhiteSpace(sizeTok) && n2 > 0)
                     sizeTok = dn2;
+
+                // PPR library thật:
+                // ELB45-D20 PPR
+                string pprD =
+                    "D" +
+                    FormatShopDnNumber(
+                        n1 > 0 ? n1 : n2);
+
+                candidates.Add(
+                    "ELB45-" +
+                    pprD +
+                    " PPR");
+
+                candidates.Add(
+                    "ELB45-" +
+                    pprD +
+                    "PPR");
 
                 foreach (string p in prefixes)
                 {
@@ -23801,6 +27011,37 @@ namespace ClassLibrary4
                     typeKey.Contains("TETHU") ||
                     !sameSize;
 
+                // PPR library thật:
+                // TÊ ĐỀU  = TEE-D20x20 PPR
+                // TÊ GIẢM = TEED-D25x20 PPR
+                string pprMain =
+                    "D" +
+                    FormatShopDnNumber(
+                        mainN);
+
+                string pprBranch =
+                    FormatShopDnNumber(
+                        branchN);
+
+                string pprPair =
+                    pprMain +
+                    "x" +
+                    pprBranch;
+
+                candidates.Add(
+                    (reducing
+                        ? "TEED-"
+                        : "TEE-") +
+                    pprPair +
+                    " PPR");
+
+                candidates.Add(
+                    (reducing
+                        ? "TEED-"
+                        : "TEE-") +
+                    pprPair +
+                    "PPR");
+
                 foreach (string p in prefixes)
                 {
                     if (!reducing)
@@ -23845,6 +27086,26 @@ namespace ClassLibrary4
                     string smallTok = FormatShopDnNumber(small);
                     string pair = bigTok + "x" + smallTok;
                     string pairFull = bigTok + "xDN" + smallTok;
+
+                    // PPR library thật:
+                    // RED-D25x20 PPR
+                    string pprPair =
+                        "D" +
+                        FormatShopDnNumber(
+                            big) +
+                        "x" +
+                        FormatShopDnNumber(
+                            small);
+
+                    candidates.Add(
+                        "RED-" +
+                        pprPair +
+                        " PPR");
+
+                    candidates.Add(
+                        "RED-" +
+                        pprPair +
+                        "PPR");
 
                     foreach (string p in prefixes)
                     {
@@ -24776,6 +28037,28 @@ namespace ClassLibrary4
         {
             string key =
                 NormalizeShopKey(layerName ?? "");
+
+            // CTN PPR dùng D ngoài thực.
+            if (key.Contains("PPRD20"))
+                return 3;
+            if (key.Contains("PPRD25"))
+                return 4;
+            if (key.Contains("PPRD32"))
+                return 5;
+            if (key.Contains("PPRD40"))
+                return 3;
+            if (key.Contains("PPRD50"))
+                return 1;
+            if (key.Contains("PPRD63"))
+                return 6;
+            if (key.Contains("PPRD75"))
+                return 4;
+            if (key.Contains("PPRD90"))
+                return 2;
+            if (key.Contains("PPRD110"))
+                return 5;
+            if (key.Contains("PPRD125"))
+                return 1;
 
             if (key.Contains("DN15"))
                 return 2;
@@ -25859,6 +29142,12 @@ namespace ClassLibrary4
                     {
                         heThongSort = "FF_SHOP";
                     }
+                    else if (heThongSort.StartsWith(
+                            "CTN_SHOP_",
+                            StringComparison.OrdinalIgnoreCase))
+                    {
+                        heThongSort = "CTN_SHOP";
+                    }
                     else if (heThongSort.Contains("_"))
                     {
                         heThongSort =
@@ -25880,9 +29169,12 @@ namespace ClassLibrary4
                             // Ống SHOP tròn không tính M2 bằng công thức ống gió.
                             // Các layer ống thường vẫn giữ nguyên logic cũ.
                             M2 =
-                                item.Key.StartsWith(
-                                    "FF_SHOP_",
-                                    StringComparison.OrdinalIgnoreCase)
+                                (item.Key.StartsWith(
+                                     "FF_SHOP_",
+                                     StringComparison.OrdinalIgnoreCase) ||
+                                 item.Key.StartsWith(
+                                     "CTN_SHOP_",
+                                     StringComparison.OrdinalIgnoreCase))
                                     ? 0.0
                                     : Math.Round(
                                         TinhM2OngGioTuLayer(
@@ -25933,44 +29225,73 @@ namespace ClassLibrary4
             if (string.IsNullOrWhiteSpace(layerName))
                 return false;
 
-            return layerName
-                .Trim()
-                .StartsWith(
-                    "FF_SHOP_TAM_",
-                    StringComparison.OrdinalIgnoreCase);
+            string u =
+                layerName
+                    .Trim()
+                    .ToUpperInvariant();
+
+            return
+                u.StartsWith("FF_SHOP_TAM_") ||
+                u.StartsWith("CTN_SHOP_TAM_");
         }
 
         private static bool LaLayerBienOngShop(
             string layerName)
         {
-            if (string.IsNullOrWhiteSpace(layerName))
+            if (string.IsNullOrWhiteSpace(
+                    layerName))
+            {
                 return false;
+            }
 
             string u =
                 layerName
                     .Trim()
                     .ToUpperInvariant();
 
-            if (!u.StartsWith("FF_SHOP_"))
-                return false;
-
-            // Không coi layer tâm/phụ kiện là biên ống.
-            if (u.StartsWith("FF_SHOP_TAM_") ||
-                u.StartsWith("FF_SHOP_CO90_") ||
-                u.StartsWith("FF_SHOP_COLOI45_") ||
-                u.StartsWith("FF_SHOP_TE_") ||
-                u.StartsWith("FF_SHOP_GIAM_"))
+            if (u.StartsWith(
+                    "FF_SHOP_"))
             {
-                return false;
+                if (u.StartsWith("FF_SHOP_TAM_") ||
+                    u.StartsWith("FF_SHOP_CO90_") ||
+                    u.StartsWith("FF_SHOP_COLOI45_") ||
+                    u.StartsWith("FF_SHOP_TE_") ||
+                    u.StartsWith("FF_SHOP_GIAM_") ||
+                    u.StartsWith("FF_SHOP_PK_"))
+                {
+                    return false;
+                }
+
+                return Regex.IsMatch(
+                    u,
+                    @"^FF_SHOP_DN\s*\d+(?:[.,]\d+)?$",
+                    RegexOptions.IgnoreCase);
             }
 
-            // Layer biên ống SHOP hiện tại có dạng:
-            // FF_SHOP_DN25 / FF_SHOP_DN50 / ...
-            return Regex.IsMatch(
-                u,
-                @"^FF_SHOP_DN\s*\d+(?:[.,]\d+)?$",
-                RegexOptions.IgnoreCase);
+            if (u.StartsWith(
+                    "CTN_SHOP_"))
+            {
+                if (u.StartsWith("CTN_SHOP_TAM_") ||
+                    u.StartsWith("CTN_SHOP_CO90_") ||
+                    u.StartsWith("CTN_SHOP_COLOI45_") ||
+                    u.StartsWith("CTN_SHOP_TE_") ||
+                    u.StartsWith("CTN_SHOP_GIAM_") ||
+                    u.StartsWith("CTN_SHOP_PK_"))
+                {
+                    return false;
+                }
+
+                // PPR hiện tại:
+                // CTN_SHOP_PPR_D20 / CTN_SHOP_PPR_D25 / ...
+                return Regex.IsMatch(
+                    u,
+                    @"^CTN_SHOP_PPR_D\s*\d+(?:[.,]\d+)?$",
+                    RegexOptions.IgnoreCase);
+            }
+
+            return false;
         }
+
 
         private static bool LaLayerPhuKienHoacTamShop(
             string layerName)
@@ -25988,29 +29309,62 @@ namespace ClassLibrary4
                 u.StartsWith("FF_SHOP_COLOI45_") ||
                 u.StartsWith("FF_SHOP_TE_") ||
                 u.StartsWith("FF_SHOP_GIAM_") ||
-                u.StartsWith("FF_SHOP_TAM_");
+                u.StartsWith("FF_SHOP_TAM_") ||
+                u.StartsWith("CTN_SHOP_CO90_") ||
+                u.StartsWith("CTN_SHOP_COLOI45_") ||
+                u.StartsWith("CTN_SHOP_TE_") ||
+                u.StartsWith("CTN_SHOP_GIAM_") ||
+                u.StartsWith("CTN_SHOP_TAM_");
         }
 
         private static string LayTenLayerOngShopTuLayerTam(
             string centerLayer)
         {
-            if (!LaLayerTamOngShop(centerLayer))
+            if (!LaLayerTamOngShop(
+                    centerLayer))
+            {
                 return "";
+            }
 
-            string tail =
+            string value =
                 centerLayer
-                    .Trim()
-                    .Substring(
-                        "FF_SHOP_TAM_".Length)
                     .Trim();
 
-            if (string.IsNullOrWhiteSpace(tail))
-                return "";
+            if (value.StartsWith(
+                    "CTN_SHOP_TAM_",
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                string tail =
+                    value.Substring(
+                        "CTN_SHOP_TAM_".Length)
+                        .Trim();
 
-            // Bảng hiển thị gọn:
-            // FF_SHOP_TAM_DN25 -> FF_SHOP_DN25
-            return "FF_SHOP_" + tail;
+                return string.IsNullOrWhiteSpace(
+                        tail)
+                    ? ""
+                    : "CTN_SHOP_" +
+                      tail;
+            }
+
+            if (value.StartsWith(
+                    "FF_SHOP_TAM_",
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                string tail =
+                    value.Substring(
+                        "FF_SHOP_TAM_".Length)
+                        .Trim();
+
+                return string.IsNullOrWhiteSpace(
+                        tail)
+                    ? ""
+                    : "FF_SHOP_" +
+                      tail;
+            }
+
+            return "";
         }
+
 
         private static double LayChieuDaiCurveThongKe(
             Curve curve)
@@ -26323,13 +29677,26 @@ namespace ClassLibrary4
                                 out fittingKey,
                                 out fromPt))
                         {
-                            layerName =
-                                TimTenLayerTaiDiem(
+                            // FIX40N:
+                            // Bảng ỐNG / THIẾT BỊ + VAN được đọc bằng bộ riêng.
+                            // Không phụ thuộc hoàn toàn vào Table.HitTest vì
+                            // AutoCAD có lúc trả sai row khi bảng scale lớn.
+                            if (!TryReadStandardStatLayerRowAtPoint(
                                     tr,
                                     db,
                                     ed,
                                     pick,
-                                    out fromPt);
+                                    out layerName,
+                                    out fromPt))
+                            {
+                                layerName =
+                                    TimTenLayerTaiDiem(
+                                        tr,
+                                        db,
+                                        ed,
+                                        pick,
+                                        out fromPt);
+                            }
                         }
 
                         tr.Commit();
@@ -26451,11 +29818,23 @@ namespace ClassLibrary4
                         }
                         else
                         {
-                            List<Polyline> plines =
-                                new List<Polyline>();
+                            // FIX40N:
+                            // Ống SHOP là LINE, không phải Polyline.
+                            // Thu tất cả Curve để hỗ trợ:
+                            // LINE / LWPOLYLINE / ARC.
+                            List<Curve> curves =
+                                new List<Curve>();
+
+                            List<Curve> shopCenterCurves =
+                                new List<Curve>();
 
                             List<Entity> texts =
                                 new List<Entity>();
+
+                            bool isShopStatLayer =
+                                layerName.StartsWith(
+                                    "FF_SHOP_",
+                                    StringComparison.OrdinalIgnoreCase);
 
                             foreach (ObjectId id in btr)
                             {
@@ -26465,8 +29844,11 @@ namespace ClassLibrary4
                                         OpenMode.ForRead)
                                         as Entity;
 
-                                if (o == null)
+                                if (o == null ||
+                                    o.IsErased)
+                                {
                                     continue;
+                                }
 
                                 if (!LayerThongKeOngMatchesEntity(
                                         layerName,
@@ -26478,51 +29860,52 @@ namespace ClassLibrary4
                                 if (o is Table)
                                     continue;
 
-                                if (o is Polyline pl)
-                                    plines.Add(pl);
+                                // Highlight TẤT CẢ entity cùng tuyến:
+                                // FF_SHOP_DNxx = 2 nét biên
+                                // FF_SHOP_TAM_DNxx = tim.
+                                targetIds.Add(
+                                    o.ObjectId);
+
+                                if (o is Curve cv)
+                                {
+                                    curves.Add(cv);
+
+                                    if (LaLayerTamOngShop(
+                                            o.Layer))
+                                    {
+                                        shopCenterCurves.Add(
+                                            cv);
+                                    }
+                                }
                                 else if (o is DBText ||
                                          o is MText)
+                                {
                                     texts.Add(o);
-                            }
-
-                            if (khoanhTron)
-                            {
-                                foreach (Polyline pl in plines)
-                                {
-                                    targets.Add(
-                                        LayDiemGiuaPolyline(pl));
-
-                                    targetIds.Add(
-                                        pl.ObjectId);
-                                }
-
-                                foreach (Entity t in texts)
-                                {
-                                    targets.Add(
-                                        LayDiemDaiDien(t));
-
-                                    targetIds.Add(
-                                        t.ObjectId);
-
-                                    circleIds.Add(
-                                        t.ObjectId);
-                                }
-
-                                if (circleIds.Count == 0)
-                                {
-                                    foreach (Polyline pl in plines)
-                                        circleIds.Add(pl.ObjectId);
                                 }
                             }
-                            else if (plines.Count > 0)
+
+                            // Với SHOP: chỉ dùng TIM làm vị trí mũi tên/vòng tròn
+                            // để không sinh 3 dấu trên 2 biên + 1 tim.
+                            List<Curve> representativeCurves =
+                                isShopStatLayer &&
+                                shopCenterCurves.Count > 0
+                                    ? shopCenterCurves
+                                    : curves;
+
+                            if (representativeCurves.Count > 0)
                             {
-                                foreach (Polyline pl in plines)
+                                foreach (Curve cv
+                                    in representativeCurves)
                                 {
                                     targets.Add(
-                                        LayDiemGiuaPolyline(pl));
+                                        LayDiemGiuaCurveThongKe(
+                                            cv));
 
-                                    targetIds.Add(
-                                        pl.ObjectId);
+                                    if (khoanhTron)
+                                    {
+                                        circleIds.Add(
+                                            cv.ObjectId);
+                                    }
                                 }
                             }
                             else
@@ -26532,8 +29915,11 @@ namespace ClassLibrary4
                                     targets.Add(
                                         LayDiemDaiDien(t));
 
-                                    targetIds.Add(
-                                        t.ObjectId);
+                                    if (khoanhTron)
+                                    {
+                                        circleIds.Add(
+                                            t.ObjectId);
+                                    }
                                 }
                             }
                         }
@@ -26674,9 +30060,67 @@ namespace ClassLibrary4
                                             OpenMode.ForRead)
                                             as Entity;
 
-                                    Circle circle =
-                                        TaoVongTronBaoDoiTuong(
-                                            ent);
+                                    Circle circle;
+
+                                    if (ent is Curve shopCurve &&
+                                        (LaLayerTamOngShop(
+                                             ent.Layer) ||
+                                         LaLayerBienOngShop(
+                                             ent.Layer)))
+                                    {
+                                        // FIX40N:
+                                        // Khoanh ống SHOP tại GIỮA đoạn ống,
+                                        // không lấy toàn extents của LINE dài.
+                                        Point3d center =
+                                            LayDiemGiuaCurveThongKe(
+                                                shopCurve);
+
+                                        double dn =
+                                            0.0;
+
+                                        Match dnMatch =
+                                            Regex.Match(
+                                                ent.Layer ?? "",
+                                                @"DN\s*(\d+(?:[.,]\d+)?)",
+                                                RegexOptions.IgnoreCase);
+
+                                        if (dnMatch.Success)
+                                        {
+                                            double.TryParse(
+                                                dnMatch.Groups[1].Value
+                                                    .Replace(',', '.'),
+                                                NumberStyles.Any,
+                                                CultureInfo.InvariantCulture,
+                                                out dn);
+                                        }
+
+                                        double od =
+                                            dn > 0.0 &&
+                                            TryGetFireSteelOutsideDiameter(
+                                                dn,
+                                                out double outside)
+                                                ? outside
+                                                : dn;
+
+                                        double radius =
+                                            Math.Max(
+                                                600.0,
+                                                Math.Max(
+                                                    od * 3.0,
+                                                    300.0));
+
+                                        circle =
+                                            new Circle(
+                                                center,
+                                                Vector3d.ZAxis,
+                                                radius);
+                                    }
+                                    else
+                                    {
+                                        circle =
+                                            TaoVongTronBaoDoiTuong(
+                                                ent);
+                                    }
 
                                     if (circle == null)
                                         continue;
@@ -26802,47 +30246,79 @@ namespace ClassLibrary4
             string tableLayer,
             string entityLayer)
         {
-            string a =
+            string tableName =
                 (tableLayer ?? "")
                     .Trim();
 
-            string b =
+            string entityName =
                 (entityLayer ?? "")
                     .Trim();
 
             if (string.Equals(
-                    a,
-                    b,
+                    tableName,
+                    entityName,
                     StringComparison.OrdinalIgnoreCase))
             {
                 return true;
             }
 
-            // FIX40:
-            // Bảng thống kê SHOP hiển thị FF_SHOP_DN25,
-            // còn chiều dài thật lấy từ FF_SHOP_TAM_DN25.
-            // Khi dùng nút tìm đối tượng, coi cả hai là cùng một tuyến SHOP.
-            if (a.StartsWith(
-                    "FF_SHOP_",
-                    StringComparison.OrdinalIgnoreCase) &&
-                !a.StartsWith(
-                    "FF_SHOP_TAM_",
-                    StringComparison.OrdinalIgnoreCase))
+            string[] systems =
+                new[]
+                {
+                    "FF",
+                    "CTN"
+                };
+
+            foreach (string system
+                in systems)
             {
-                string tail =
-                    a.Substring(
-                        "FF_SHOP_".Length);
+                string edgePrefix =
+                    system +
+                    "_SHOP_";
 
-                string center =
-                    "FF_SHOP_TAM_" +
-                    tail;
+                string centerPrefix =
+                    system +
+                    "_SHOP_TAM_";
 
-                if (string.Equals(
-                        center,
-                        b,
+                if (tableName.StartsWith(
+                        centerPrefix,
                         StringComparison.OrdinalIgnoreCase))
                 {
-                    return true;
+                    string tail =
+                        tableName.Substring(
+                            centerPrefix.Length);
+
+                    string edge =
+                        edgePrefix +
+                        tail;
+
+                    if (string.Equals(
+                            edge,
+                            entityName,
+                            StringComparison.OrdinalIgnoreCase))
+                    {
+                        return true;
+                    }
+                }
+                else if (tableName.StartsWith(
+                             edgePrefix,
+                             StringComparison.OrdinalIgnoreCase))
+                {
+                    string tail =
+                        tableName.Substring(
+                            edgePrefix.Length);
+
+                    string center =
+                        centerPrefix +
+                        tail;
+
+                    if (string.Equals(
+                            center,
+                            entityName,
+                            StringComparison.OrdinalIgnoreCase))
+                    {
+                        return true;
+                    }
                 }
             }
 
@@ -26903,6 +30379,411 @@ namespace ClassLibrary4
             }
             catch { }
         }
+
+        private bool TryReadStandardStatLayerRowAtPoint(
+            Transaction tr,
+            Database db,
+            Editor ed,
+            Point3d pick,
+            out string layerName,
+            out Point3d fromPt)
+        {
+            layerName = "";
+            fromPt = pick;
+
+            BlockTableRecord btr =
+                (BlockTableRecord)tr.GetObject(
+                    db.CurrentSpaceId,
+                    OpenMode.ForRead);
+
+            Table bestTable =
+                null;
+
+            Extents3d bestExt =
+                new Extents3d();
+
+            double bestDistance =
+                double.MaxValue;
+
+            foreach (ObjectId id in btr)
+            {
+                Table tb =
+                    tr.GetObject(
+                        id,
+                        OpenMode.ForRead,
+                        false) as Table;
+
+                if (tb == null ||
+                    tb.Columns.Count < 2 ||
+                    tb.Rows.Count < 3)
+                {
+                    continue;
+                }
+
+                string title = "";
+
+                try
+                {
+                    title =
+                        (tb.Cells[0, 0].TextString ?? "")
+                            .Trim();
+                }
+                catch
+                {
+                    continue;
+                }
+
+                bool isPipeTable =
+                    title.StartsWith(
+                        "BẢNG THỐNG KÊ KHỐI LƯỢNG ỐNG",
+                        StringComparison.OrdinalIgnoreCase);
+
+                bool isDeviceTable =
+                    title.StartsWith(
+                        "BẢNG THỐNG KÊ THIẾT BỊ + VAN",
+                        StringComparison.OrdinalIgnoreCase);
+
+                if (!isPipeTable &&
+                    !isDeviceTable)
+                {
+                    continue;
+                }
+
+                try
+                {
+                    Extents3d ext =
+                        tb.GeometricExtents;
+
+                    double width =
+                        Math.Abs(
+                            ext.MaxPoint.X -
+                            ext.MinPoint.X);
+
+                    double height =
+                        Math.Abs(
+                            ext.MaxPoint.Y -
+                            ext.MinPoint.Y);
+
+                    double pad =
+                        Math.Max(
+                            50.0,
+                            Math.Max(
+                                width,
+                                height) *
+                            0.015);
+
+                    if (pick.X <
+                            ext.MinPoint.X - pad ||
+                        pick.X >
+                            ext.MaxPoint.X + pad ||
+                        pick.Y <
+                            ext.MinPoint.Y - pad ||
+                        pick.Y >
+                            ext.MaxPoint.Y + pad)
+                    {
+                        continue;
+                    }
+
+                    Point3d mid =
+                        new Point3d(
+                            (ext.MinPoint.X +
+                             ext.MaxPoint.X) / 2.0,
+                            (ext.MinPoint.Y +
+                             ext.MaxPoint.Y) / 2.0,
+                            ext.MinPoint.Z);
+
+                    double distance =
+                        PlanDistance(
+                            pick,
+                            mid);
+
+                    if (distance <
+                        bestDistance)
+                    {
+                        bestDistance =
+                            distance;
+
+                        bestTable =
+                            tb;
+
+                        bestExt =
+                            ext;
+                    }
+                }
+                catch
+                {
+                }
+            }
+
+            if (bestTable == null)
+                return false;
+
+            int row = -1;
+
+            // --------------------------------------------------------
+            // A) HitTest trước.
+            // --------------------------------------------------------
+            try
+            {
+                Vector3d viewDirection =
+                    Vector3d.ZAxis;
+
+                try
+                {
+                    using (ViewTableRecord view =
+                        ed.GetCurrentView())
+                    {
+                        viewDirection =
+                            view.ViewDirection;
+
+                        if (viewDirection.Length <
+                            1e-9)
+                        {
+                            viewDirection =
+                                Vector3d.ZAxis;
+                        }
+                    }
+                }
+                catch
+                {
+                }
+
+                TableHitTestInfo hit =
+                    bestTable.HitTest(
+                        pick,
+                        viewDirection);
+
+                if (hit.Type !=
+                    TableHitTestType.Cell)
+                {
+                    hit =
+                        bestTable.HitTest(
+                            pick,
+                            Vector3d.ZAxis);
+                }
+
+                if (hit.Type ==
+                    TableHitTestType.Cell)
+                {
+                    row =
+                        hit.Row;
+                }
+            }
+            catch
+            {
+            }
+
+            // --------------------------------------------------------
+            // B) Nếu HitTest trả header/sai row:
+            // tính row trực tiếp từ EXTENTS TOP + chiều cao từng hàng.
+            //
+            // Đây là phần sửa chính cho bảng scale lớn như ảnh user gửi.
+            // --------------------------------------------------------
+            bool rowLooksValid =
+                row >= 2 &&
+                row <
+                    bestTable.Rows.Count;
+
+            if (!rowLooksValid)
+            {
+                row =
+                    FindStandardStatDataRowByY(
+                        bestTable,
+                        bestExt,
+                        pick.Y);
+            }
+
+            // Nếu HitTest có row >=2 nhưng text col1 lại rỗng/header,
+            // thử lại bằng tọa độ Y.
+            string value = "";
+
+            if (row >= 2 &&
+                row <
+                    bestTable.Rows.Count)
+            {
+                try
+                {
+                    value =
+                        (bestTable.Cells[row, 1].TextString ?? "")
+                            .Trim();
+                }
+                catch
+                {
+                    value = "";
+                }
+            }
+
+            if (string.IsNullOrWhiteSpace(
+                    value) ||
+                value.Equals(
+                    "TÊN LAYER",
+                    StringComparison.OrdinalIgnoreCase) ||
+                value.Equals(
+                    "TỔNG",
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                int fallbackRow =
+                    FindStandardStatDataRowByY(
+                        bestTable,
+                        bestExt,
+                        pick.Y);
+
+                if (fallbackRow >= 2 &&
+                    fallbackRow <
+                        bestTable.Rows.Count)
+                {
+                    row =
+                        fallbackRow;
+
+                    try
+                    {
+                        value =
+                            (bestTable.Cells[row, 1].TextString ?? "")
+                                .Trim();
+                    }
+                    catch
+                    {
+                        value = "";
+                    }
+                }
+            }
+
+            value =
+                (value ?? "")
+                    .Trim();
+
+            if (string.IsNullOrWhiteSpace(
+                    value) ||
+                value.Equals(
+                    "TÊN LAYER",
+                    StringComparison.OrdinalIgnoreCase) ||
+                value.Equals(
+                    "STT",
+                    StringComparison.OrdinalIgnoreCase) ||
+                value.Equals(
+                    "TỔNG",
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            layerName =
+                value;
+
+            fromPt =
+                pick;
+
+            try
+            {
+                ed.WriteMessage(
+                    $"\n[TÌM FIX40N] Đọc bảng: row={row}, layer={layerName}");
+            }
+            catch
+            {
+            }
+
+            return true;
+        }
+
+        private static int FindStandardStatDataRowByY(
+            Table table,
+            Extents3d ext,
+            double pickY)
+        {
+            if (table == null ||
+                table.Rows.Count < 3)
+            {
+                return -1;
+            }
+
+            try
+            {
+                // Với bảng không xoay (các bảng do tool tạo),
+                // ext.MaxPoint.Y là đỉnh bảng ổn định hơn Table.Position.Y.
+                double yTop =
+                    ext.MaxPoint.Y;
+
+                double accumulated =
+                    0.0;
+
+                for (int r = 0;
+                    r <
+                    table.Rows.Count;
+                    r++)
+                {
+                    double rowHeight =
+                        table.Rows[r].Height;
+
+                    double top =
+                        yTop -
+                        accumulated;
+
+                    double bottom =
+                        top -
+                        rowHeight;
+
+                    if (pickY <=
+                            top &&
+                        pickY >=
+                            bottom)
+                    {
+                        return r;
+                    }
+
+                    accumulated +=
+                        rowHeight;
+                }
+
+                // Fallback gần nhất theo tâm hàng.
+                double bestDist =
+                    double.MaxValue;
+
+                int bestRow =
+                    -1;
+
+                accumulated =
+                    0.0;
+
+                for (int r = 2;
+                    r <
+                    table.Rows.Count;
+                    r++)
+                {
+                    double rowHeight =
+                        table.Rows[r].Height;
+
+                    double centerY =
+                        yTop -
+                        accumulated -
+                        rowHeight / 2.0;
+
+                    double dist =
+                        Math.Abs(
+                            pickY -
+                            centerY);
+
+                    if (dist <
+                        bestDist)
+                    {
+                        bestDist =
+                            dist;
+
+                        bestRow =
+                            r;
+                    }
+
+                    accumulated +=
+                        rowHeight;
+                }
+
+                return bestRow;
+            }
+            catch
+            {
+                return -1;
+            }
+        }
+
 
         private bool TryReadShopFittingRowAtPoint(
             Transaction tr,
@@ -27208,6 +31089,79 @@ namespace ClassLibrary4
             return LayTenLayerBangBangKhoangCach(
                 bestTable, pick, out fromPt);
         }
+
+        private static Point3d LayDiemGiuaCurveThongKe(
+            Curve curve)
+        {
+            if (curve == null)
+                return Point3d.Origin;
+
+            try
+            {
+                if (curve is Line line)
+                {
+                    return MidPoint(
+                        line.StartPoint,
+                        line.EndPoint);
+                }
+
+                if (curve is Polyline pl)
+                {
+                    double length =
+                        pl.Length;
+
+                    if (length > 1e-9)
+                    {
+                        return pl.GetPointAtDist(
+                            length / 2.0);
+                    }
+
+                    return pl.NumberOfVertices > 0
+                        ? pl.GetPoint3dAt(0)
+                        : Point3d.Origin;
+                }
+
+                if (curve is Arc arc)
+                {
+                    double midAngle =
+                        arc.StartAngle +
+                        (arc.EndAngle -
+                         arc.StartAngle) / 2.0;
+
+                    return arc.Center +
+                        new Vector3d(
+                            Math.Cos(midAngle) *
+                            arc.Radius,
+                            Math.Sin(midAngle) *
+                            arc.Radius,
+                            0.0);
+                }
+
+                double startParam =
+                    curve.StartParam;
+
+                double endParam =
+                    curve.EndParam;
+
+                return curve.GetPointAtParameter(
+                    (startParam +
+                     endParam) / 2.0);
+            }
+            catch
+            {
+                try
+                {
+                    return MidPoint(
+                        curve.StartPoint,
+                        curve.EndPoint);
+                }
+                catch
+                {
+                    return Point3d.Origin;
+                }
+            }
+        }
+
 
         private static Point3d LayDiemGiuaPolyline(Polyline pl)
         {

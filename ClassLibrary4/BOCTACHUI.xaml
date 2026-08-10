@@ -1233,7 +1233,7 @@
                             <RadioButton x:Name="RbCtnDuongOng" Content="ĐƯỜNG ỐNG" GroupName="TabCTN" IsChecked="True" Style="{StaticResource TabNgangStyle}"/>
                             <RadioButton x:Name="RbCtnVan" Content="VAN" GroupName="TabCTN" Style="{StaticResource TabNgangStyle}"/>
                             <RadioButton x:Name="RbCtnThietBi" Content="THIẾT BỊ" GroupName="TabCTN" Style="{StaticResource TabNgangStyle}"/>
-                            <RadioButton x:Name="RbCtnThongKe" Content="THỐNG KÊ" GroupName="TabCTN" Style="{StaticResource TabNgangStyle}"/>
+                            <RadioButton x:Name="RbCtnThongKe" Content="SHOP" GroupName="TabCTN" Style="{StaticResource TabNgangStyle}"/>
                         </UniformGrid>
 
                         <ScrollViewer Grid.Row="2" Margin="2,4,2,2" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" CanContentScroll="False">
@@ -1489,7 +1489,7 @@
                                     </StackPanel>
                                 </Grid>
 
-                                <!-- THỐNG KÊ CTN -->
+                                <!-- SHOP CTN -->
                                 <Grid VerticalAlignment="Top">
                                     <Grid.Style>
                                         <Style TargetType="Grid">
@@ -1501,10 +1501,63 @@
                                             </Style.Triggers>
                                         </Style>
                                     </Grid.Style>
+
                                     <StackPanel>
-                                        <TextBlock Text="THỐNG KÊ CTN" FontWeight="Bold" FontSize="13" Foreground="#FF0078D7" Margin="0,0,0,10"/>
-                                        <TextBlock TextWrapping="Wrap" Foreground="Gray" FontSize="12"
-                                                   Text="Chức năng thống kê đã chuyển sang tab &#10;6. THỐNG KÊ (bên phải)."/>
+                                        <TextBlock Text="VẼ SHOP CTN"
+                                                   FontWeight="Bold"
+                                                   FontSize="13"
+                                                   Foreground="#FF0078D7"
+                                                   Margin="0,0,0,6"/>
+
+                                        <TextBlock TextWrapping="Wrap"
+                                                   Foreground="#FF555555"
+                                                   FontSize="11"
+                                                   Margin="0,0,0,10"
+                                                   Text="Giai đoạn 1: SHOP ống PPR. Quét tuyến ống + chữ D/DN. Tool tạo 2 nét theo đường kính ngoài và tự chèn phụ kiện từ Thu vien PPR.dwg."/>
+
+                                        <Border BorderBrush="#FFB8B8B8"
+                                                BorderThickness="1"
+                                                CornerRadius="2"
+                                                Padding="7"
+                                                Margin="0,0,0,10">
+                                            <StackPanel>
+                                                <TextBlock Text="PPR"
+                                                           FontSize="13"
+                                                           FontWeight="Bold"
+                                                           Foreground="#FF00875A"
+                                                           HorizontalAlignment="Center"
+                                                           Margin="0,0,0,5"/>
+
+                                                <TextBlock TextWrapping="Wrap"
+                                                           FontSize="10"
+                                                           Foreground="#FF555555"
+                                                           Margin="0,0,0,8"
+                                                           Text="Block hỗ trợ: ELB90-D... PPR / ELB45-D... PPR / TEE-D...x... PPR / TEED-D...x... PPR / RED-D...x... PPR."/>
+
+                                                <Button x:Name="BtnVeShopOngPprCTN"
+                                                        Content="VẼ SHOP ỐNG PPR"
+                                                        Height="40"
+                                                        FontSize="14"
+                                                        FontWeight="Bold"
+                                                        Background="#FF00875A"
+                                                        Foreground="White"
+                                                        Cursor="Hand"
+                                                        Click="BtnVeShopOngPprCTN_Click">
+                                                    <Button.ToolTip>
+                                                        <ToolTip>
+                                                            <TextBlock MaxWidth="290"
+                                                                       TextWrapping="Wrap"
+                                                                       Text="VẼ SHOP PPR: Quét line/polyline/arc tuyến PPR và chữ D20, D25... hoặc DN. Tool dựng 2 nét đúng Ø ngoài PPR, tạo tim SHOP và chèn Co 90 / Lơi 45 / Tê / Tê giảm / Nối giảm từ file Thu vien PPR.dwg."/>
+                                                        </ToolTip>
+                                                    </Button.ToolTip>
+                                                </Button>
+                                            </StackPanel>
+                                        </Border>
+
+                                        <TextBlock TextWrapping="Wrap"
+                                                   Foreground="Gray"
+                                                   FontSize="10"
+                                                   Text="UPVC và chức năng ĐẶT TB CTN sẽ bổ sung sau khi SHOP PPR chạy ổn."/>
                                     </StackPanel>
                                 </Grid>
                             </Grid>
