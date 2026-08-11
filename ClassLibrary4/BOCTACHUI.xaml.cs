@@ -7,9 +7,12 @@ using System.Globalization;
 using System.Linq;
 using System.IO;
 using System.Reflection;
+using System.Net;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Windows;
+using Microsoft.Win32;
 
 using Autodesk.AutoCAD.ApplicationServices;
 using Autodesk.AutoCAD.Colors;
@@ -202,6 +205,22 @@ namespace ClassLibrary4
         public BOCTACHUI()
         {
             InitializeComponent();
+
+            // LICENSE-ONLINE-20260811-01
+            // Khóa bảng công cụ trước khi khởi tạo các chức năng CAD.
+            // Publishable key là khóa công khai; khóa secret/service_role
+            // tuyệt đối không được đặt trong DLL.
+            if (!DesignerProperties.GetIsInDesignMode(this) &&
+                !OnlineLicenseManager.EnsureActivated())
+            {
+                IsEnabled = false;
+                Opacity = 0.55;
+                ToolTip =
+                    "Chưa kích hoạt bản quyền. Đóng và mở lại bảng công cụ " +
+                    "để nhập key kích hoạt.";
+                return;
+            }
+
             KhoiTaoTatCaTabOng();
             KhoiTaoTatCaTabVan();
             KhoiTaoTatCaTabThietBi();
@@ -20687,6 +20706,793 @@ namespace ClassLibrary4
         }
 
 
+        // VẼ SHOP THỦ CÔNG:
+        // Người dùng chỉ điểm theo TIM ống. Tool tự vẽ hai biên + tim nét đứt,
+        // đồng thời đưa các tuyến SHOP cũ lân cận vào cùng đồ thị nút để chèn
+        // Co, Nối giảm, Tê hoặc Tê giảm đúng ngay khi vẽ.
+        private void BtnVeShopThuCong_Click(
+            object sender,
+            RoutedEventArgs e)
+        {
+            PipeUiContext ctx = GetContext(sender) ?? _ctxFF;
+
+            string selectedSize =
+                GetSelectedPipeSizeName(ctx);
+
+            if (string.IsNullOrWhiteSpace(selectedSize))
+            {
+                MessageBox.Show(
+                    "Hãy chọn SIZE ống trước khi bấm VẼ SHOP.",
+                    "VẼ SHOP");
+                return;
+            }
+
+            double selectedWidth;
+            string normalizedSize;
+
+            if (!TryParseAutomaticPipeSize(
+                    ctx,
+                    selectedSize,
+                    out normalizedSize,
+                    out selectedWidth))
+            {
+                normalizedSize = selectedSize.Trim();
+                selectedWidth = LayWidthTuSize(selectedSize);
+            }
+
+            if (string.IsNullOrWhiteSpace(normalizedSize) ||
+                selectedWidth <= 0.0)
+            {
+                MessageBox.Show(
+                    "SIZE đang chọn không hợp lệ: " + selectedSize,
+                    "VẼ SHOP");
+                return;
+            }
+
+            Document doc =
+                Autodesk.AutoCAD.ApplicationServices.Core.Application
+                    .DocumentManager
+                    .MdiActiveDocument;
+
+            if (doc == null)
+                return;
+
+            Editor ed = doc.Editor;
+            Database db = doc.Database;
+
+            Autodesk.AutoCAD.Internal.Utils.SetFocusToDwgView();
+
+            List<Tuple<Point3d, Point3d>> spans =
+                new List<Tuple<Point3d, Point3d>>();
+
+            PromptPointResult firstResult =
+                ed.GetPoint(
+                    "\n[VẼ SHOP] Chọn điểm đầu tim ống: ");
+
+            if (firstResult.Status != PromptStatus.OK)
+                return;
+
+            Point3d current = firstResult.Value;
+
+            while (true)
+            {
+                PromptPointOptions nextOptions =
+                    new PromptPointOptions(
+                        "\n[VẼ SHOP] Chọn điểm tiếp theo hoặc nhấn Enter để kết thúc: ");
+
+                nextOptions.UseBasePoint = true;
+                nextOptions.BasePoint = current;
+                nextOptions.AllowNone = true;
+
+                PromptPointResult nextResult =
+                    ed.GetPoint(nextOptions);
+
+                if (nextResult.Status == PromptStatus.None)
+                    break;
+
+                // ESC hủy toàn bộ lần vẽ hiện tại, không để lại đoạn dở dang.
+                if (nextResult.Status != PromptStatus.OK)
+                    return;
+
+                Point3d next = nextResult.Value;
+
+                if (PlanDistance(current, next) < 5.0)
+                {
+                    ed.WriteMessage(
+                        "\n[VẼ SHOP] Đoạn quá ngắn, hãy chọn điểm khác.");
+                    continue;
+                }
+
+                spans.Add(
+                    Tuple.Create(current, next));
+
+                current = next;
+            }
+
+            if (spans.Count == 0)
+                return;
+
+            string material =
+                GetSelectedPipeMaterialName(ctx);
+
+            using (doc.LockDocument())
+            using (Transaction tr =
+                db.TransactionManager.StartTransaction())
+            {
+                BlockTable bt =
+                    (BlockTable)tr.GetObject(
+                        db.BlockTableId,
+                        OpenMode.ForRead);
+
+                BlockTableRecord btr =
+                    (BlockTableRecord)tr.GetObject(
+                        bt[BlockTableRecord.ModelSpace],
+                        OpenMode.ForWrite);
+
+                List<Line> temporaryLines =
+                    new List<Line>();
+
+                List<ShopPipeCandidate> newPipes =
+                    new List<ShopPipeCandidate>();
+
+                try
+                {
+                    foreach (Tuple<Point3d, Point3d> span in spans)
+                    {
+                        Line center =
+                            new Line(span.Item1, span.Item2);
+
+                        temporaryLines.Add(center);
+
+                        ShopPipeCandidate pipe =
+                            CreateShopPipeCandidate(
+                                center,
+                                normalizedSize,
+                                selectedWidth);
+
+                        if (pipe != null)
+                            newPipes.Add(pipe);
+                    }
+
+                    if (newPipes.Count == 0)
+                    {
+                        MessageBox.Show(
+                            "Không tạo được đoạn SHOP hợp lệ.",
+                            "VẼ SHOP");
+                        return;
+                    }
+
+                    List<ShopPipeCandidate> oldPipes =
+                        CollectConnectedManualShopPipes(
+                            tr,
+                            btr,
+                            ctx,
+                            material,
+                            newPipes);
+
+                    List<ShopPipeCandidate> topologyPipes =
+                        new List<ShopPipeCandidate>();
+
+                    topologyPipes.AddRange(oldPipes);
+                    topologyPipes.AddRange(newPipes);
+
+                    string shopLibraryPath =
+                        FindShopFittingLibraryPath(
+                            material,
+                            db);
+
+                    if (string.IsNullOrWhiteSpace(shopLibraryPath))
+                    {
+                        ed.WriteMessage(
+                            "\n[VẼ SHOP] Không tìm thấy thư viện phụ kiện cho vật liệu [" +
+                            material +
+                            "]. Tool vẫn vẽ ống nhưng chưa thể chèn phụ kiện.");
+                    }
+
+                    List<ShopFittingGapInfo> fittingGaps =
+                        new List<ShopFittingGapInfo>();
+
+                    int reducerCount;
+                    int elbow90Count;
+                    int elbow45Count;
+                    int teeCount;
+                    int sprinklerElbowCount;
+
+                    int fittingCount =
+                        DrawSmartShopFittings(
+                            tr,
+                            db,
+                            btr,
+                            topologyPipes,
+                            new List<Point3d>(),
+                            shopLibraryPath,
+                            fittingGaps,
+                            out reducerCount,
+                            out elbow90Count,
+                            out elbow45Count,
+                            out teeCount,
+                            out sprinklerElbowCount);
+
+                    // Tuyến cũ chỉ cắt đúng khe phụ kiện. Không xóa và không vẽ lại.
+                    TrimExistingManualShopEdges(
+                        tr,
+                        db,
+                        btr,
+                        oldPipes,
+                        fittingGaps);
+
+                    int drawnCount = 0;
+
+                    foreach (ShopPipeCandidate pipe in newPipes)
+                    {
+                        EnsureShopLayerExists(
+                            tr,
+                            db,
+                            pipe.LayerName);
+
+                        drawnCount +=
+                            DrawShopParallelPipeWithGaps(
+                                tr,
+                                db,
+                                btr,
+                                pipe,
+                                fittingGaps);
+
+                        AppendManualShopSourceLine(
+                            tr,
+                            db,
+                            btr,
+                            pipe.Start,
+                            pipe.End,
+                            material,
+                            pipe.SizeText);
+                    }
+
+                    tr.Commit();
+
+                    try { ed.Regen(); }
+                    catch { }
+
+                    ed.WriteMessage(
+                        "\n[VẼ SHOP] Hoàn tất " +
+                        newPipes.Count +
+                        " đoạn, " +
+                        drawnCount +
+                        " nét; phụ kiện=" +
+                        fittingCount +
+                        " (giảm " + reducerCount +
+                        ", co90 " + elbow90Count +
+                        ", co45 " + elbow45Count +
+                        ", tê/tê giảm " + teeCount +
+                        ").");
+                }
+                finally
+                {
+                    foreach (Line line in temporaryLines)
+                    {
+                        try { line.Dispose(); }
+                        catch { }
+                    }
+                }
+            }
+        }
+
+        private List<ShopPipeCandidate> CollectConnectedManualShopPipes(
+            Transaction tr,
+            BlockTableRecord btr,
+            PipeUiContext ctx,
+            string material,
+            List<ShopPipeCandidate> newPipes)
+        {
+            List<ShopPipeCandidate> sourceCandidates =
+                new List<ShopPipeCandidate>();
+
+            List<ShopPipeCandidate> centerlineCandidates =
+                new List<ShopPipeCandidate>();
+
+            if (tr == null || btr == null ||
+                newPipes == null || newPipes.Count == 0)
+            {
+                return sourceCandidates;
+            }
+
+            string materialKey =
+                NormalizeShopKey(material ?? "");
+
+            List<ObjectId> ids =
+                btr.Cast<ObjectId>().ToList();
+
+            foreach (ObjectId id in ids)
+            {
+                Line line =
+                    tr.GetObject(
+                        id,
+                        OpenMode.ForRead,
+                        false) as Line;
+
+                if (line == null || line.IsErased)
+                    continue;
+
+                string layer = line.Layer ?? "";
+
+                bool isManualSource =
+                    layer.StartsWith(
+                        "TDL_MSHOP_SRC_",
+                        StringComparison.OrdinalIgnoreCase);
+
+                bool isShopCenterline =
+                    layer.StartsWith(
+                        "FF_SHOP_TAM_",
+                        StringComparison.OrdinalIgnoreCase);
+
+                if (!isManualSource && !isShopCenterline)
+                    continue;
+
+                if (isManualSource &&
+                    !string.IsNullOrWhiteSpace(materialKey) &&
+                    !NormalizeShopKey(layer).Contains(materialKey))
+                {
+                    continue;
+                }
+
+                if (!TryParseAutomaticPipeSize(
+                        ctx,
+                        layer,
+                        out string sizeText,
+                        out double width))
+                {
+                    continue;
+                }
+
+                ShopPipeCandidate candidate =
+                    CreateShopPipeCandidate(
+                        line,
+                        sizeText,
+                        width);
+
+                if (candidate == null ||
+                    !newPipes.Any(
+                        p => ManualShopPipesTouch(p, candidate)))
+                {
+                    continue;
+                }
+
+                if (isManualSource)
+                    sourceCandidates.Add(candidate);
+                else
+                    centerlineCandidates.Add(candidate);
+            }
+
+            // Với tuyến do chính chức năng này tạo, đường nguồn ẩn là chuẩn nhất.
+            // Bỏ tâm nét đứt trùng tuyến nguồn để không tạo thừa arm tại nút.
+            foreach (ShopPipeCandidate center in centerlineCandidates)
+            {
+                if (sourceCandidates.Any(
+                        source => ManualShopPipesOverlap(
+                            source,
+                            center)))
+                {
+                    continue;
+                }
+
+                sourceCandidates.Add(center);
+            }
+
+            return sourceCandidates;
+        }
+
+        private bool ManualShopPipesTouch(
+            ShopPipeCandidate a,
+            ShopPipeCandidate b)
+        {
+            if (a == null || b == null)
+                return false;
+
+            double tolerance =
+                Math.Max(
+                    ShopJointTolerance,
+                    Math.Max(a.Width, b.Width) * 1.5);
+
+            if (PlanDistance(a.Start, b.Start) <= tolerance ||
+                PlanDistance(a.Start, b.End) <= tolerance ||
+                PlanDistance(a.End, b.Start) <= tolerance ||
+                PlanDistance(a.End, b.End) <= tolerance)
+            {
+                return true;
+            }
+
+            List<ShopPipeLeg> legs =
+                BuildShopPipeLegs(
+                    new[] { a, b });
+
+            List<ShopPipeLeg> aLegs =
+                legs.Where(l => ReferenceEquals(l.Pipe, a)).ToList();
+
+            List<ShopPipeLeg> bLegs =
+                legs.Where(l => ReferenceEquals(l.Pipe, b)).ToList();
+
+            foreach (ShopPipeLeg la in aLegs)
+            {
+                foreach (ShopPipeLeg lb in bLegs)
+                {
+                    if (TryGetShopSegmentIntersection(
+                            la,
+                            lb,
+                            out Point3d _))
+                    {
+                        return true;
+                    }
+
+                    if (ManualShopPointTouchesLeg(
+                            la.Start,
+                            lb,
+                            tolerance) ||
+                        ManualShopPointTouchesLeg(
+                            la.End,
+                            lb,
+                            tolerance) ||
+                        ManualShopPointTouchesLeg(
+                            lb.Start,
+                            la,
+                            tolerance) ||
+                        ManualShopPointTouchesLeg(
+                            lb.End,
+                            la,
+                            tolerance))
+                    {
+                        return true;
+                    }
+                }
+            }
+
+            return false;
+        }
+
+        private bool ManualShopPointTouchesLeg(
+            Point3d point,
+            ShopPipeLeg leg,
+            double tolerance)
+        {
+            if (leg == null || !leg.IsStraight)
+                return false;
+
+            if (!TryProjectShopPointToSegment(
+                    point,
+                    leg.Start,
+                    leg.End,
+                    out Point3d _,
+                    out double t,
+                    out double distance))
+            {
+                return false;
+            }
+
+            double length =
+                Math.Max(
+                    PlanDistance(leg.Start, leg.End),
+                    1.0);
+
+            double extension = tolerance / length;
+
+            return distance <= tolerance &&
+                t >= -extension &&
+                t <= 1.0 + extension;
+        }
+
+        private bool ManualShopPipesOverlap(
+            ShopPipeCandidate a,
+            ShopPipeCandidate b)
+        {
+            if (a == null || b == null)
+                return false;
+
+            if (!string.Equals(
+                    CleanLayerText(a.SizeText ?? ""),
+                    CleanLayerText(b.SizeText ?? ""),
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            Vector3d da = a.End - a.Start;
+            Vector3d db = b.End - b.Start;
+
+            if (da.Length < 1e-6 || db.Length < 1e-6)
+                return false;
+
+            double angle =
+                GetShopAngleDegrees(
+                    da,
+                    db);
+
+            double axisError =
+                Math.Min(
+                    angle,
+                    Math.Abs(180.0 - angle));
+
+            if (axisError > ShopStraightAngleToleranceDeg)
+                return false;
+
+            Point3d middle =
+                new Point3d(
+                    (b.Start.X + b.End.X) / 2.0,
+                    (b.Start.Y + b.End.Y) / 2.0,
+                    (b.Start.Z + b.End.Z) / 2.0);
+
+            return ManualShopPointTouchesLeg(
+                middle,
+                BuildShopPipeLegs(new[] { a }).FirstOrDefault(),
+                Math.Max(ShopJointTolerance, a.Width));
+        }
+
+        private void AppendManualShopSourceLine(
+            Transaction tr,
+            Database db,
+            BlockTableRecord btr,
+            Point3d start,
+            Point3d end,
+            string material,
+            string sizeText)
+        {
+            if (start.DistanceTo(end) < 1.0)
+                return;
+
+            string layerName =
+                "TDL_MSHOP_SRC_" +
+                CleanLayerText(material ?? "ONG") +
+                "_" +
+                CleanLayerText(sizeText ?? "DN");
+
+            EnsureLayerExists(
+                tr,
+                db,
+                layerName,
+                false);
+
+            try
+            {
+                LayerTable lt =
+                    (LayerTable)tr.GetObject(
+                        db.LayerTableId,
+                        OpenMode.ForRead);
+
+                if (lt.Has(layerName))
+                {
+                    LayerTableRecord layer =
+                        (LayerTableRecord)tr.GetObject(
+                            lt[layerName],
+                            OpenMode.ForWrite);
+
+                    layer.IsPlottable = false;
+                    layer.IsLocked = false;
+                }
+            }
+            catch { }
+
+            Line source = new Line(start, end);
+            source.SetDatabaseDefaults(db);
+            source.Layer = layerName;
+            source.Visible = false;
+            source.Color =
+                Autodesk.AutoCAD.Colors.Color.FromColorIndex(
+                    ColorMethod.ByAci,
+                    8);
+
+            btr.AppendEntity(source);
+            tr.AddNewlyCreatedDBObject(source, true);
+        }
+
+        private void TrimExistingManualShopEdges(
+            Transaction tr,
+            Database db,
+            BlockTableRecord btr,
+            List<ShopPipeCandidate> oldPipes,
+            List<ShopFittingGapInfo> fittingGaps)
+        {
+            if (tr == null || db == null || btr == null ||
+                oldPipes == null || oldPipes.Count == 0 ||
+                fittingGaps == null || fittingGaps.Count == 0)
+            {
+                return;
+            }
+
+            foreach (ShopPipeCandidate pipe in oldPipes)
+            {
+                if (pipe == null ||
+                    string.IsNullOrWhiteSpace(pipe.LayerName))
+                {
+                    continue;
+                }
+
+                Vector3d pipeDirection =
+                    pipe.End - pipe.Start;
+
+                if (pipeDirection.Length < 1e-6)
+                    continue;
+
+                foreach (ShopFittingGapInfo gap in fittingGaps)
+                {
+                    if (!ShopFittingGapAppliesToPipe(
+                            gap,
+                            pipe,
+                            pipeDirection))
+                    {
+                        continue;
+                    }
+
+                    List<ObjectId> ids =
+                        btr.Cast<ObjectId>().ToList();
+
+                    foreach (ObjectId id in ids)
+                    {
+                        Line edge =
+                            tr.GetObject(
+                                id,
+                                OpenMode.ForRead,
+                                false) as Line;
+
+                        if (edge == null || edge.IsErased ||
+                            !string.Equals(
+                                edge.Layer,
+                                pipe.LayerName,
+                                StringComparison.OrdinalIgnoreCase))
+                        {
+                            continue;
+                        }
+
+                        TrimManualShopEdgeAtGap(
+                            tr,
+                            db,
+                            btr,
+                            edge,
+                            pipe,
+                            gap);
+                    }
+                }
+            }
+        }
+
+        private void TrimManualShopEdgeAtGap(
+            Transaction tr,
+            Database db,
+            BlockTableRecord btr,
+            Line edge,
+            ShopPipeCandidate pipe,
+            ShopFittingGapInfo gap)
+        {
+            if (edge == null || pipe == null || gap == null ||
+                gap.HalfLength <= 1.0)
+            {
+                return;
+            }
+
+            Vector3d edgeDirection =
+                edge.EndPoint - edge.StartPoint;
+
+            double edgeLength = edgeDirection.Length;
+
+            if (edgeLength < 1e-6)
+                return;
+
+            edgeDirection = edgeDirection.GetNormal();
+
+            Vector3d pipeDirection =
+                pipe.End - pipe.Start;
+
+            double axisAngle =
+                GetShopAngleDegrees(
+                    edgeDirection,
+                    pipeDirection);
+
+            double axisError =
+                Math.Min(
+                    axisAngle,
+                    Math.Abs(180.0 - axisAngle));
+
+            if (axisError > ShopStraightAngleToleranceDeg)
+                return;
+
+            Vector3d toJoint =
+                gap.Joint - edge.StartPoint;
+
+            double along =
+                toJoint.DotProduct(edgeDirection);
+
+            double reach =
+                Math.Max(
+                    ShopJointTolerance,
+                    pipe.Width * 2.0);
+
+            if (along < -reach ||
+                along > edgeLength + reach)
+            {
+                return;
+            }
+
+            double clampedAlong =
+                Math.Max(
+                    0.0,
+                    Math.Min(edgeLength, along));
+
+            Point3d projected =
+                edge.StartPoint +
+                edgeDirection * clampedAlong;
+
+            if (PlanDistance(projected, gap.Joint) > reach)
+                return;
+
+            double cutStart =
+                Math.Max(
+                    0.0,
+                    along - gap.HalfLength);
+
+            double cutEnd =
+                Math.Min(
+                    edgeLength,
+                    along + gap.HalfLength);
+
+            if (cutEnd - cutStart < 1.0)
+                return;
+
+            edge.UpgradeOpen();
+
+            Point3d originalStart = edge.StartPoint;
+            Point3d originalEnd = edge.EndPoint;
+
+            if (cutStart <= 1.0 &&
+                cutEnd >= edgeLength - 1.0)
+            {
+                edge.Erase();
+                return;
+            }
+
+            if (cutStart <= 1.0)
+            {
+                edge.StartPoint =
+                    originalStart +
+                    edgeDirection * cutEnd;
+                return;
+            }
+
+            if (cutEnd >= edgeLength - 1.0)
+            {
+                edge.EndPoint =
+                    originalStart +
+                    edgeDirection * cutStart;
+                return;
+            }
+
+            Point3d firstEnd =
+                originalStart +
+                edgeDirection * cutStart;
+
+            Point3d secondStart =
+                originalStart +
+                edgeDirection * cutEnd;
+
+            edge.EndPoint = firstEnd;
+
+            Line second =
+                new Line(secondStart, originalEnd);
+
+            second.SetDatabaseDefaults(db);
+            second.Layer = edge.Layer;
+            second.Color = edge.Color;
+            second.LineWeight = edge.LineWeight;
+            second.Transparency = edge.Transparency;
+            second.Visible = edge.Visible;
+
+            try
+            {
+                second.LinetypeId = edge.LinetypeId;
+                second.LinetypeScale = edge.LinetypeScale;
+            }
+            catch { }
+
+            btr.AppendEntity(second);
+            tr.AddNewlyCreatedDBObject(second, true);
+        }
+
         private void BtnVeShopOngChuaChay_Click(
             object sender,
             RoutedEventArgs e)
@@ -36048,6 +36854,7 @@ namespace ClassLibrary4
             public ObservableCollection<PipeSizeItem> Sizes { get; set; }
         }
     }
+
 
     public class PipeSizeItem : INotifyPropertyChanged
     {
