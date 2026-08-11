@@ -113,6 +113,46 @@
                             </Setter.Value>
                         </Setter>
                     </Style>
+
+                    <Style x:Key="AdaptiveTileItemStyle"
+                           TargetType="ListBoxItem"
+                           BasedOn="{StaticResource VatLieuItemStyle}">
+                        <Setter Property="Height" Value="26"/>
+                        <Setter Property="Padding" Value="0"/>
+                        <Setter Property="FontSize" Value="10"/>
+                        <Setter Property="Template">
+                            <Setter.Value>
+                                <ControlTemplate TargetType="ListBoxItem">
+                                    <Border x:Name="BdAdaptive"
+                                            Background="White"
+                                            BorderBrush="#FFCCCCCC"
+                                            BorderThickness="1"
+                                            Margin="1">
+                                        <Viewbox Stretch="Uniform"
+                                                 StretchDirection="DownOnly"
+                                                 Margin="3,1">
+                                            <ContentPresenter
+                                                HorizontalAlignment="Center"
+                                                VerticalAlignment="Center"/>
+                                        </Viewbox>
+                                    </Border>
+                                    <ControlTemplate.Triggers>
+                                        <Trigger Property="IsSelected" Value="True">
+                                            <Setter TargetName="BdAdaptive"
+                                                    Property="Background"
+                                                    Value="#FF0078D7"/>
+                                            <Setter Property="Foreground" Value="White"/>
+                                        </Trigger>
+                                        <Trigger Property="IsMouseOver" Value="True">
+                                            <Setter TargetName="BdAdaptive"
+                                                    Property="Background"
+                                                    Value="#FFEAF4FF"/>
+                                        </Trigger>
+                                    </ControlTemplate.Triggers>
+                                </ControlTemplate>
+                            </Setter.Value>
+                        </Setter>
+                    </Style>
                 </TabControl.Resources>
 
                 <TabControl.ItemContainerStyle>
@@ -178,11 +218,11 @@
                                         <TextBlock Text="Chọn đường ống:" FontWeight="Bold" Margin="0,0,0,4" Foreground="#FF333333"/>
                                         <ListBox x:Name="LstVatLieuOngBang" MinHeight="56" FontSize="10" BorderThickness="0" SelectedIndex="0"
                                                  ScrollViewer.VerticalScrollBarVisibility="Disabled" ScrollViewer.HorizontalScrollBarVisibility="Disabled"
-                                                 ItemContainerStyle="{StaticResource VatLieuItemStyle}"
+                                                 ItemContainerStyle="{StaticResource AdaptiveTileItemStyle}"
                                                  SelectionChanged="LstVatLieuOngBang_SelectionChanged" KeyDown="LstVatLieuOngBang_KeyDown">
                                             <ListBox.ItemsPanel>
                                                 <ItemsPanelTemplate>
-                                                    <WrapPanel ItemWidth="76" ItemHeight="28"/>
+                                                    <UniformGrid Columns="3"/>
                                                 </ItemsPanelTemplate>
                                             </ListBox.ItemsPanel>
                                             <ListBoxItem Content="TRÁNG KẼM"/>
@@ -296,11 +336,11 @@
                                         <TextBlock Text="Chọn loại van:" FontWeight="Bold" Margin="0,0,0,4" Foreground="#FF333333"/>
                                         <ListBox x:Name="LstLoaiVan" MinHeight="56" FontSize="9" BorderThickness="0" SelectedIndex="0"
                                                  ScrollViewer.VerticalScrollBarVisibility="Disabled" ScrollViewer.HorizontalScrollBarVisibility="Disabled"
-                                                 ItemContainerStyle="{StaticResource VatLieuItemStyle}"
+                                                 ItemContainerStyle="{StaticResource AdaptiveTileItemStyle}"
                                                  SelectionChanged="LstLoaiVan_SelectionChanged" KeyDown="LstLoaiVan_KeyDown">
                                             <ListBox.ItemsPanel>
                                                 <ItemsPanelTemplate>
-                                                    <WrapPanel ItemWidth="76" ItemHeight="28"/>
+                                                    <UniformGrid Columns="3"/>
                                                 </ItemsPanelTemplate>
                                             </ListBox.ItemsPanel>
                                             <ListBoxItem Content="V.CỔNG TN"/>
@@ -309,6 +349,10 @@
                                             <ListBoxItem Content="V.CỔNG ĐIỆN"/>
                                             <ListBoxItem Content="Y LỌC"/>
                                             <ListBoxItem Content="KNM"/>
+                                            <ListBoxItem Content="VAN BƯỚM"/>
+                                            <ListBoxItem Content="V. XẢ KHÍ"/>
+                                            <ListBoxItem Content="ĐH ĐO L. LƯỢNG"/>
+                                            <ListBoxItem Content="V. BÁO ĐỘNG"/>
                                         </ListBox>
                                         <TextBox x:Name="TxtLoaiVanBoSung" Height="26" FontSize="11" Padding="4" Margin="0,3,0,8"
                                                  ToolTip="Nhập thêm loại van rồi nhấn Enter" KeyDown="TxtLoaiVanBoSung_KeyDown"/>
@@ -363,11 +407,11 @@
                                         <TextBlock Text="Chọn thiết bị:" FontWeight="Bold" Margin="0,0,0,4" Foreground="#FF333333"/>
                                         <ListBox x:Name="LstLoaiThietBi" MinHeight="32" FontSize="9" BorderThickness="0" SelectedIndex="0"
                                                  ScrollViewer.VerticalScrollBarVisibility="Disabled" ScrollViewer.HorizontalScrollBarVisibility="Disabled"
-                                                 ItemContainerStyle="{StaticResource VatLieuItemStyle}"
+                                                 ItemContainerStyle="{StaticResource AdaptiveTileItemStyle}"
                                                  SelectionChanged="LstLoaiThietBi_SelectionChanged" KeyDown="LstLoaiThietBi_KeyDown">
                                             <ListBox.ItemsPanel>
                                                 <ItemsPanelTemplate>
-                                                    <WrapPanel ItemWidth="122" ItemHeight="28"/>
+                                                    <UniformGrid Columns="3"/>
                                                 </ItemsPanelTemplate>
                                             </ListBox.ItemsPanel>
                                             <ListBoxItem Content="BÌNH CC"/>
@@ -703,11 +747,11 @@
                                         </StackPanel>
                                         <ListBox x:Name="LstVatLieuOngBangACMV" MinHeight="32" FontSize="10" BorderThickness="0" SelectedIndex="0"
                                                  ScrollViewer.VerticalScrollBarVisibility="Disabled" ScrollViewer.HorizontalScrollBarVisibility="Disabled"
-                                                 ItemContainerStyle="{StaticResource VatLieuItemStyle}"
+                                                 ItemContainerStyle="{StaticResource AdaptiveTileItemStyle}"
                                                  SelectionChanged="LstVatLieuOngBang_SelectionChanged" KeyDown="LstVatLieuOngBang_KeyDown">
                                             <ListBox.ItemsPanel>
                                                 <ItemsPanelTemplate>
-                                                    <WrapPanel ItemWidth="76" ItemHeight="28"/>
+                                                    <UniformGrid Columns="3"/>
                                                 </ItemsPanelTemplate>
                                             </ListBox.ItemsPanel>
                                             <ListBoxItem Content="TRÁNG KẼM"/>
@@ -727,11 +771,11 @@
                                         <ListBox x:Name="LstVatLieuOngGioACMV" MinHeight="32" FontSize="10" BorderThickness="0" SelectedIndex="0"
                                                  IsEnabled="False" Opacity="0.45"
                                                  ScrollViewer.VerticalScrollBarVisibility="Disabled" ScrollViewer.HorizontalScrollBarVisibility="Disabled"
-                                                 ItemContainerStyle="{StaticResource VatLieuItemStyle}"
+                                                 ItemContainerStyle="{StaticResource AdaptiveTileItemStyle}"
                                                  SelectionChanged="LstVatLieuOngBang_SelectionChanged" KeyDown="LstVatLieuOngBang_KeyDown">
                                             <ListBox.ItemsPanel>
                                                 <ItemsPanelTemplate>
-                                                    <WrapPanel ItemWidth="76" ItemHeight="28"/>
+                                                    <UniformGrid Columns="3"/>
                                                 </ItemsPanelTemplate>
                                             </ListBox.ItemsPanel>
                                             <ListBoxItem Content="OG THẢI"/>
@@ -905,11 +949,11 @@
                                         </StackPanel>
                                         <ListBox x:Name="LstLoaiVanACMV" MinHeight="56" FontSize="9" BorderThickness="0" SelectedIndex="0"
                                                  ScrollViewer.VerticalScrollBarVisibility="Disabled" ScrollViewer.HorizontalScrollBarVisibility="Disabled"
-                                                 ItemContainerStyle="{StaticResource VatLieuItemStyle}"
+                                                 ItemContainerStyle="{StaticResource AdaptiveTileItemStyle}"
                                                  SelectionChanged="LstLoaiVan_SelectionChanged" KeyDown="LstLoaiVan_KeyDown">
                                             <ListBox.ItemsPanel>
                                                 <ItemsPanelTemplate>
-                                                    <WrapPanel ItemWidth="76" ItemHeight="28"/>
+                                                    <UniformGrid Columns="3"/>
                                                 </ItemsPanelTemplate>
                                             </ListBox.ItemsPanel>
                                             <ListBoxItem Content="V.CỔNG TN"/>
@@ -930,11 +974,11 @@
                                         <ListBox x:Name="LstLoaiVanGioACMV" MinHeight="56" FontSize="9" BorderThickness="0" SelectedIndex="0"
                                                  IsEnabled="False" Opacity="0.45"
                                                  ScrollViewer.VerticalScrollBarVisibility="Disabled" ScrollViewer.HorizontalScrollBarVisibility="Disabled"
-                                                 ItemContainerStyle="{StaticResource VatLieuItemStyle}"
+                                                 ItemContainerStyle="{StaticResource AdaptiveTileItemStyle}"
                                                  SelectionChanged="LstLoaiVan_SelectionChanged" KeyDown="LstLoaiVan_KeyDown">
                                             <ListBox.ItemsPanel>
                                                 <ItemsPanelTemplate>
-                                                    <WrapPanel ItemWidth="76" ItemHeight="28"/>
+                                                    <UniformGrid Columns="3"/>
                                                 </ItemsPanelTemplate>
                                             </ListBox.ItemsPanel>
                                             <ListBoxItem Content="VCD"/>
@@ -992,11 +1036,11 @@
                                         <TextBlock Text="Chọn thiết bị:" FontWeight="Bold" Margin="0,0,0,4" Foreground="#FF333333"/>
                                         <ListBox x:Name="LstLoaiThietBiACMV" MinHeight="32" FontSize="9" BorderThickness="0" SelectedIndex="0"
                                                  ScrollViewer.VerticalScrollBarVisibility="Disabled" ScrollViewer.HorizontalScrollBarVisibility="Disabled"
-                                                 ItemContainerStyle="{StaticResource VatLieuItemStyle}"
+                                                 ItemContainerStyle="{StaticResource AdaptiveTileItemStyle}"
                                                  SelectionChanged="LstLoaiThietBi_SelectionChanged" KeyDown="LstLoaiThietBi_KeyDown">
                                             <ListBox.ItemsPanel>
                                                 <ItemsPanelTemplate>
-                                                    <WrapPanel ItemWidth="76" ItemHeight="28"/>
+                                                    <UniformGrid Columns="3"/>
                                                 </ItemsPanelTemplate>
                                             </ListBox.ItemsPanel>
                                             <ListBoxItem Content="MÁY LẠNH"/>
@@ -1262,11 +1306,11 @@
                                         <TextBlock Text="Chọn đường ống:" FontWeight="Bold" Margin="0,0,0,4" Foreground="#FF333333"/>
                                         <ListBox x:Name="LstVatLieuOngBangCTN" MinHeight="56" FontSize="10" BorderThickness="0" SelectedIndex="0"
                                                  ScrollViewer.VerticalScrollBarVisibility="Disabled" ScrollViewer.HorizontalScrollBarVisibility="Disabled"
-                                                 ItemContainerStyle="{StaticResource VatLieuItemStyle}"
+                                                 ItemContainerStyle="{StaticResource AdaptiveTileItemStyle}"
                                                  SelectionChanged="LstVatLieuOngBang_SelectionChanged" KeyDown="LstVatLieuOngBang_KeyDown">
                                             <ListBox.ItemsPanel>
                                                 <ItemsPanelTemplate>
-                                                    <WrapPanel ItemWidth="76" ItemHeight="28"/>
+                                                    <UniformGrid Columns="3"/>
                                                 </ItemsPanelTemplate>
                                             </ListBox.ItemsPanel>
                                             <ListBoxItem Content="TRÁNG KẼM"/>
@@ -1378,11 +1422,11 @@
                                         <TextBlock Text="Chọn loại van:" FontWeight="Bold" Margin="0,0,0,4" Foreground="#FF333333"/>
                                         <ListBox x:Name="LstLoaiVanCTN" MinHeight="56" FontSize="9" BorderThickness="0" SelectedIndex="0"
                                                  ScrollViewer.VerticalScrollBarVisibility="Disabled" ScrollViewer.HorizontalScrollBarVisibility="Disabled"
-                                                 ItemContainerStyle="{StaticResource VatLieuItemStyle}"
+                                                 ItemContainerStyle="{StaticResource AdaptiveTileItemStyle}"
                                                  SelectionChanged="LstLoaiVan_SelectionChanged" KeyDown="LstLoaiVan_KeyDown">
                                             <ListBox.ItemsPanel>
                                                 <ItemsPanelTemplate>
-                                                    <WrapPanel ItemWidth="76" ItemHeight="28"/>
+                                                    <UniformGrid Columns="3"/>
                                                 </ItemsPanelTemplate>
                                             </ListBox.ItemsPanel>
                                             <ListBoxItem Content="V.CỔNG TN"/>
@@ -1438,11 +1482,11 @@
                                         <TextBlock Text="Chọn thiết bị:" FontWeight="Bold" Margin="0,0,0,4" Foreground="#FF333333"/>
                                         <ListBox x:Name="LstLoaiThietBiCTN" MinHeight="32" FontSize="9" BorderThickness="0" SelectedIndex="0"
                                                  ScrollViewer.VerticalScrollBarVisibility="Disabled" ScrollViewer.HorizontalScrollBarVisibility="Disabled"
-                                                 ItemContainerStyle="{StaticResource VatLieuItemStyle}"
+                                                 ItemContainerStyle="{StaticResource AdaptiveTileItemStyle}"
                                                  SelectionChanged="LstLoaiThietBi_SelectionChanged" KeyDown="LstLoaiThietBi_KeyDown">
                                             <ListBox.ItemsPanel>
                                                 <ItemsPanelTemplate>
-                                                    <WrapPanel ItemWidth="76" ItemHeight="28"/>
+                                                    <UniformGrid Columns="3"/>
                                                 </ItemsPanelTemplate>
                                             </ListBox.ItemsPanel>
                                             <ListBoxItem Content="ĐỒNG HỒ"/>
