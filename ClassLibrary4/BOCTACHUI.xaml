@@ -367,11 +367,14 @@
                                                  SelectionChanged="LstLoaiThietBi_SelectionChanged" KeyDown="LstLoaiThietBi_KeyDown">
                                             <ListBox.ItemsPanel>
                                                 <ItemsPanelTemplate>
-                                                    <WrapPanel ItemWidth="76" ItemHeight="28"/>
+                                                    <WrapPanel ItemWidth="122" ItemHeight="28"/>
                                                 </ItemsPanelTemplate>
                                             </ListBox.ItemsPanel>
                                             <ListBoxItem Content="BÌNH CC"/>
                                             <ListBoxItem Content="ĐẦU PHUN"/>
+                                            <ListBoxItem Content="BÁO KHÓI - NHIỆT"/>
+                                            <ListBoxItem Content="EXIT"/>
+                                            <ListBoxItem Content="EMERGENCY"/>
                                         </ListBox>
                                         <TextBox x:Name="TxtLoaiThietBiBoSung" Height="26" FontSize="11" Padding="4" Margin="0,3,0,8"
                                                  ToolTip="Nhập thêm loại thiết bị rồi nhấn Enter" KeyDown="TxtLoaiThietBiBoSung_KeyDown"/>
