@@ -1,4 +1,5 @@
-﻿#nullable disable
+﻿// BAN DUNG: TRUC-DUNG-20260817 - COPY TOAN BO FILE NAY VAO BOCTACHUI.xaml.cs
+#nullable disable
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
@@ -78,6 +79,84 @@ namespace ClassLibrary4
         private const double ShopFittingGapMin = 12.0;
         private const double ShopFittingGapRatio = 0.25;
         private const double ShopFittingGapMax = 45.0;
+
+        // TRỤC ĐỨNG:
+        // Mỗi ký hiệu là một BlockReference nằm cùng layer với ống ngang
+        // và mang XData để THỐNG KÊ ỐNG đọc đúng chiều dài đứng.
+        private const string VerticalRiserRegAppName =
+            "TDL_MEP_RISER";
+        private const string VerticalRiserBlockUpName =
+            "TDL_TRUC_DUNG_UP";
+        private const string VerticalRiserBlockDownName =
+            "TDL_TRUC_DUNG_DOWN";
+        private const double VerticalRiserMarkerRadius = 115.0;
+        private const double VerticalRiserTextHeight = 65.0;
+
+        private double _lastVerticalRiserHeightMeters = 3.6;
+        private string _lastVerticalRiserDirection = "UP";
+
+        // KIỂM TRA 3D:
+        // Tạo mô hình đường tâm 3D tạm để kiểm tra hở tuyến / trục đứng chưa nối.
+        // Mỗi lần chạy sẽ xóa mô hình kiểm tra cũ và dựng lại.
+        private const string Review3DPipeLayer = "TDL_3D_PIPE";
+        private const string Review3DRiserLayer = "TDL_3D_RISER";
+        private const string Review3DErrorLayer = "TDL_3D_ERROR";
+        private const string Review3DPipeSolidLayer = "TDL_3D_PIPE_SOLID";
+        private const string Review3DDuctSolidLayer = "TDL_3D_DUCT_SOLID";
+        private const string Review3DRiserSolidLayer = "TDL_3D_RISER_SOLID";
+        private const string Review3DFittingSolidLayer = "TDL_3D_FITTING_SOLID";
+        private const string Review3DLabelLayer = "TDL_3D_LABEL";
+        private const string Review2DFocusLayer = "TDL_2D_ERROR_FOCUS";
+        private const double Review3DJoinTolerance = 150.0;
+        private const double Review3DEquipmentTolerance = 300.0;
+        private const double Review3DErrorMarkerSize = 180.0;
+        private const double Review3DErrorTextHeight = 140.0;
+        private const double Review3DSampleStep = 500.0;
+        private const double Review3DMinimumVisualSize = 40.0;
+
+        // STEP 4 - PHỤ KIỆN 3D:
+        private const double Review3DElbowRadiusRatio = 1.5;
+        private const double Review3DElbowMinCenterRadius = 80.0;
+        private const double Review3DFittingDiameterScale = 1.10;
+        private const double Review3DFittingSleeveLengthRatio = 0.85;
+        private const double Review3DReducerLengthRatio = 2.0;
+        private const double Review3DReducerMinLength = 120.0;
+        private const double Review3DDiameterDifferentRatio = 0.08;
+        private const double Review3DStraightAngleDeg = 155.0;
+        private const double Review3DElbowMinAngleDeg = 20.0;
+        private const double Review3DElbowMaxAngleDeg = 160.0;
+
+        // STEP 6 - LIỀN KHỐI KIỂU REVIT:
+        private const double Review3DUnionBoundingTolerance = 6.0;
+        private const double Review3DUnionSearchTolerance = 40.0;
+        private const double Review3DLabelTextHeight = 110.0;
+        private const double Review3DLabelOffset = 110.0;
+
+        private double _lastReview3DElevationMeters = 3.2;
+        private bool _review3DIsIn2DFocus = false;
+
+        // STEP 6C - ESC THOÁT 3D:
+        // Lưu đúng view + visual style trước khi vào 3D để ESC trả về như ban đầu.
+        private bool _review3DOriginalViewCaptured = false;
+        private Point3d _review3DOriginalTarget = Point3d.Origin;
+        private Point2d _review3DOriginalCenterPoint = Point2d.Origin;
+        private Vector3d _review3DOriginalViewDirection = Vector3d.ZAxis;
+        private double _review3DOriginalViewTwist = 0.0;
+        private double _review3DOriginalViewWidth = 1.0;
+        private double _review3DOriginalViewHeight = 1.0;
+        private string _review3DOriginalVisualStyle = "";
+        private double _review3DOriginalFacetRes = 0.5;
+        private int _review3DOriginalIsoLines = 4;
+        private int _review3DOriginalDispSilh = 0;
+
+        private bool _review3DEscapeWatcherAttached = false;
+        private bool _review3DEscapeWasDown = false;
+        private bool _review3DExitByEscapeInProgress = false;
+
+        [System.Runtime.InteropServices.DllImport("user32.dll")]
+        private static extern short GetAsyncKeyState(int vKey);
+
+        private const int Review3DVirtualKeyEscape = 0x1B;
 
         // Góc lệch tối đa (radian) giữa hướng chữ và hướng ống
         // để coi là "song song". ~18 độ ≈ Math.PI / 10.
@@ -3862,6 +3941,7371 @@ namespace ClassLibrary4
             // (tránh DN400 đè chữ vì nét quá dày)
             return FixedDnPipeDisplayWidth;
         }
+
+        // ============================================================
+        // TRỤC ĐỨNG / VERTICAL RISER
+        // - Lấy hệ, vật liệu, size và layer từ lựa chọn hiện tại.
+        // - Người dùng chỉ nhập HƯỚNG + CHIỀU CAO (m).
+        // - BlockReference nằm cùng layer ống để chức năng TÌM ĐỐI TƯỢNG
+        //   vẫn tìm được cả ống ngang và trục đứng.
+        // - XData lưu chiều dài thật để THỐNG KÊ ỐNG không phụ thuộc
+        //   vào kích thước hình vẽ của ký hiệu.
+        // ============================================================
+
+        private class VerticalRiserData
+        {
+            public string Id { get; set; }
+            public string PipeLayer { get; set; }
+            public string SystemCode { get; set; }
+            public string Material { get; set; }
+            public string Size { get; set; }
+            public string Direction { get; set; }
+            public double HeightMeters { get; set; }
+        }
+
+        private void BtnTrucDung_Click(
+            object sender,
+            RoutedEventArgs e)
+        {
+            PipeUiContext ctx = GetContext(sender);
+
+            if (ctx == null)
+                return;
+
+            string material =
+                GetSelectedPipeMaterialName(ctx);
+
+            if (CheckIsOngGio(ctx) ||
+                LaOngGio(material))
+            {
+                MessageBox.Show(
+                    "TRỤC ĐỨNG hiện chỉ áp dụng cho đường ống, " +
+                    "không áp dụng cho nhóm ỐNG GIÓ.",
+                    "TRỤC ĐỨNG");
+                return;
+            }
+
+            string size =
+                GetSelectedPipeSizeName(ctx);
+
+            if (string.IsNullOrWhiteSpace(size))
+            {
+                MessageBox.Show(
+                    "Hãy chọn vật liệu và SIZE ống trước khi đặt trục đứng.",
+                    "TRỤC ĐỨNG");
+                return;
+            }
+
+            if (!TryPromptVerticalRiserSettings(
+                    material,
+                    size,
+                    out bool isUp,
+                    out double heightMeters))
+            {
+                return;
+            }
+
+            Document doc =
+                Autodesk.AutoCAD.ApplicationServices.Core.Application
+                    .DocumentManager
+                    .MdiActiveDocument;
+
+            if (doc == null)
+                return;
+
+            Editor ed = doc.Editor;
+            Database db = doc.Database;
+
+            Autodesk.AutoCAD.Internal.Utils.SetFocusToDwgView();
+
+            List<Point3d> insertionPoints =
+                PromptVerticalRiserPoints(ed);
+
+            if (insertionPoints == null ||
+                insertionPoints.Count == 0)
+            {
+                return;
+            }
+
+            string systemCode =
+                CleanLayerText(
+                    GetSystemCode(ctx));
+
+            string pipeLayer =
+                GetLayerPrefix(ctx) + "_" +
+                CleanLayerText(size);
+
+            string displaySize =
+                Regex.Replace(
+                    (size ?? "").Replace('_', ' '),
+                    @"\s+",
+                    " ").Trim();
+
+            int placedCount = 0;
+
+            using (doc.LockDocument())
+            using (Transaction tr =
+                db.TransactionManager.StartTransaction())
+            {
+                EnsureLayerExists(
+                    tr,
+                    db,
+                    pipeLayer,
+                    false);
+
+                EnsureVerticalRiserRegApp(
+                    tr,
+                    db);
+
+                ObjectId blockId =
+                    EnsureVerticalRiserBlockDefinition(
+                        tr,
+                        db,
+                        isUp);
+
+                BlockTableRecord space =
+                    (BlockTableRecord)tr.GetObject(
+                        db.CurrentSpaceId,
+                        OpenMode.ForWrite);
+
+                int nextSequence =
+                    GetNextVerticalRiserSequence(
+                        tr,
+                        space);
+
+                string idSystem =
+                    Regex.Replace(
+                        (systemCode ?? "MEP")
+                            .ToUpperInvariant(),
+                        @"[^A-Z0-9]",
+                        "");
+
+                if (string.IsNullOrWhiteSpace(idSystem))
+                    idSystem = "MEP";
+
+                foreach (Point3d point in insertionPoints)
+                {
+                    string riserId =
+                        "TD-" + idSystem + "-" +
+                        nextSequence.ToString("0000");
+
+                    nextSequence++;
+
+                    BlockReference blockReference =
+                        new BlockReference(
+                            point,
+                            blockId);
+
+                    blockReference.SetDatabaseDefaults(db);
+                    blockReference.Layer = pipeLayer;
+                    blockReference.Color =
+                        Autodesk.AutoCAD.Colors.Color
+                            .FromColorIndex(
+                                ColorMethod.ByLayer,
+                                256);
+
+                    space.AppendEntity(
+                        blockReference);
+
+                    tr.AddNewlyCreatedDBObject(
+                        blockReference,
+                        true);
+
+                    AppendVerticalRiserAttributes(
+                        tr,
+                        blockReference,
+                        blockId,
+                        displaySize,
+                        heightMeters);
+
+                    SetVerticalRiserXData(
+                        blockReference,
+                        new VerticalRiserData
+                        {
+                            Id = riserId,
+                            PipeLayer = pipeLayer,
+                            SystemCode = systemCode,
+                            Material = material,
+                            Size = size,
+                            Direction = isUp ? "UP" : "DOWN",
+                            HeightMeters = heightMeters
+                        });
+
+                    placedCount++;
+                }
+
+                tr.Commit();
+            }
+
+            try
+            {
+                ed.Regen();
+            }
+            catch
+            {
+            }
+
+            _lastVerticalRiserHeightMeters =
+                heightMeters;
+
+            _lastVerticalRiserDirection =
+                isUp ? "UP" : "DOWN";
+
+            ed.WriteMessage(
+                "\n[TRỤC ĐỨNG] Đã đặt " + placedCount +
+                " trục | " +
+                (isUp ? "HƯỚNG LÊN" : "HƯỚNG XUỐNG") +
+                " | " + displaySize +
+                " | H=" +
+                heightMeters.ToString(
+                    "0.###",
+                    CultureInfo.InvariantCulture) +
+                "m | Layer=" + pipeLayer + ".");
+        }
+
+        private bool TryPromptVerticalRiserSettings(
+            string material,
+            string size,
+            out bool isUp,
+            out double heightMeters)
+        {
+            isUp = true;
+            heightMeters = 0.0;
+
+            using (System.Windows.Forms.Form dialog =
+                new System.Windows.Forms.Form())
+            {
+                dialog.Text = "TRỤC ĐỨNG";
+                dialog.Width = 430;
+                dialog.Height = 245;
+                dialog.FormBorderStyle =
+                    System.Windows.Forms.FormBorderStyle.FixedDialog;
+                dialog.StartPosition =
+                    System.Windows.Forms.FormStartPosition.CenterScreen;
+                dialog.MaximizeBox = false;
+                dialog.MinimizeBox = false;
+                dialog.ShowInTaskbar = false;
+                dialog.Font =
+                    new System.Drawing.Font(
+                        "Segoe UI",
+                        10.0f);
+
+                System.Windows.Forms.Label selectedLabel =
+                    new System.Windows.Forms.Label
+                    {
+                        Left = 18,
+                        Top = 15,
+                        Width = 380,
+                        Height = 24,
+                        Text =
+                            "Đang chọn: " +
+                            (material ?? "") + " | " +
+                            (size ?? "").Replace('_', ' '),
+                        AutoEllipsis = true,
+                        Font =
+                            new System.Drawing.Font(
+                                "Segoe UI",
+                                9.5f,
+                                System.Drawing.FontStyle.Bold)
+                    };
+
+                System.Windows.Forms.GroupBox directionGroup =
+                    new System.Windows.Forms.GroupBox
+                    {
+                        Left = 18,
+                        Top = 45,
+                        Width = 378,
+                        Height = 62,
+                        Text = "Hướng trục"
+                    };
+
+                System.Windows.Forms.RadioButton upRadio =
+                    new System.Windows.Forms.RadioButton
+                    {
+                        Left = 18,
+                        Top = 25,
+                        Width = 155,
+                        Height = 25,
+                        Text = "HƯỚNG LÊN",
+                        Checked =
+                            !string.Equals(
+                                _lastVerticalRiserDirection,
+                                "DOWN",
+                                StringComparison.OrdinalIgnoreCase)
+                    };
+
+                System.Windows.Forms.RadioButton downRadio =
+                    new System.Windows.Forms.RadioButton
+                    {
+                        Left = 195,
+                        Top = 25,
+                        Width = 160,
+                        Height = 25,
+                        Text = "HƯỚNG XUỐNG",
+                        Checked =
+                            string.Equals(
+                                _lastVerticalRiserDirection,
+                                "DOWN",
+                                StringComparison.OrdinalIgnoreCase)
+                    };
+
+                directionGroup.Controls.Add(upRadio);
+                directionGroup.Controls.Add(downRadio);
+
+                System.Windows.Forms.Label heightLabel =
+                    new System.Windows.Forms.Label
+                    {
+                        Left = 18,
+                        Top = 122,
+                        Width = 205,
+                        Height = 25,
+                        Text = "Chiều cao đoạn ống (m):",
+                        TextAlign =
+                            System.Drawing.ContentAlignment.MiddleLeft
+                    };
+
+                System.Windows.Forms.NumericUpDown heightInput =
+                    new System.Windows.Forms.NumericUpDown
+                    {
+                        Left = 230,
+                        Top = 119,
+                        Width = 166,
+                        Height = 28,
+                        DecimalPlaces = 3,
+                        Increment = 0.100m,
+                        Minimum = 0.001m,
+                        Maximum = 10000.000m,
+                        TextAlign =
+                            System.Windows.Forms.HorizontalAlignment.Right
+                    };
+
+                decimal initialHeight =
+                    (decimal)Math.Max(
+                        0.001,
+                        Math.Min(
+                            10000.0,
+                            _lastVerticalRiserHeightMeters));
+
+                heightInput.Value = initialHeight;
+                heightInput.Select(0, heightInput.Text.Length);
+
+                System.Windows.Forms.Button okButton =
+                    new System.Windows.Forms.Button
+                    {
+                        Left = 183,
+                        Top = 164,
+                        Width = 102,
+                        Height = 34,
+                        Text = "ĐẶT TRỤC",
+                        DialogResult =
+                            System.Windows.Forms.DialogResult.OK
+                    };
+
+                System.Windows.Forms.Button cancelButton =
+                    new System.Windows.Forms.Button
+                    {
+                        Left = 294,
+                        Top = 164,
+                        Width = 102,
+                        Height = 34,
+                        Text = "HỦY",
+                        DialogResult =
+                            System.Windows.Forms.DialogResult.Cancel
+                    };
+
+                dialog.Controls.Add(selectedLabel);
+                dialog.Controls.Add(directionGroup);
+                dialog.Controls.Add(heightLabel);
+                dialog.Controls.Add(heightInput);
+                dialog.Controls.Add(okButton);
+                dialog.Controls.Add(cancelButton);
+
+                dialog.AcceptButton = okButton;
+                dialog.CancelButton = cancelButton;
+
+                WinFormsDialogResult result =
+                    Autodesk.AutoCAD.ApplicationServices.Application
+                        .ShowModalDialog(dialog);
+
+                if (result != WinFormsDialogResult.OK)
+                    return false;
+
+                isUp = upRadio.Checked;
+                heightMeters =
+                    (double)heightInput.Value;
+
+                return heightMeters > 0.0;
+            }
+        }
+
+        private List<Point3d> PromptVerticalRiserPoints(
+            Editor ed)
+        {
+            List<Point3d> points =
+                new List<Point3d>();
+
+            if (ed == null)
+                return points;
+
+            while (true)
+            {
+                PromptPointOptions options =
+                    new PromptPointOptions(
+                        points.Count == 0
+                            ? "\n[TRỤC ĐỨNG] Chọn tâm trục hoặc Enter để hủy: "
+                            : "\n[TRỤC ĐỨNG] Chọn tâm trục tiếp theo hoặc Enter để kết thúc: ")
+                    {
+                        AllowNone = true
+                    };
+
+                PromptPointResult result =
+                    ed.GetPoint(options);
+
+                if (result.Status == PromptStatus.None)
+                    break;
+
+                if (result.Status != PromptStatus.OK)
+                {
+                    points.Clear();
+                    break;
+                }
+
+                points.Add(result.Value);
+            }
+
+            return points;
+        }
+
+        private void EnsureVerticalRiserRegApp(
+            Transaction tr,
+            Database db)
+        {
+            RegAppTable table =
+                (RegAppTable)tr.GetObject(
+                    db.RegAppTableId,
+                    OpenMode.ForRead);
+
+            if (table.Has(VerticalRiserRegAppName))
+                return;
+
+            table.UpgradeOpen();
+
+            RegAppTableRecord record =
+                new RegAppTableRecord
+                {
+                    Name = VerticalRiserRegAppName
+                };
+
+            table.Add(record);
+            tr.AddNewlyCreatedDBObject(record, true);
+        }
+
+        private ObjectId EnsureVerticalRiserBlockDefinition(
+            Transaction tr,
+            Database db,
+            bool isUp)
+        {
+            string blockName =
+                isUp
+                    ? VerticalRiserBlockUpName
+                    : VerticalRiserBlockDownName;
+
+            BlockTable blockTable =
+                (BlockTable)tr.GetObject(
+                    db.BlockTableId,
+                    OpenMode.ForRead);
+
+            if (blockTable.Has(blockName))
+                return blockTable[blockName];
+
+            blockTable.UpgradeOpen();
+
+            BlockTableRecord definition =
+                new BlockTableRecord
+                {
+                    Name = blockName,
+                    Origin = Point3d.Origin
+                };
+
+            ObjectId definitionId =
+                blockTable.Add(definition);
+
+            tr.AddNewlyCreatedDBObject(
+                definition,
+                true);
+
+            Circle circle =
+                new Circle(
+                    Point3d.Origin,
+                    Vector3d.ZAxis,
+                    VerticalRiserMarkerRadius);
+
+            AppendVerticalRiserBlockEntity(
+                tr,
+                db,
+                definition,
+                circle);
+
+            double sign = isUp ? 1.0 : -1.0;
+            Point3d arrowTail =
+                new Point3d(
+                    0.0,
+                    -sign * 55.0,
+                    0.0);
+            Point3d arrowTip =
+                new Point3d(
+                    0.0,
+                    sign * 78.0,
+                    0.0);
+            Point3d arrowLeft =
+                new Point3d(
+                    -32.0,
+                    sign * 38.0,
+                    0.0);
+            Point3d arrowRight =
+                new Point3d(
+                    32.0,
+                    sign * 38.0,
+                    0.0);
+
+            AppendVerticalRiserBlockEntity(
+                tr,
+                db,
+                definition,
+                new Line(arrowTail, arrowTip));
+            AppendVerticalRiserBlockEntity(
+                tr,
+                db,
+                definition,
+                new Line(arrowTip, arrowLeft));
+            AppendVerticalRiserBlockEntity(
+                tr,
+                db,
+                definition,
+                new Line(arrowTip, arrowRight));
+
+            AttributeDefinition sizeAttribute =
+                new AttributeDefinition(
+                    new Point3d(
+                        VerticalRiserMarkerRadius + 45.0,
+                        30.0,
+                        0.0),
+                    "DN",
+                    "SIZE",
+                    "Size ống",
+                    db.Textstyle)
+                {
+                    Height = VerticalRiserTextHeight,
+                    Preset = true,
+                    Verifiable = false,
+                    LockPositionInBlock = true
+                };
+
+            AppendVerticalRiserBlockEntity(
+                tr,
+                db,
+                definition,
+                sizeAttribute);
+
+            AttributeDefinition heightAttribute =
+                new AttributeDefinition(
+                    new Point3d(
+                        VerticalRiserMarkerRadius + 45.0,
+                        -55.0,
+                        0.0),
+                    "H=0.000m",
+                    "HEIGHT",
+                    "Chiều cao trục đứng",
+                    db.Textstyle)
+                {
+                    Height = VerticalRiserTextHeight,
+                    Preset = true,
+                    Verifiable = false,
+                    LockPositionInBlock = true
+                };
+
+            AppendVerticalRiserBlockEntity(
+                tr,
+                db,
+                definition,
+                heightAttribute);
+
+            return definitionId;
+        }
+
+        private void AppendVerticalRiserBlockEntity(
+            Transaction tr,
+            Database db,
+            BlockTableRecord definition,
+            Entity entity)
+        {
+            if (tr == null ||
+                db == null ||
+                definition == null ||
+                entity == null)
+            {
+                return;
+            }
+
+            entity.SetDatabaseDefaults(db);
+            entity.Layer = "0";
+            entity.Color =
+                Autodesk.AutoCAD.Colors.Color
+                    .FromColorIndex(
+                        ColorMethod.ByBlock,
+                        0);
+
+            definition.AppendEntity(entity);
+            tr.AddNewlyCreatedDBObject(entity, true);
+        }
+
+        private void AppendVerticalRiserAttributes(
+            Transaction tr,
+            BlockReference blockReference,
+            ObjectId definitionId,
+            string displaySize,
+            double heightMeters)
+        {
+            if (tr == null ||
+                blockReference == null ||
+                definitionId.IsNull)
+            {
+                return;
+            }
+
+            BlockTableRecord definition =
+                tr.GetObject(
+                    definitionId,
+                    OpenMode.ForRead,
+                    false) as BlockTableRecord;
+
+            if (definition == null)
+                return;
+
+            foreach (ObjectId id in definition)
+            {
+                AttributeDefinition source =
+                    tr.GetObject(
+                        id,
+                        OpenMode.ForRead,
+                        false) as AttributeDefinition;
+
+                if (source == null ||
+                    source.Constant)
+                {
+                    continue;
+                }
+
+                AttributeReference target =
+                    new AttributeReference();
+
+                target.SetAttributeFromBlock(
+                    source,
+                    blockReference.BlockTransform);
+
+                if (string.Equals(
+                        source.Tag,
+                        "SIZE",
+                        StringComparison.OrdinalIgnoreCase))
+                {
+                    target.TextString =
+                        displaySize ?? "";
+                }
+                else if (string.Equals(
+                             source.Tag,
+                             "HEIGHT",
+                             StringComparison.OrdinalIgnoreCase))
+                {
+                    target.TextString =
+                        "H=" +
+                        heightMeters.ToString(
+                            "0.###",
+                            CultureInfo.InvariantCulture) +
+                        "m";
+                }
+
+                blockReference.AttributeCollection
+                    .AppendAttribute(target);
+
+                tr.AddNewlyCreatedDBObject(
+                    target,
+                    true);
+            }
+        }
+
+        private void SetVerticalRiserXData(
+            BlockReference blockReference,
+            VerticalRiserData data)
+        {
+            if (blockReference == null ||
+                data == null)
+            {
+                return;
+            }
+
+            using (ResultBuffer buffer =
+                new ResultBuffer(
+                    new TypedValue(
+                        (int)DxfCode.ExtendedDataRegAppName,
+                        VerticalRiserRegAppName),
+                    new TypedValue(
+                        (int)DxfCode.ExtendedDataAsciiString,
+                        "V1"),
+                    new TypedValue(
+                        (int)DxfCode.ExtendedDataAsciiString,
+                        data.Id ?? ""),
+                    new TypedValue(
+                        (int)DxfCode.ExtendedDataAsciiString,
+                        data.PipeLayer ?? ""),
+                    new TypedValue(
+                        (int)DxfCode.ExtendedDataAsciiString,
+                        data.SystemCode ?? ""),
+                    new TypedValue(
+                        (int)DxfCode.ExtendedDataAsciiString,
+                        data.Material ?? ""),
+                    new TypedValue(
+                        (int)DxfCode.ExtendedDataAsciiString,
+                        data.Size ?? ""),
+                    new TypedValue(
+                        (int)DxfCode.ExtendedDataAsciiString,
+                        data.Direction ?? "UP"),
+                    new TypedValue(
+                        (int)DxfCode.ExtendedDataReal,
+                        data.HeightMeters)))
+            {
+                blockReference.XData = buffer;
+            }
+        }
+
+        private bool TryReadVerticalRiserData(
+            Entity entity,
+            out VerticalRiserData data)
+        {
+            data = null;
+
+            if (entity == null ||
+                entity.IsErased)
+            {
+                return false;
+            }
+
+            ResultBuffer buffer = null;
+
+            try
+            {
+                buffer =
+                    entity.GetXDataForApplication(
+                        VerticalRiserRegAppName);
+
+                if (buffer == null)
+                    return false;
+
+                TypedValue[] values =
+                    buffer.AsArray();
+
+                if (values == null ||
+                    values.Length < 9)
+                {
+                    return false;
+                }
+
+                double height =
+                    Convert.ToDouble(
+                        values[8].Value,
+                        CultureInfo.InvariantCulture);
+
+                if (height <= 0.0 ||
+                    double.IsNaN(height) ||
+                    double.IsInfinity(height))
+                {
+                    return false;
+                }
+
+                data =
+                    new VerticalRiserData
+                    {
+                        Id =
+                            Convert.ToString(
+                                values[2].Value,
+                                CultureInfo.InvariantCulture) ?? "",
+                        PipeLayer =
+                            Convert.ToString(
+                                values[3].Value,
+                                CultureInfo.InvariantCulture) ??
+                            entity.Layer ?? "",
+                        SystemCode =
+                            Convert.ToString(
+                                values[4].Value,
+                                CultureInfo.InvariantCulture) ?? "",
+                        Material =
+                            Convert.ToString(
+                                values[5].Value,
+                                CultureInfo.InvariantCulture) ?? "",
+                        Size =
+                            Convert.ToString(
+                                values[6].Value,
+                                CultureInfo.InvariantCulture) ?? "",
+                        Direction =
+                            Convert.ToString(
+                                values[7].Value,
+                                CultureInfo.InvariantCulture) ?? "UP",
+                        HeightMeters = height
+                    };
+
+                return !string.IsNullOrWhiteSpace(
+                    data.PipeLayer);
+            }
+            catch
+            {
+                data = null;
+                return false;
+            }
+            finally
+            {
+                if (buffer != null)
+                    buffer.Dispose();
+            }
+        }
+
+        private int GetNextVerticalRiserSequence(
+            Transaction tr,
+            BlockTableRecord space)
+        {
+            int maxSequence = 0;
+
+            if (tr == null ||
+                space == null)
+            {
+                return 1;
+            }
+
+            foreach (ObjectId id in space)
+            {
+                BlockReference blockReference =
+                    tr.GetObject(
+                        id,
+                        OpenMode.ForRead,
+                        false) as BlockReference;
+
+                if (blockReference == null ||
+                    !TryReadVerticalRiserData(
+                        blockReference,
+                        out VerticalRiserData data))
+                {
+                    continue;
+                }
+
+                Match match =
+                    Regex.Match(
+                        data.Id ?? "",
+                        @"(?<N>\d+)$");
+
+                if (match.Success &&
+                    int.TryParse(
+                        match.Groups["N"].Value,
+                        out int number))
+                {
+                    maxSequence =
+                        Math.Max(
+                            maxSequence,
+                            number);
+                }
+            }
+
+            return maxSequence + 1;
+        }
+
+        // ============================================================
+        // KIỂM TRA 3D / 3D PIPE REVIEW
+        // - Nhanh: dựng line 3D nhẹ máy, kiểm tra topo nhanh.
+        // - Dep: dựng mô hình "BIM mini" đẹp hơn:
+        //        + Ống nước / PCCC / CTN => Solid tròn
+        //        + Ống gió => Solid hộp chữ nhật
+        //        + Trục đứng => Solid đứng đúng chiều cao
+        // ============================================================
+        private enum Review3DDisplayMode
+        {
+            Nhanh,
+            Dep
+        }
+
+        private enum Review3DProfileKind
+        {
+            PipeRound,
+            DuctRect
+        }
+
+        private class Review3DPipeData
+        {
+            public ObjectId SourceId { get; set; }
+            public string SourceLayer { get; set; }
+            public List<Point3d> Points { get; set; } =
+                new List<Point3d>();
+
+            // Các đỉnh thật cần làm mượt (vd: góc PLINE).
+            // Không dùng các điểm sample ARC để tránh mô hình bị "hạt".
+            public List<Point3d> JointPoints { get; set; } =
+                new List<Point3d>();
+
+            // True nếu Points là các vertex thật của Polyline.
+            // Khi đó chế độ ĐẸP có thể trim đoạn thẳng và chèn co sweep thật.
+            public bool UseVertexJoints { get; set; } = false;
+
+            public Review3DProfileKind ProfileKind { get; set; } =
+                Review3DProfileKind.PipeRound;
+
+            // PipeRound: Width = đường kính ngoài.
+            // DuctRect: Width = bề rộng, Height = bề cao.
+            public double Width { get; set; } =
+                FixedDnPipeDisplayWidth;
+            public double Height { get; set; } =
+                FixedDnPipeDisplayWidth;
+
+            public string DisplayLabel { get; set; } = "";
+
+            public Point3d StartPoint
+            {
+                get
+                {
+                    return Points != null && Points.Count > 0
+                        ? Points[0]
+                        : Point3d.Origin;
+                }
+            }
+
+            public Point3d EndPoint
+            {
+                get
+                {
+                    return Points != null && Points.Count > 0
+                        ? Points[Points.Count - 1]
+                        : Point3d.Origin;
+                }
+            }
+
+            public bool IsClosed
+            {
+                get
+                {
+                    return Points != null &&
+                           Points.Count > 2 &&
+                           PlanDistance(
+                               Points[0],
+                               Points[Points.Count - 1]) <=
+                           Review3DJoinTolerance * 0.25;
+                }
+            }
+        }
+
+        private class Review3DRiserData
+        {
+            public ObjectId SourceId { get; set; }
+            public Point3d BasePoint { get; set; }
+            public string PipeLayer { get; set; }
+            public string Size { get; set; }
+            public string Direction { get; set; }
+            public double HeightMeters { get; set; }
+
+            public Review3DProfileKind ProfileKind { get; set; } =
+                Review3DProfileKind.PipeRound;
+
+            public double Width { get; set; } =
+                FixedDnPipeDisplayWidth;
+            public double Height { get; set; } =
+                FixedDnPipeDisplayWidth;
+            public string DisplayLabel { get; set; } = "";
+        }
+
+        private class Review3DAirTerminalData
+        {
+            public ObjectId SourceId { get; set; }
+            public Point3d Position { get; set; }
+            public double Rotation { get; set; }
+            public double Width { get; set; }
+            public double Height { get; set; }
+            public string DisplayLabel { get; set; } = "";
+            public string Kind { get; set; } = "GRILLE";
+        }
+
+        private class Review3DErrorData
+        {
+            public Point3d Point { get; set; }
+            public string Text { get; set; }
+        }
+
+        private class Review3DFittingConnection
+        {
+            public Point3d Node { get; set; }
+            public Vector3d Direction { get; set; }
+            public double Diameter { get; set; }
+            public Review3DPipeData Pipe { get; set; }
+            public Review3DRiserData Riser { get; set; }
+            public bool IsRiser { get; set; }
+        }
+
+        private void BtnKiemTra3D_Click(
+            object sender,
+            RoutedEventArgs e)
+        {
+            PipeUiContext ctx =
+                GetContext(sender);
+
+            if (ctx == null)
+                return;
+
+            Document doc =
+                Autodesk.AutoCAD.ApplicationServices.Core.Application
+                    .DocumentManager
+                    .MdiActiveDocument;
+
+            if (doc == null)
+                return;
+
+            Editor ed = doc.Editor;
+            Database db = doc.Database;
+
+            Autodesk.AutoCAD.Internal.Utils.SetFocusToDwgView();
+
+            // Nếu đã có preview 3D:
+            // - đang xem 3D => có thể click lỗi để quay đúng vị trí 2D;
+            // - đang focus 2D => có thể quay lại mô hình 3D;
+            // - vẫn giữ LamMoi / Xoa trên cùng một nút để UI không bị rối.
+            if (HasReview3DPreview(db))
+            {
+                if (_review3DIsIn2DFocus)
+                {
+                    PromptKeywordOptions focusOptions =
+                        new PromptKeywordOptions(
+                            "\n[KIỂM TRA 3D] Đang xem vị trí lỗi trên mặt bằng. " +
+                            "[Quay3D/LamMoi/Xoa] <Quay3D>: ");
+
+                    focusOptions.AllowNone = true;
+                    focusOptions.Keywords.Add("Quay3D");
+                    focusOptions.Keywords.Add("LamMoi");
+                    focusOptions.Keywords.Add("Xoa");
+
+                    PromptResult focusResult =
+                        ed.GetKeywords(
+                            focusOptions);
+
+                    if (focusResult.Status ==
+                        PromptStatus.Cancel)
+                    {
+                        return;
+                    }
+
+                    string focusChoice =
+                        focusResult.Status ==
+                            PromptStatus.OK
+                            ? focusResult.StringResult
+                            : "Quay3D";
+
+                    if (string.Equals(
+                            focusChoice,
+                            "Quay3D",
+                            StringComparison.OrdinalIgnoreCase))
+                    {
+                        using (doc.LockDocument())
+                        using (Transaction tr =
+                            db.TransactionManager.StartTransaction())
+                        {
+                            DeleteReview2DFocusMarker(
+                                tr,
+                                db);
+
+                            SetReview3DPreviewVisibility(
+                                tr,
+                                db,
+                                true);
+
+                            tr.Commit();
+                        }
+
+                        SetReview3DIsometricView(
+                            ed);
+
+                        SetReview3DConceptualVisualStyle();
+
+                        TryIsolateReview3DPreview(
+                            doc,
+                            ed,
+                            db);
+
+                        TryZoomExtents(
+                            doc);
+
+                        _review3DIsIn2DFocus =
+                            false;
+
+                        StartReview3DEscapeWatcher();
+
+                        ed.Regen();
+                        return;
+                    }
+
+                    // Với LamMoi / Xoa phải trả object về trạng thái bình thường trước.
+                    StopReview3DEscapeWatcher();
+
+                    TryUnisolateReview3DObjects(
+                        doc,
+                        ed);
+
+                    using (doc.LockDocument())
+                    using (Transaction tr =
+                        db.TransactionManager.StartTransaction())
+                    {
+                        DeleteReview2DFocusMarker(
+                            tr,
+                            db);
+
+                        SetReview3DPreviewVisibility(
+                            tr,
+                            db,
+                            true);
+
+                        DeleteReview3DPreview(
+                            tr,
+                            db);
+
+                        tr.Commit();
+                    }
+
+                    _review3DIsIn2DFocus =
+                        false;
+
+                    SetReview3DTopView(ed);
+                    ed.Regen();
+
+                    if (string.Equals(
+                            focusChoice,
+                            "Xoa",
+                            StringComparison.OrdinalIgnoreCase))
+                    {
+                        ed.WriteMessage(
+                            "\n[KIỂM TRA 3D] Đã xóa mô hình kiểm tra 3D.");
+                        return;
+                    }
+
+                    // LamMoi => tiếp tục xuống dưới để dựng preview mới.
+                }
+                else
+                {
+                    PromptKeywordOptions oldPreviewOptions =
+                        new PromptKeywordOptions(
+                            "\n[KIỂM TRA 3D] Đã có mô hình 3D. " +
+                            "[TimLoi/LamMoi/Xoa] <TimLoi>: ");
+
+                    oldPreviewOptions.AllowNone = true;
+                    oldPreviewOptions.Keywords.Add("TimLoi");
+                    oldPreviewOptions.Keywords.Add("LamMoi");
+                    oldPreviewOptions.Keywords.Add("Xoa");
+
+                    PromptResult oldPreviewResult =
+                        ed.GetKeywords(oldPreviewOptions);
+
+                    if (oldPreviewResult.Status ==
+                        PromptStatus.Cancel)
+                    {
+                        return;
+                    }
+
+                    string oldChoice =
+                        oldPreviewResult.Status ==
+                            PromptStatus.OK
+                            ? oldPreviewResult.StringResult
+                            : "TimLoi";
+
+                    if (string.Equals(
+                            oldChoice,
+                            "TimLoi",
+                            StringComparison.OrdinalIgnoreCase))
+                    {
+                        bool focused =
+                            TryFocusReview3DErrorIn2D(
+                                doc,
+                                ed,
+                                db);
+
+                        if (focused)
+                        {
+                            _review3DIsIn2DFocus =
+                                true;
+
+                            StopReview3DEscapeWatcher();
+                        }
+
+                        return;
+                    }
+
+                    if (string.Equals(
+                            oldChoice,
+                            "Xoa",
+                            StringComparison.OrdinalIgnoreCase))
+                    {
+                        StopReview3DEscapeWatcher();
+
+                        TryUnisolateReview3DObjects(
+                            doc,
+                            ed);
+
+                        using (doc.LockDocument())
+                        using (Transaction tr =
+                            db.TransactionManager.StartTransaction())
+                        {
+                            DeleteReview2DFocusMarker(
+                                tr,
+                                db);
+
+                            DeleteReview3DPreview(
+                                tr,
+                                db);
+
+                            tr.Commit();
+                        }
+
+                        _review3DIsIn2DFocus =
+                            false;
+
+                        SetReview3DTopView(ed);
+                        ed.Regen();
+
+                        ed.WriteMessage(
+                            "\n[KIỂM TRA 3D] Đã xóa mô hình kiểm tra 3D.");
+                        return;
+                    }
+
+                    // LamMoi: bỏ cô lập, xóa preview cũ và về TOP.
+                    StopReview3DEscapeWatcher();
+
+                    TryUnisolateReview3DObjects(
+                        doc,
+                        ed);
+
+                    using (doc.LockDocument())
+                    using (Transaction tr =
+                        db.TransactionManager.StartTransaction())
+                    {
+                        DeleteReview2DFocusMarker(
+                            tr,
+                            db);
+
+                        DeleteReview3DPreview(
+                            tr,
+                            db);
+
+                        tr.Commit();
+                    }
+
+                    _review3DIsIn2DFocus =
+                        false;
+
+                    SetReview3DTopView(ed);
+                    ed.Regen();
+                }
+            }
+
+            // Chọn chế độ dựng.
+            PromptKeywordOptions modeOptions =
+                new PromptKeywordOptions(
+                    "\n[KIỂM TRA 3D] Chế độ " +
+                    "[Nhanh/Dep] <Dep>: ");
+
+            modeOptions.AllowNone = true;
+            modeOptions.Keywords.Add("Nhanh");
+            modeOptions.Keywords.Add("Dep");
+
+            PromptResult modeResult =
+                ed.GetKeywords(
+                    modeOptions);
+
+            if (modeResult.Status ==
+                PromptStatus.Cancel)
+            {
+                return;
+            }
+
+            Review3DDisplayMode mode =
+                (modeResult.Status == PromptStatus.OK &&
+                 string.Equals(
+                     modeResult.StringResult,
+                     "Nhanh",
+                     StringComparison.OrdinalIgnoreCase))
+                    ? Review3DDisplayMode.Nhanh
+                    : Review3DDisplayMode.Dep;
+
+            // Cao độ Z của toàn bộ ống ngang trong vùng đang kiểm tra.
+            PromptDoubleOptions elevationOptions =
+                new PromptDoubleOptions(
+                    "\n[KIỂM TRA 3D] Nhập CAO ĐỘ ỐNG NGANG (m) " +
+                    "<" +
+                    _lastReview3DElevationMeters
+                        .ToString(
+                            "0.###",
+                            CultureInfo.InvariantCulture) +
+                    ">: ");
+
+            elevationOptions.AllowNone = true;
+            elevationOptions.AllowNegative = true;
+            elevationOptions.AllowZero = true;
+
+            PromptDoubleResult elevationResult =
+                ed.GetDouble(
+                    elevationOptions);
+
+            if (elevationResult.Status ==
+                PromptStatus.Cancel)
+            {
+                return;
+            }
+
+            double elevationMeters =
+                _lastReview3DElevationMeters;
+
+            if (elevationResult.Status ==
+                PromptStatus.OK)
+            {
+                elevationMeters =
+                    elevationResult.Value;
+            }
+
+            if (double.IsNaN(elevationMeters) ||
+                double.IsInfinity(elevationMeters))
+            {
+                MessageBox.Show(
+                    "Cao độ ống ngang không hợp lệ.",
+                    "KIỂM TRA 3D");
+                return;
+            }
+
+            _lastReview3DElevationMeters =
+                elevationMeters;
+
+            PromptKeywordOptions rangeOptions =
+                new PromptKeywordOptions(
+                    "\n[KIỂM TRA 3D] Phạm vi kiểm tra " +
+                    "[Vung/ToanBo] <Vung>: ");
+
+            rangeOptions.AllowNone = true;
+            rangeOptions.Keywords.Add("Vung");
+            rangeOptions.Keywords.Add("ToanBo");
+
+            PromptResult rangeResult =
+                ed.GetKeywords(
+                    rangeOptions);
+
+            if (rangeResult.Status ==
+                PromptStatus.Cancel)
+            {
+                return;
+            }
+
+            bool useAll =
+                rangeResult.Status ==
+                    PromptStatus.OK &&
+                string.Equals(
+                    rangeResult.StringResult,
+                    "ToanBo",
+                    StringComparison.OrdinalIgnoreCase);
+
+            ObjectId[] sourceIds;
+
+            if (useAll)
+            {
+                List<ObjectId> ids =
+                    new List<ObjectId>();
+
+                using (Transaction tr =
+                    db.TransactionManager.StartTransaction())
+                {
+                    BlockTableRecord space =
+                        (BlockTableRecord)tr.GetObject(
+                            db.CurrentSpaceId,
+                            OpenMode.ForRead);
+
+                    foreach (ObjectId id in space)
+                    {
+                        ids.Add(id);
+                    }
+
+                    tr.Commit();
+                }
+
+                sourceIds =
+                    ids.ToArray();
+            }
+            else
+            {
+                PromptSelectionOptions selectionOptions =
+                    new PromptSelectionOptions();
+
+                selectionOptions.MessageForAdding =
+                    "\n[KIỂM TRA 3D] Quét vùng ống / ống gió / trục đứng cần kiểm tra: ";
+
+                PromptSelectionResult selectionResult =
+                    ed.GetSelection(
+                        selectionOptions);
+
+                if (selectionResult.Status !=
+                        PromptStatus.OK ||
+                    selectionResult.Value == null ||
+                    selectionResult.Value.Count == 0)
+                {
+                    return;
+                }
+
+                sourceIds =
+                    selectionResult.Value
+                        .GetObjectIds();
+            }
+
+            double elevation =
+                elevationMeters * 1000.0;
+
+            List<Review3DPipeData> pipes =
+                new List<Review3DPipeData>();
+
+            List<Review3DRiserData> risers =
+                new List<Review3DRiserData>();
+
+            List<Review3DAirTerminalData> airTerminals =
+                new List<Review3DAirTerminalData>();
+
+            List<Point3d> equipmentAnchors =
+                new List<Point3d>();
+
+            using (Transaction tr =
+                db.TransactionManager.StartTransaction())
+            {
+                foreach (ObjectId id in sourceIds)
+                {
+                    if (id.IsNull ||
+                        !id.IsValid)
+                    {
+                        continue;
+                    }
+
+                    Entity ent =
+                        tr.GetObject(
+                            id,
+                            OpenMode.ForRead,
+                            false) as Entity;
+
+                    if (ent == null ||
+                        ent.IsErased)
+                    {
+                        continue;
+                    }
+
+                    string layer =
+                        (ent.Layer ?? "")
+                            .Trim();
+
+                    if (IsReview3DTempLayer(layer))
+                        continue;
+
+                    // TRỤC ĐỨNG.
+                    if (ent is BlockReference &&
+                        TryReadVerticalRiserData(
+                            ent,
+                            out VerticalRiserData riserData))
+                    {
+                        string riserPipeLayer =
+                            (riserData.PipeLayer ??
+                             layer ??
+                             "").Trim();
+
+                        if (!LayerBelongsToReview3DContext(
+                                ctx,
+                                riserPipeLayer))
+                        {
+                            continue;
+                        }
+
+                        BlockReference br =
+                            (BlockReference)ent;
+
+                        Review3DProfileKind riserKind;
+                        double riserW;
+                        double riserH;
+                        string riserLabel;
+
+                        DetermineReview3DProfile(
+                            string.IsNullOrWhiteSpace(
+                                riserData.Size)
+                                ? riserPipeLayer
+                                : riserData.Size,
+                            riserPipeLayer,
+                            out riserKind,
+                            out riserW,
+                            out riserH,
+                            out riserLabel);
+
+                        risers.Add(
+                            new Review3DRiserData
+                            {
+                                SourceId = id,
+                                BasePoint =
+                                    new Point3d(
+                                        br.Position.X,
+                                        br.Position.Y,
+                                        0.0),
+                                PipeLayer =
+                                    riserPipeLayer,
+                                Size =
+                                    riserData.Size ?? "",
+                                Direction =
+                                    riserData.Direction ?? "UP",
+                                HeightMeters =
+                                    riserData.HeightMeters,
+                                ProfileKind =
+                                    riserKind,
+                                Width = riserW,
+                                Height = riserH,
+                                DisplayLabel =
+                                    riserLabel
+                            });
+
+                        continue;
+                    }
+
+                    // ỐNG NGANG / ỐNG GIÓ / ĐƯỜNG TÂM SHOP.
+                    if (ent is Curve curve &&
+                        IsReview3DPipeCurve(
+                            ctx,
+                            layer))
+                    {
+                        Review3DPipeData pipe =
+                            BuildReview3DPipeData(
+                                curve,
+                                layer);
+
+                        if (pipe != null &&
+                            pipe.Points != null &&
+                            pipe.Points.Count >= 2)
+                        {
+                            pipe.SourceId = id;
+                            pipe.SourceLayer = layer;
+                            pipes.Add(pipe);
+                        }
+
+                        continue;
+                    }
+
+                    // MIỆNG GIÓ 3D:
+                    // Đọc các block ký hiệu miệng gió / diffuser / grille
+                    // nằm cùng context để dựng gắn vào ống gió 3D.
+                    if (ent is BlockReference blockRef &&
+                        LayerBelongsToReview3DContext(
+                            ctx,
+                            layer) &&
+                        !LaLayerThietBiHoacVan(layer))
+                    {
+                        if (TryBuildReview3DAirTerminal(
+                                tr,
+                                blockRef,
+                                layer,
+                                out Review3DAirTerminalData terminal))
+                        {
+                            terminal.SourceId = id;
+                            airTerminals.Add(
+                                terminal);
+                        }
+                    }
+
+                    // Điểm thiết bị / van / text đầu cuối để tránh báo hở giả.
+                    if (LayerBelongsToReview3DContext(
+                            ctx,
+                            layer) &&
+                        LaLayerThietBiHoacVan(layer) &&
+                        (ent is DBText ||
+                         ent is MText ||
+                         ent is BlockReference))
+                    {
+                        Point3d p =
+                            LayDiemDaiDien(ent);
+
+                        equipmentAnchors.Add(
+                            new Point3d(
+                                p.X,
+                                p.Y,
+                                0.0));
+                    }
+                }
+
+                tr.Commit();
+            }
+
+            if (pipes.Count == 0 &&
+                risers.Count == 0)
+            {
+                MessageBox.Show(
+                    "Không tìm thấy ống / ống gió / trục đứng hợp lệ trong phạm vi chọn.\n\n" +
+                    "Tool đọc:\n" +
+                    "• Ống thường trên layer của tool.\n" +
+                    "• Đường tâm ống SHOP.\n" +
+                    "• Ống gió có size dạng 800x400 trong layer.\n" +
+                    "• Trục đứng được tạo bằng nút VẼ TRỤC ĐỨNG.",
+                    "KIỂM TRA 3D");
+                return;
+            }
+
+            List<Review3DErrorData> errors =
+                BuildReview3DErrors(
+                    pipes,
+                    risers,
+                    equipmentAnchors,
+                    elevation);
+
+            using (doc.LockDocument())
+            using (Transaction tr =
+                db.TransactionManager.StartTransaction())
+            {
+                DeleteReview3DPreview(
+                    tr,
+                    db);
+
+                EnsureReview3DLayers(
+                    tr,
+                    db);
+
+                BlockTableRecord space =
+                    (BlockTableRecord)tr.GetObject(
+                        db.CurrentSpaceId,
+                        OpenMode.ForWrite);
+
+                foreach (Review3DPipeData pipe
+                    in pipes)
+                {
+                    if (mode ==
+                        Review3DDisplayMode.Dep)
+                    {
+                        AppendReview3DPrettyPipe(
+                            tr,
+                            db,
+                            space,
+                            pipe,
+                            elevation);
+
+                        AppendReview3DPipeSizeLabel(
+                            tr,
+                            db,
+                            space,
+                            pipe,
+                            elevation);
+                    }
+                    else
+                    {
+                        AppendReview3DPipe(
+                            tr,
+                            db,
+                            space,
+                            pipe,
+                            elevation);
+                    }
+                }
+
+                foreach (Review3DRiserData riser
+                    in risers)
+                {
+                    if (mode ==
+                        Review3DDisplayMode.Dep)
+                    {
+                        AppendReview3DPrettyRiser(
+                            tr,
+                            db,
+                            space,
+                            riser,
+                            elevation);
+
+                        AppendReview3DRiserSizeLabel(
+                            tr,
+                            db,
+                            space,
+                            riser,
+                            elevation);
+                    }
+                    else
+                    {
+                        AppendReview3DRiser(
+                            tr,
+                            db,
+                            space,
+                            riser,
+                            elevation);
+                    }
+                }
+
+                // Bản ĐẸP: thêm fitting tròn tại góc PLINE / giao tuyến ống tròn.
+                // Mục đích là che mép giao giữa các cylinder, nhìn liền khối hơn.
+                if (mode ==
+                    Review3DDisplayMode.Dep)
+                {
+                    AppendReview3DAirTerminals(
+                        tr,
+                        db,
+                        space,
+                        pipes,
+                        airTerminals,
+                        elevation);
+
+                    AppendReview3DPrettyJoints(
+                        tr,
+                        db,
+                        space,
+                        pipes,
+                        risers,
+                        elevation);
+                }
+
+                foreach (Review3DErrorData error
+                    in errors)
+                {
+                    if (mode ==
+                        Review3DDisplayMode.Dep)
+                    {
+                        AppendReview3DPrettyErrorMarker(
+                            tr,
+                            db,
+                            space,
+                            error);
+                    }
+                    else
+                    {
+                        AppendReview3DErrorMarker(
+                            tr,
+                            db,
+                            space,
+                            error);
+                    }
+                }
+
+                if (mode ==
+                    Review3DDisplayMode.Dep)
+                {
+                    MergeReview3DSolidsLikeRevit(
+                        tr,
+                        db);
+                }
+
+                tr.Commit();
+            }
+
+            _review3DIsIn2DFocus =
+                false;
+
+            CaptureReview3DOriginalViewIfNeeded(
+                ed);
+
+            SetReview3DIsometricView(ed);
+
+            if (mode ==
+                Review3DDisplayMode.Dep)
+            {
+                SetReview3DConceptualVisualStyle();
+                TryIsolateReview3DPreview(
+                    doc,
+                    ed,
+                    db);
+                TryZoomExtents(
+                    doc);
+            }
+
+            ed.Regen();
+
+            StartReview3DEscapeWatcher();
+
+            string modeText =
+                mode == Review3DDisplayMode.Dep
+                    ? "ĐẸP / KHỐI ĐẶC + MIỆNG GIÓ 3D"
+                    : "NHANH";
+
+            ed.WriteMessage(
+                "\n[KIỂM TRA 3D] Chế độ " +
+                modeText +
+                " | " +
+                pipes.Count +
+                " tuyến/curve | " +
+                risers.Count +
+                " trục đứng | " +
+                errors.Count +
+                " vị trí nghi hở.");
+
+            if (errors.Count > 0)
+            {
+                MessageBox.Show(
+                    "Đã tạo mô hình KIỂM TRA 3D (" +
+                    modeText +
+                    ").\n\n" +
+                    "Phát hiện " +
+                    errors.Count +
+                    " vị trí cần kiểm tra.\n" +
+                    "Các vị trí này nằm trên layer " +
+                    Review3DErrorLayer +
+                    " và được đánh dấu HỞ / TRỤC CHƯA NỐI.\n" +
+                    "Chế độ ĐẸP đã dựng CO / NỐI / GIẢM / TÊ 3D, cố gắng UNION khối, và tự gắn miệng gió 3D nếu phát hiện block gần ống gió.\n\n" +
+                    "Lưu ý: đây là cảnh báo hình học để rà soát, " +
+                    "không tự kết luận 100% là thiếu ống.",
+                    "KIỂM TRA 3D");
+            }
+            else
+            {
+                MessageBox.Show(
+                    "Đã tạo mô hình KIỂM TRA 3D (" +
+                    modeText +
+                    ").\n\n" +
+                    "Chưa phát hiện đầu ống hở hoặc trục đứng " +
+                    "không chạm tuyến trong phạm vi đã chọn.",
+                    "KIỂM TRA 3D");
+            }
+        }
+
+        private Review3DPipeData BuildReview3DPipeData(
+            Curve curve,
+            string layer)
+        {
+            Review3DPipeData pipe =
+                BuildReview3DCenterline(
+                    curve);
+
+            if (pipe == null)
+                return null;
+
+            Review3DProfileKind kind;
+            double width;
+            double height;
+            string label;
+
+            DetermineReview3DProfile(
+                layer,
+                layer,
+                out kind,
+                out width,
+                out height,
+                out label);
+
+            pipe.ProfileKind =
+                kind;
+            pipe.Width =
+                width;
+            pipe.Height =
+                height;
+            pipe.DisplayLabel =
+                label;
+
+            return pipe;
+        }
+
+        private Review3DPipeData BuildReview3DCenterline(
+            Curve curve)
+        {
+            if (curve == null)
+                return null;
+
+            List<Point3d> points =
+                new List<Point3d>();
+
+            List<Point3d> joints =
+                new List<Point3d>();
+
+            bool useVertexJoints =
+                false;
+
+            try
+            {
+                if (curve is Line line)
+                {
+                    points.Add(
+                        new Point3d(
+                            line.StartPoint.X,
+                            line.StartPoint.Y,
+                            0.0));
+
+                    points.Add(
+                        new Point3d(
+                            line.EndPoint.X,
+                            line.EndPoint.Y,
+                            0.0));
+                }
+                else if (curve is Polyline pline)
+                {
+                    useVertexJoints =
+                        true;
+
+                    int count =
+                        pline.NumberOfVertices;
+
+                    if (count < 2)
+                        return null;
+
+                    for (int i = 0;
+                        i < count;
+                        i++)
+                    {
+                        Point3d p =
+                            pline.GetPoint3dAt(i);
+
+                        Point3d flat =
+                            new Point3d(
+                                p.X,
+                                p.Y,
+                                0.0);
+
+                        if (points.Count == 0 ||
+                            PlanDistance(
+                                points[points.Count - 1],
+                                flat) > 1e-6)
+                        {
+                            points.Add(flat);
+                        }
+
+                        // Chỉ đỉnh giữa là joint thật.
+                        if (i > 0 &&
+                            i < count - 1)
+                        {
+                            joints.Add(flat);
+                        }
+                    }
+
+                    if (pline.Closed &&
+                        points.Count > 2)
+                    {
+                        if (PlanDistance(
+                                points[0],
+                                points[points.Count - 1]) >
+                            1e-6)
+                        {
+                            points.Add(
+                                points[0]);
+                        }
+
+                        // Với polyline kín, đỉnh đầu cũng là một joint.
+                        joints.Add(
+                            points[0]);
+                    }
+                }
+                else
+                {
+                    // ARC / SPLINE / curve khác:
+                    // sample vừa phải để mô hình theo được đường cong.
+                    // KHÔNG đưa các sample này vào JointPoints.
+                    double length =
+                        LayChieuDaiCurveThongKe(
+                            curve);
+
+                    if (length <= 1e-6)
+                        return null;
+
+                    int segmentCount =
+                        (int)Math.Ceiling(
+                            length /
+                            Review3DSampleStep);
+
+                    segmentCount =
+                        Math.Max(
+                            4,
+                            Math.Min(
+                                segmentCount,
+                                48));
+
+                    for (int i = 0;
+                        i <= segmentCount;
+                        i++)
+                    {
+                        double dist =
+                            length *
+                            i /
+                            segmentCount;
+
+                        Point3d p;
+
+                        if (i == 0)
+                        {
+                            p =
+                                curve.StartPoint;
+                        }
+                        else if (i ==
+                                 segmentCount)
+                        {
+                            p =
+                                curve.EndPoint;
+                        }
+                        else
+                        {
+                            p =
+                                curve.GetPointAtDist(
+                                    dist);
+                        }
+
+                        Point3d flat =
+                            new Point3d(
+                                p.X,
+                                p.Y,
+                                0.0);
+
+                        if (points.Count == 0 ||
+                            PlanDistance(
+                                points[points.Count - 1],
+                                flat) > 1e-6)
+                        {
+                            points.Add(
+                                flat);
+                        }
+                    }
+                }
+            }
+            catch
+            {
+                try
+                {
+                    Point3d a =
+                        curve.StartPoint;
+                    Point3d b =
+                        curve.EndPoint;
+
+                    points.Clear();
+                    joints.Clear();
+
+                    points.Add(
+                        new Point3d(
+                            a.X,
+                            a.Y,
+                            0.0));
+
+                    points.Add(
+                        new Point3d(
+                            b.X,
+                            b.Y,
+                            0.0));
+                }
+                catch
+                {
+                    return null;
+                }
+            }
+
+            if (points.Count < 2)
+                return null;
+
+            return
+                new Review3DPipeData
+                {
+                    Points = points,
+                    JointPoints = joints,
+                    UseVertexJoints =
+                        useVertexJoints
+                };
+        }
+
+        private bool HasReview3DPreview(
+            Database db)
+        {
+            if (db == null)
+                return false;
+
+            try
+            {
+                using (Transaction tr =
+                    db.TransactionManager.StartTransaction())
+                {
+                    BlockTableRecord space =
+                        (BlockTableRecord)tr.GetObject(
+                            db.CurrentSpaceId,
+                            OpenMode.ForRead);
+
+                    foreach (ObjectId id in space)
+                    {
+                        Entity ent =
+                            tr.GetObject(
+                                id,
+                                OpenMode.ForRead,
+                                false) as Entity;
+
+                        if (ent != null &&
+                            !ent.IsErased &&
+                            IsReview3DTempLayer(
+                                ent.Layer))
+                        {
+                            return true;
+                        }
+                    }
+
+                    tr.Commit();
+                }
+            }
+            catch
+            {
+            }
+
+            return false;
+        }
+
+        private static bool IsReview3DTempLayer(
+            string layerName)
+        {
+            if (string.IsNullOrWhiteSpace(
+                    layerName))
+            {
+                return false;
+            }
+
+            return
+                layerName.Equals(
+                    Review3DPipeLayer,
+                    StringComparison.OrdinalIgnoreCase) ||
+                layerName.Equals(
+                    Review3DRiserLayer,
+                    StringComparison.OrdinalIgnoreCase) ||
+                layerName.Equals(
+                    Review3DErrorLayer,
+                    StringComparison.OrdinalIgnoreCase) ||
+                layerName.Equals(
+                    Review3DPipeSolidLayer,
+                    StringComparison.OrdinalIgnoreCase) ||
+                layerName.Equals(
+                    Review3DDuctSolidLayer,
+                    StringComparison.OrdinalIgnoreCase) ||
+                layerName.Equals(
+                    Review3DRiserSolidLayer,
+                    StringComparison.OrdinalIgnoreCase) ||
+                layerName.Equals(
+                    Review3DFittingSolidLayer,
+                    StringComparison.OrdinalIgnoreCase) ||
+                layerName.Equals(
+                    Review3DLabelLayer,
+                    StringComparison.OrdinalIgnoreCase);
+        }
+
+        private bool LayerBelongsToReview3DContext(
+            PipeUiContext ctx,
+            string layerName)
+        {
+            if (ctx == null ||
+                string.IsNullOrWhiteSpace(
+                    layerName))
+            {
+                return false;
+            }
+
+            string u =
+                layerName
+                    .Trim()
+                    .ToUpperInvariant();
+
+            string systemCode =
+                CleanLayerText(
+                    GetSystemCode(ctx))
+                    .ToUpperInvariant();
+
+            if (systemCode == "FF")
+            {
+                return
+                    u.StartsWith("FF_") ||
+                    u.StartsWith("CHUA_CHAY_") ||
+                    u.StartsWith("CHỮA_CHÁY_");
+            }
+
+            if (systemCode == "ACMV")
+            {
+                return
+                    u.StartsWith("ACMV_");
+            }
+
+            if (systemCode == "CTN")
+            {
+                return
+                    u.StartsWith("CTN_");
+            }
+
+            return
+                u.StartsWith(
+                    systemCode + "_");
+        }
+
+        private bool IsReview3DPipeCurve(
+            PipeUiContext ctx,
+            string layerName)
+        {
+            if (!LayerBelongsToReview3DContext(
+                    ctx,
+                    layerName))
+            {
+                return false;
+            }
+
+            // SHOP chỉ lấy TIM, không lấy 2 nét biên.
+            if (LaLayerTamOngShop(
+                    layerName))
+            {
+                return true;
+            }
+
+            if (LaLayerBienOngShop(
+                    layerName) ||
+                LaLayerPhuKienHoacTamShop(
+                    layerName))
+            {
+                return false;
+            }
+
+            if (LaLayerOng(
+                    layerName))
+            {
+                return true;
+            }
+
+            // Bổ sung nhận diện ống gió dựa trên size WxH trong layer.
+            if (TryExtractDuctSizeFromText(
+                    layerName,
+                    out double _,
+                    out double _))
+            {
+                return true;
+            }
+
+            return false;
+        }
+
+        private static bool TryExtractDuctSizeFromText(
+            string source,
+            out double width,
+            out double height)
+        {
+            width = 0.0;
+            height = 0.0;
+
+            if (string.IsNullOrWhiteSpace(source))
+                return false;
+
+            Match m =
+                Regex.Match(
+                    source,
+                    @"(\d+(?:\.\d+)?)\s*[xX×]\s*(\d+(?:\.\d+)?)");
+
+            if (!m.Success)
+                return false;
+
+            if (!double.TryParse(
+                    m.Groups[1].Value,
+                    NumberStyles.Float,
+                    CultureInfo.InvariantCulture,
+                    out width))
+            {
+                return false;
+            }
+
+            if (!double.TryParse(
+                    m.Groups[2].Value,
+                    NumberStyles.Float,
+                    CultureInfo.InvariantCulture,
+                    out height))
+            {
+                return false;
+            }
+
+            width =
+                Math.Max(
+                    width,
+                    Review3DMinimumVisualSize);
+            height =
+                Math.Max(
+                    height,
+                    Review3DMinimumVisualSize);
+
+            return true;
+        }
+
+        private void DetermineReview3DProfile(
+            string sourceText,
+            string layerText,
+            out Review3DProfileKind kind,
+            out double width,
+            out double height,
+            out string label)
+        {
+            kind =
+                Review3DProfileKind.PipeRound;
+            width =
+                FixedDnPipeDisplayWidth;
+            height =
+                FixedDnPipeDisplayWidth;
+            label = "";
+
+            string source =
+                (sourceText ?? "").Trim();
+
+            string layer =
+                (layerText ?? "").Trim();
+
+            if (TryExtractDuctSizeFromText(
+                    source,
+                    out double ductW,
+                    out double ductH) ||
+                TryExtractDuctSizeFromText(
+                    layer,
+                    out ductW,
+                    out ductH))
+            {
+                kind =
+                    Review3DProfileKind.DuctRect;
+                width =
+                    ductW;
+                height =
+                    ductH;
+                label =
+                    ductW.ToString(
+                        "0.###",
+                        CultureInfo.InvariantCulture) +
+                    "x" +
+                    ductH.ToString(
+                        "0.###",
+                        CultureInfo.InvariantCulture);
+                return;
+            }
+
+            Match dnMatch =
+                Regex.Match(
+                    source + " " + layer,
+                    @"DN\s*(\d+(?:\.\d+)?)",
+                    RegexOptions.IgnoreCase);
+
+            if (dnMatch.Success)
+            {
+                if (double.TryParse(
+                        dnMatch.Groups[1].Value,
+                        NumberStyles.Float,
+                        CultureInfo.InvariantCulture,
+                        out double dn))
+                {
+                    width =
+                        LookupReview3DOutsideDiameter(
+                            dn,
+                            layer);
+                    height = width;
+                    label =
+                        "DN" +
+                        dn.ToString(
+                            "0.###",
+                            CultureInfo.InvariantCulture);
+                    return;
+                }
+            }
+
+            // Fallback: nếu không parse được, vẫn xem như ống tròn nhỏ.
+            width =
+                Math.Max(
+                    FixedDnPipeDisplayWidth,
+                    Review3DMinimumVisualSize);
+            height =
+                width;
+            label = "PIPE";
+        }
+
+        private static double LookupReview3DOutsideDiameter(
+            double nominal,
+            string layerText)
+        {
+            if (nominal <= 0.0)
+                return Review3DMinimumVisualSize;
+
+            string layer =
+                BoDauTiengViet(
+                    layerText ?? "");
+
+            bool preferFireSteel =
+                layer.Contains("FF") ||
+                layer.Contains("TRANG KEM") ||
+                layer.Contains("THEP DEN") ||
+                layer.Contains("NHUNG NONG");
+
+            if (preferFireSteel)
+            {
+                foreach (double[] row
+                    in FireSteelDnOutsideDiameterTable)
+                {
+                    if (row != null &&
+                        row.Length >= 2 &&
+                        Math.Abs(
+                            row[0] - nominal) <= 0.6)
+                    {
+                        return
+                            Math.Max(
+                                row[1],
+                                Review3DMinimumVisualSize);
+                    }
+                }
+            }
+
+            foreach (double[] row
+                in OutsideDiameterToNominalTable)
+            {
+                if (row == null ||
+                    row.Length < 2)
+                {
+                    continue;
+                }
+
+                if (Math.Abs(
+                        row[0] - nominal) <= 0.6)
+                {
+                    return
+                        Math.Max(
+                            row[1],
+                            Review3DMinimumVisualSize);
+                }
+            }
+
+            return
+                Math.Max(
+                    nominal,
+                    Review3DMinimumVisualSize);
+        }
+
+        private List<Review3DErrorData> BuildReview3DErrors(
+            List<Review3DPipeData> pipes,
+            List<Review3DRiserData> risers,
+            List<Point3d> equipmentAnchors,
+            double elevation)
+        {
+            List<Review3DErrorData> errors =
+                new List<Review3DErrorData>();
+
+            if (pipes == null)
+                pipes =
+                    new List<Review3DPipeData>();
+
+            if (risers == null)
+                risers =
+                    new List<Review3DRiserData>();
+
+            if (equipmentAnchors == null)
+                equipmentAnchors =
+                    new List<Point3d>();
+
+            for (int i = 0;
+                i < pipes.Count;
+                i++)
+            {
+                Review3DPipeData pipe =
+                    pipes[i];
+
+                if (pipe == null ||
+                    pipe.Points == null ||
+                    pipe.Points.Count < 2 ||
+                    pipe.IsClosed)
+                {
+                    continue;
+                }
+
+                Point3d[] ends =
+                {
+                    pipe.StartPoint,
+                    pipe.EndPoint
+                };
+
+                foreach (Point3d endpoint
+                    in ends)
+                {
+                    bool connected =
+                        false;
+
+                    for (int j = 0;
+                        j < pipes.Count;
+                        j++)
+                    {
+                        if (j == i)
+                            continue;
+
+                        if (DistancePointToReview3DPipe(
+                                endpoint,
+                                pipes[j]) <=
+                            Review3DJoinTolerance)
+                        {
+                            connected = true;
+                            break;
+                        }
+                    }
+
+                    if (!connected)
+                    {
+                        foreach (Review3DRiserData riser
+                            in risers)
+                        {
+                            if (PlanDistance(
+                                    endpoint,
+                                    riser.BasePoint) <=
+                                Review3DJoinTolerance)
+                            {
+                                connected = true;
+                                break;
+                            }
+                        }
+                    }
+
+                    if (!connected)
+                    {
+                        foreach (Point3d anchor
+                            in equipmentAnchors)
+                        {
+                            if (PlanDistance(
+                                    endpoint,
+                                    anchor) <=
+                                Review3DEquipmentTolerance)
+                            {
+                                connected = true;
+                                break;
+                            }
+                        }
+                    }
+
+                    if (!connected)
+                    {
+                        AddReview3DErrorUnique(
+                            errors,
+                            new Review3DErrorData
+                            {
+                                Point =
+                                    new Point3d(
+                                        endpoint.X,
+                                        endpoint.Y,
+                                        elevation),
+                                Text = "HỞ"
+                            });
+                    }
+                }
+            }
+
+            foreach (Review3DRiserData riser
+                in risers)
+            {
+                bool connectedToPipe =
+                    false;
+
+                foreach (Review3DPipeData pipe
+                    in pipes)
+                {
+                    if (DistancePointToReview3DPipe(
+                            riser.BasePoint,
+                            pipe) <=
+                        Review3DJoinTolerance)
+                    {
+                        connectedToPipe = true;
+                        break;
+                    }
+                }
+
+                if (!connectedToPipe)
+                {
+                    AddReview3DErrorUnique(
+                        errors,
+                        new Review3DErrorData
+                        {
+                            Point =
+                                new Point3d(
+                                    riser.BasePoint.X,
+                                    riser.BasePoint.Y,
+                                    elevation),
+                            Text =
+                                "TRỤC CHƯA NỐI"
+                        });
+                }
+            }
+
+            return errors;
+        }
+
+        private static void AddReview3DErrorUnique(
+            List<Review3DErrorData> errors,
+            Review3DErrorData candidate)
+        {
+            if (errors == null ||
+                candidate == null)
+            {
+                return;
+            }
+
+            foreach (Review3DErrorData error
+                in errors)
+            {
+                if (error == null)
+                    continue;
+
+                if (error.Point.DistanceTo(
+                        candidate.Point) <=
+                    Review3DJoinTolerance * 0.35)
+                {
+                    if ((candidate.Text ?? "")
+                            .Contains("TRỤC"))
+                    {
+                        error.Text =
+                            candidate.Text;
+                    }
+
+                    return;
+                }
+            }
+
+            errors.Add(
+                candidate);
+        }
+
+        private static double DistancePointToReview3DPipe(
+            Point3d point,
+            Review3DPipeData pipe)
+        {
+            if (pipe == null ||
+                pipe.Points == null ||
+                pipe.Points.Count < 2)
+            {
+                return double.MaxValue;
+            }
+
+            double best =
+                double.MaxValue;
+
+            for (int i = 0;
+                i < pipe.Points.Count - 1;
+                i++)
+            {
+                double d =
+                    DistancePointToSegment2D(
+                        point,
+                        pipe.Points[i],
+                        pipe.Points[i + 1]);
+
+                if (d < best)
+                    best = d;
+
+                if (best <=
+                    Review3DJoinTolerance)
+                {
+                    break;
+                }
+            }
+
+            return best;
+        }
+
+        private static double DistancePointToSegment2D(
+            Point3d p,
+            Point3d a,
+            Point3d b)
+        {
+            double dx =
+                b.X - a.X;
+            double dy =
+                b.Y - a.Y;
+
+            double len2 =
+                dx * dx +
+                dy * dy;
+
+            if (len2 <= 1e-12)
+            {
+                return
+                    Math.Sqrt(
+                        (p.X - a.X) *
+                        (p.X - a.X) +
+                        (p.Y - a.Y) *
+                        (p.Y - a.Y));
+            }
+
+            double t =
+                ((p.X - a.X) * dx +
+                 (p.Y - a.Y) * dy) /
+                len2;
+
+            t =
+                Math.Max(
+                    0.0,
+                    Math.Min(
+                        1.0,
+                        t));
+
+            double x =
+                a.X +
+                t * dx;
+            double y =
+                a.Y +
+                t * dy;
+
+            double ex =
+                p.X - x;
+            double ey =
+                p.Y - y;
+
+            return
+                Math.Sqrt(
+                    ex * ex +
+                    ey * ey);
+        }
+
+        private void EnsureReview3DLayers(
+            Transaction tr,
+            Database db)
+        {
+            EnsureLayerExists(
+                tr,
+                db,
+                Review3DPipeLayer,
+                false);
+
+            EnsureLayerExists(
+                tr,
+                db,
+                Review3DRiserLayer,
+                false);
+
+            EnsureLayerExists(
+                tr,
+                db,
+                Review3DErrorLayer,
+                false);
+
+            EnsureLayerExists(
+                tr,
+                db,
+                Review3DPipeSolidLayer,
+                false);
+
+            EnsureLayerExists(
+                tr,
+                db,
+                Review3DDuctSolidLayer,
+                false);
+
+            EnsureLayerExists(
+                tr,
+                db,
+                Review3DRiserSolidLayer,
+                false);
+
+            EnsureLayerExists(
+                tr,
+                db,
+                Review3DFittingSolidLayer,
+                false);
+
+            EnsureLayerExists(
+                tr,
+                db,
+                Review3DLabelLayer,
+                false);
+
+            EnsureLayerExists(
+                tr,
+                db,
+                Review2DFocusLayer,
+                false);
+
+            SetReview3DLayerColor(
+                tr,
+                db,
+                Review3DPipeLayer,
+                3);
+
+            SetReview3DLayerColor(
+                tr,
+                db,
+                Review3DRiserLayer,
+                4);
+
+            SetReview3DLayerColor(
+                tr,
+                db,
+                Review3DErrorLayer,
+                1);
+
+            SetReview3DLayerColor(
+                tr,
+                db,
+                Review3DPipeSolidLayer,
+                3);
+
+            SetReview3DLayerColor(
+                tr,
+                db,
+                Review3DDuctSolidLayer,
+                6);
+
+            SetReview3DLayerColor(
+                tr,
+                db,
+                Review3DRiserSolidLayer,
+                4);
+
+            SetReview3DLayerColor(
+                tr,
+                db,
+                Review3DFittingSolidLayer,
+                3);
+
+            SetReview3DLayerColor(
+                tr,
+                db,
+                Review3DLabelLayer,
+                2);
+
+            SetReview3DLayerColor(
+                tr,
+                db,
+                Review2DFocusLayer,
+                1);
+        }
+
+        private static void SetReview3DLayerColor(
+            Transaction tr,
+            Database db,
+            string layerName,
+            short aci)
+        {
+            LayerTable table =
+                (LayerTable)tr.GetObject(
+                    db.LayerTableId,
+                    OpenMode.ForRead);
+
+            if (!table.Has(layerName))
+                return;
+
+            LayerTableRecord layer =
+                (LayerTableRecord)tr.GetObject(
+                    table[layerName],
+                    OpenMode.ForWrite);
+
+            layer.Color =
+                Autodesk.AutoCAD.Colors.Color
+                    .FromColorIndex(
+                        ColorMethod.ByAci,
+                        aci);
+
+            layer.IsPlottable = false;
+        }
+
+        private static void DeleteReview3DPreview(
+            Transaction tr,
+            Database db)
+        {
+            BlockTableRecord space =
+                (BlockTableRecord)tr.GetObject(
+                    db.CurrentSpaceId,
+                    OpenMode.ForRead);
+
+            List<ObjectId> eraseIds =
+                new List<ObjectId>();
+
+            foreach (ObjectId id in space)
+            {
+                Entity ent =
+                    tr.GetObject(
+                        id,
+                        OpenMode.ForRead,
+                        false) as Entity;
+
+                if (ent != null &&
+                    !ent.IsErased &&
+                    IsReview3DTempLayer(
+                        ent.Layer))
+                {
+                    eraseIds.Add(id);
+                }
+            }
+
+            foreach (ObjectId id in eraseIds)
+            {
+                Entity ent =
+                    tr.GetObject(
+                        id,
+                        OpenMode.ForWrite,
+                        false) as Entity;
+
+                if (ent != null &&
+                    !ent.IsErased)
+                {
+                    ent.Erase();
+                }
+            }
+        }
+
+        private static void AppendReview3DPipe(
+            Transaction tr,
+            Database db,
+            BlockTableRecord space,
+            Review3DPipeData pipe,
+            double elevation)
+        {
+            if (pipe == null ||
+                pipe.Points == null ||
+                pipe.Points.Count < 2)
+            {
+                return;
+            }
+
+            for (int i = 0;
+                i < pipe.Points.Count - 1;
+                i++)
+            {
+                Point3d a =
+                    pipe.Points[i];
+                Point3d b =
+                    pipe.Points[i + 1];
+
+                if (PlanDistance(
+                        a,
+                        b) <= 1e-6)
+                {
+                    continue;
+                }
+
+                Line line =
+                    new Line(
+                        new Point3d(
+                            a.X,
+                            a.Y,
+                            elevation),
+                        new Point3d(
+                            b.X,
+                            b.Y,
+                            elevation));
+
+                line.SetDatabaseDefaults(db);
+                line.Layer =
+                    Review3DPipeLayer;
+                line.ColorIndex = 256;
+
+                space.AppendEntity(line);
+                tr.AddNewlyCreatedDBObject(
+                    line,
+                    true);
+            }
+        }
+
+        private static void AppendReview3DRiser(
+            Transaction tr,
+            Database db,
+            BlockTableRecord space,
+            Review3DRiserData riser,
+            double elevation)
+        {
+            if (riser == null ||
+                riser.HeightMeters <= 0.0)
+            {
+                return;
+            }
+
+            bool isDown =
+                string.Equals(
+                    (riser.Direction ?? "")
+                        .Trim(),
+                    "DOWN",
+                    StringComparison.OrdinalIgnoreCase);
+
+            double targetZ =
+                elevation +
+                (isDown ? -1.0 : 1.0) *
+                riser.HeightMeters *
+                1000.0;
+
+            Line line =
+                new Line(
+                    new Point3d(
+                        riser.BasePoint.X,
+                        riser.BasePoint.Y,
+                        elevation),
+                    new Point3d(
+                        riser.BasePoint.X,
+                        riser.BasePoint.Y,
+                        targetZ));
+
+            line.SetDatabaseDefaults(db);
+            line.Layer =
+                Review3DRiserLayer;
+            line.ColorIndex = 256;
+
+            space.AppendEntity(line);
+            tr.AddNewlyCreatedDBObject(
+                line,
+                true);
+
+            double half =
+                Review3DErrorMarkerSize *
+                0.35;
+
+            Point3d top =
+                new Point3d(
+                    riser.BasePoint.X,
+                    riser.BasePoint.Y,
+                    targetZ);
+
+            Line markX =
+                new Line(
+                    new Point3d(
+                        top.X - half,
+                        top.Y,
+                        top.Z),
+                    new Point3d(
+                        top.X + half,
+                        top.Y,
+                        top.Z));
+
+            markX.SetDatabaseDefaults(db);
+            markX.Layer =
+                Review3DRiserLayer;
+            markX.ColorIndex = 256;
+
+            space.AppendEntity(markX);
+            tr.AddNewlyCreatedDBObject(
+                markX,
+                true);
+
+            Line markY =
+                new Line(
+                    new Point3d(
+                        top.X,
+                        top.Y - half,
+                        top.Z),
+                    new Point3d(
+                        top.X,
+                        top.Y + half,
+                        top.Z));
+
+            markY.SetDatabaseDefaults(db);
+            markY.Layer =
+                Review3DRiserLayer;
+            markY.ColorIndex = 256;
+
+            space.AppendEntity(markY);
+            tr.AddNewlyCreatedDBObject(
+                markY,
+                true);
+        }
+
+        private void AppendReview3DPrettyPipe(
+            Transaction tr,
+            Database db,
+            BlockTableRecord space,
+            Review3DPipeData pipe,
+            double elevation)
+        {
+            if (pipe == null ||
+                pipe.Points == null ||
+                pipe.Points.Count < 2)
+            {
+                return;
+            }
+
+            for (int i = 0;
+                i < pipe.Points.Count - 1;
+                i++)
+            {
+                Point3d a =
+                    pipe.Points[i];
+                Point3d b =
+                    pipe.Points[i + 1];
+
+                Vector3d planVector =
+                    b - a;
+
+                double planLength =
+                    PlanDistance(
+                        a,
+                        b);
+
+                if (planLength <= 1e-6)
+                {
+                    continue;
+                }
+
+                Point3d start =
+                    new Point3d(
+                        a.X,
+                        a.Y,
+                        elevation);
+
+                Point3d end =
+                    new Point3d(
+                        b.X,
+                        b.Y,
+                        elevation);
+
+                // Ống tròn là Polyline vertex thật:
+                // trim hai đầu quanh góc để dành chỗ cho CO 3D sweep.
+                if (pipe.ProfileKind ==
+                        Review3DProfileKind.PipeRound &&
+                    pipe.UseVertexJoints)
+                {
+                    Vector3d dir =
+                        new Vector3d(
+                            b.X - a.X,
+                            b.Y - a.Y,
+                            0.0)
+                            .GetNormal();
+
+                    double trimStart =
+                        i > 0
+                            ? CalculateReview3DElbowTrim(
+                                pipe,
+                                i)
+                            : 0.0;
+
+                    double trimEnd =
+                        i < pipe.Points.Count - 2
+                            ? CalculateReview3DElbowTrim(
+                                pipe,
+                                i + 1)
+                            : 0.0;
+
+                    double maxTrim =
+                        planLength * 0.42;
+
+                    trimStart =
+                        Math.Min(
+                            trimStart,
+                            maxTrim);
+
+                    trimEnd =
+                        Math.Min(
+                            trimEnd,
+                            maxTrim);
+
+                    if (trimStart +
+                        trimEnd >
+                        planLength * 0.82)
+                    {
+                        double scale =
+                            planLength * 0.82 /
+                            Math.Max(
+                                trimStart + trimEnd,
+                                1e-9);
+
+                        trimStart *= scale;
+                        trimEnd *= scale;
+                    }
+
+                    start =
+                        start +
+                        dir * trimStart;
+
+                    end =
+                        end -
+                        dir * trimEnd;
+                }
+
+                if (start.DistanceTo(
+                        end) <= 1e-6)
+                {
+                    continue;
+                }
+
+                if (pipe.ProfileKind ==
+                    Review3DProfileKind.DuctRect)
+                {
+                    AppendReview3DRectSolidSegment(
+                        tr,
+                        db,
+                        space,
+                        start,
+                        end,
+                        Math.Max(
+                            pipe.Width,
+                            Review3DMinimumVisualSize),
+                        Math.Max(
+                            pipe.Height,
+                            Review3DMinimumVisualSize),
+                        Review3DDuctSolidLayer);
+                }
+                else
+                {
+                    AppendReview3DRoundSolidSegment(
+                        tr,
+                        db,
+                        space,
+                        start,
+                        end,
+                        Math.Max(
+                            pipe.Width,
+                            Review3DMinimumVisualSize),
+                        Review3DPipeSolidLayer);
+                }
+            }
+        }
+
+        private double CalculateReview3DElbowTrim(
+            Review3DPipeData pipe,
+            int jointIndex)
+        {
+            if (pipe == null ||
+                pipe.Points == null ||
+                !pipe.UseVertexJoints ||
+                jointIndex <= 0 ||
+                jointIndex >=
+                    pipe.Points.Count - 1)
+            {
+                return 0.0;
+            }
+
+            Point3d prev =
+                pipe.Points[jointIndex - 1];
+
+            Point3d joint =
+                pipe.Points[jointIndex];
+
+            Point3d next =
+                pipe.Points[jointIndex + 1];
+
+            Vector3d d1 =
+                new Vector3d(
+                    prev.X - joint.X,
+                    prev.Y - joint.Y,
+                    0.0);
+
+            Vector3d d2 =
+                new Vector3d(
+                    next.X - joint.X,
+                    next.Y - joint.Y,
+                    0.0);
+
+            if (d1.Length <= 1e-6 ||
+                d2.Length <= 1e-6)
+            {
+                return 0.0;
+            }
+
+            d1 =
+                d1.GetNormal();
+
+            d2 =
+                d2.GetNormal();
+
+            double dot =
+                Math.Max(
+                    -1.0,
+                    Math.Min(
+                        1.0,
+                        d1.DotProduct(
+                            d2)));
+
+            double theta =
+                Math.Acos(
+                    dot);
+
+            double thetaDeg =
+                theta * 180.0 /
+                Math.PI;
+
+            if (thetaDeg <
+                    Review3DElbowMinAngleDeg ||
+                thetaDeg >
+                    Review3DElbowMaxAngleDeg)
+            {
+                return 0.0;
+            }
+
+            double diameter =
+                Math.Max(
+                    pipe.Width,
+                    Review3DMinimumVisualSize);
+
+            double centerRadius =
+                Math.Max(
+                    diameter *
+                    Review3DElbowRadiusRatio,
+                    Review3DElbowMinCenterRadius);
+
+            double tanHalf =
+                Math.Tan(
+                    theta * 0.5);
+
+            if (Math.Abs(
+                    tanHalf) <= 1e-6)
+            {
+                return 0.0;
+            }
+
+            // Khoảng cách từ vertex tới tiếp điểm của cung fillet.
+            return
+                centerRadius /
+                tanHalf;
+        }
+
+        private void AppendReview3DPrettyRiser(
+            Transaction tr,
+            Database db,
+            BlockTableRecord space,
+            Review3DRiserData riser,
+            double elevation)
+        {
+            if (riser == null ||
+                riser.HeightMeters <= 0.0)
+            {
+                return;
+            }
+
+            bool isDown =
+                string.Equals(
+                    (riser.Direction ?? "")
+                        .Trim(),
+                    "DOWN",
+                    StringComparison.OrdinalIgnoreCase);
+
+            Point3d start =
+                new Point3d(
+                    riser.BasePoint.X,
+                    riser.BasePoint.Y,
+                    elevation);
+
+            Point3d end =
+                new Point3d(
+                    riser.BasePoint.X,
+                    riser.BasePoint.Y,
+                    elevation +
+                    (isDown ? -1.0 : 1.0) *
+                    riser.HeightMeters *
+                    1000.0);
+
+            if (riser.ProfileKind ==
+                Review3DProfileKind.DuctRect)
+            {
+                AppendReview3DRectSolidSegment(
+                    tr,
+                    db,
+                    space,
+                    start,
+                    end,
+                    Math.Max(
+                        riser.Width,
+                        Review3DMinimumVisualSize),
+                    Math.Max(
+                        riser.Height,
+                        Review3DMinimumVisualSize),
+                    Review3DRiserSolidLayer);
+            }
+            else
+            {
+                AppendReview3DRoundSolidSegment(
+                    tr,
+                    db,
+                    space,
+                    start,
+                    end,
+                    Math.Max(
+                        riser.Width,
+                        Review3DMinimumVisualSize),
+                    Review3DRiserSolidLayer);
+            }
+        }
+
+        private void AppendReview3DRoundSolidSegment(
+            Transaction tr,
+            Database db,
+            BlockTableRecord space,
+            Point3d start,
+            Point3d end,
+            double diameter,
+            string layerName)
+        {
+            Solid3d solid =
+                CreateReview3DRoundSolid(
+                    start,
+                    end,
+                    diameter);
+
+            if (solid != null)
+            {
+                solid.SetDatabaseDefaults(db);
+                solid.Layer = layerName;
+                solid.ColorIndex = 256;
+                space.AppendEntity(solid);
+                tr.AddNewlyCreatedDBObject(
+                    solid,
+                    true);
+                return;
+            }
+
+            // Fallback nếu sweep thất bại.
+            Line line =
+                new Line(
+                    start,
+                    end);
+
+            line.SetDatabaseDefaults(db);
+            line.Layer =
+                Review3DPipeLayer;
+            line.ColorIndex = 256;
+            space.AppendEntity(line);
+            tr.AddNewlyCreatedDBObject(
+                line,
+                true);
+        }
+
+        private void AppendReview3DRectSolidSegment(
+            Transaction tr,
+            Database db,
+            BlockTableRecord space,
+            Point3d start,
+            Point3d end,
+            double width,
+            double height,
+            string layerName)
+        {
+            Solid3d solid =
+                CreateReview3DRectSolid(
+                    start,
+                    end,
+                    width,
+                    height);
+
+            if (solid != null)
+            {
+                solid.SetDatabaseDefaults(db);
+                solid.Layer = layerName;
+                solid.ColorIndex = 256;
+                space.AppendEntity(solid);
+                tr.AddNewlyCreatedDBObject(
+                    solid,
+                    true);
+                return;
+            }
+
+            Line line =
+                new Line(
+                    start,
+                    end);
+
+            line.SetDatabaseDefaults(db);
+            line.Layer =
+                Review3DPipeLayer;
+            line.ColorIndex = 256;
+            space.AppendEntity(line);
+            tr.AddNewlyCreatedDBObject(
+                line,
+                true);
+        }
+
+        private Solid3d CreateReview3DRoundSolid(
+            Point3d start,
+            Point3d end,
+            double diameter)
+        {
+            Vector3d direction =
+                end - start;
+
+            if (direction.Length <= 1e-6)
+                return null;
+
+            double radius =
+                Math.Max(
+                    diameter,
+                    Review3DMinimumVisualSize) * 0.5;
+
+            Line path =
+                new Line(
+                    start,
+                    end);
+
+            Circle profile =
+                new Circle(
+                    Point3d.Origin,
+                    Vector3d.ZAxis,
+                    radius);
+
+            DBObjectCollection curveColl =
+                new DBObjectCollection();
+
+            DBObjectCollection regionColl =
+                null;
+
+            Solid3d solid =
+                null;
+
+            try
+            {
+                Matrix3d profileTransform =
+                    BuildReview3DProfileTransform(
+                        start,
+                        direction);
+
+                profile.TransformBy(
+                    profileTransform);
+
+                curveColl.Add(profile);
+
+                regionColl =
+                    Autodesk.AutoCAD.DatabaseServices.Region.CreateFromCurves(
+                        curveColl);
+
+                if (regionColl == null ||
+                    regionColl.Count == 0)
+                {
+                    return null;
+                }
+
+                Autodesk.AutoCAD.DatabaseServices.Region region =
+                    regionColl[0] as Autodesk.AutoCAD.DatabaseServices.Region;
+
+                if (region == null)
+                    return null;
+
+                SweepOptionsBuilder builder =
+                    new SweepOptionsBuilder();
+
+                builder.Align =
+                    SweepOptionsAlignOption.AlignSweepEntityToPath;
+                builder.AlignStart = true;
+                builder.BasePoint = start;
+                builder.CheckIntersections = false;
+
+                solid =
+                    new Solid3d();
+
+                solid.RecordHistory = false;
+                solid.CreateSweptSolid(
+                    region,
+                    path,
+                    builder.ToSweepOptions());
+
+                region.Dispose();
+
+                for (int i = 1;
+                    i < regionColl.Count;
+                    i++)
+                {
+                    if (regionColl[i] is IDisposable d)
+                        d.Dispose();
+                }
+
+                path.Dispose();
+                profile.Dispose();
+
+                return solid;
+            }
+            catch
+            {
+                if (solid != null)
+                    solid.Dispose();
+
+                try
+                {
+                    path.Dispose();
+                }
+                catch
+                {
+                }
+
+                try
+                {
+                    profile.Dispose();
+                }
+                catch
+                {
+                }
+
+                if (regionColl != null)
+                {
+                    foreach (object obj
+                        in regionColl)
+                    {
+                        if (obj is IDisposable d)
+                        {
+                            try
+                            {
+                                d.Dispose();
+                            }
+                            catch
+                            {
+                            }
+                        }
+                    }
+                }
+
+                return null;
+            }
+        }
+
+        private Solid3d CreateReview3DRectSolid(
+            Point3d start,
+            Point3d end,
+            double width,
+            double height)
+        {
+            Vector3d direction =
+                end - start;
+
+            if (direction.Length <= 1e-6)
+                return null;
+
+            double halfW =
+                Math.Max(
+                    width,
+                    Review3DMinimumVisualSize) * 0.5;
+            double halfH =
+                Math.Max(
+                    height,
+                    Review3DMinimumVisualSize) * 0.5;
+
+            Line path =
+                new Line(
+                    start,
+                    end);
+
+            Polyline profile =
+                new Polyline();
+
+            DBObjectCollection curveColl =
+                new DBObjectCollection();
+
+            DBObjectCollection regionColl =
+                null;
+
+            Solid3d solid =
+                null;
+
+            try
+            {
+                profile.AddVertexAt(
+                    0,
+                    new Point2d(-halfW, -halfH),
+                    0.0,
+                    0.0,
+                    0.0);
+
+                profile.AddVertexAt(
+                    1,
+                    new Point2d(halfW, -halfH),
+                    0.0,
+                    0.0,
+                    0.0);
+
+                profile.AddVertexAt(
+                    2,
+                    new Point2d(halfW, halfH),
+                    0.0,
+                    0.0,
+                    0.0);
+
+                profile.AddVertexAt(
+                    3,
+                    new Point2d(-halfW, halfH),
+                    0.0,
+                    0.0,
+                    0.0);
+
+                profile.Closed = true;
+
+                Matrix3d profileTransform =
+                    BuildReview3DProfileTransform(
+                        start,
+                        direction);
+
+                profile.TransformBy(
+                    profileTransform);
+
+                curveColl.Add(profile);
+
+                regionColl =
+                    Autodesk.AutoCAD.DatabaseServices.Region.CreateFromCurves(
+                        curveColl);
+
+                if (regionColl == null ||
+                    regionColl.Count == 0)
+                {
+                    return null;
+                }
+
+                Autodesk.AutoCAD.DatabaseServices.Region region =
+                    regionColl[0] as Autodesk.AutoCAD.DatabaseServices.Region;
+
+                if (region == null)
+                    return null;
+
+                SweepOptionsBuilder builder =
+                    new SweepOptionsBuilder();
+
+                builder.Align =
+                    SweepOptionsAlignOption.AlignSweepEntityToPath;
+                builder.AlignStart = true;
+                builder.BasePoint = start;
+                builder.CheckIntersections = false;
+
+                solid =
+                    new Solid3d();
+
+                solid.RecordHistory = false;
+                solid.CreateSweptSolid(
+                    region,
+                    path,
+                    builder.ToSweepOptions());
+
+                region.Dispose();
+
+                for (int i = 1;
+                    i < regionColl.Count;
+                    i++)
+                {
+                    if (regionColl[i] is IDisposable d)
+                        d.Dispose();
+                }
+
+                path.Dispose();
+                profile.Dispose();
+
+                return solid;
+            }
+            catch
+            {
+                if (solid != null)
+                    solid.Dispose();
+
+                try
+                {
+                    path.Dispose();
+                }
+                catch
+                {
+                }
+
+                try
+                {
+                    profile.Dispose();
+                }
+                catch
+                {
+                }
+
+                if (regionColl != null)
+                {
+                    foreach (object obj
+                        in regionColl)
+                    {
+                        if (obj is IDisposable d)
+                        {
+                            try
+                            {
+                                d.Dispose();
+                            }
+                            catch
+                            {
+                            }
+                        }
+                    }
+                }
+
+                return null;
+            }
+        }
+
+        private static Matrix3d BuildReview3DProfileTransform(
+            Point3d origin,
+            Vector3d direction)
+        {
+            Vector3d zAxis =
+                direction.GetNormal();
+
+            Vector3d xAxis;
+
+            if (Math.Abs(
+                    zAxis.DotProduct(
+                        Vector3d.ZAxis)) > 0.98)
+            {
+                xAxis =
+                    Vector3d.XAxis;
+            }
+            else
+            {
+                xAxis =
+                    Vector3d.ZAxis
+                        .CrossProduct(
+                            zAxis)
+                        .GetNormal();
+            }
+
+            Vector3d yAxis =
+                zAxis
+                    .CrossProduct(
+                        xAxis)
+                    .GetNormal();
+
+            return
+                Matrix3d.AlignCoordinateSystem(
+                    Point3d.Origin,
+                    Vector3d.XAxis,
+                    Vector3d.YAxis,
+                    Vector3d.ZAxis,
+                    origin,
+                    xAxis,
+                    yAxis,
+                    zAxis);
+        }
+
+        private bool TryBuildReview3DAirTerminal(
+            Transaction tr,
+            BlockReference blockRef,
+            string layer,
+            out Review3DAirTerminalData terminal)
+        {
+            terminal = null;
+
+            if (tr == null ||
+                blockRef == null ||
+                blockRef.IsErased)
+            {
+                return false;
+            }
+
+            string blockName =
+                GetShopStatBlockName(
+                    tr,
+                    blockRef);
+
+            string source =
+                ((blockName ?? "") +
+                 " " +
+                 (layer ?? ""))
+                    .ToUpperInvariant();
+
+            bool keywordMatched =
+                source.Contains("MIENG") ||
+                source.Contains("GRILLE") ||
+                source.Contains("DIFF") ||
+                source.Contains("LOUVER") ||
+                source.Contains("SAG") ||
+                source.Contains("RAG") ||
+                source.Contains("EAG") ||
+                source.Contains("SA ") ||
+                source.Contains(" RA ") ||
+                source.Contains(" EA ");
+
+            double width =
+                0.0;
+            double height =
+                0.0;
+
+            if (!TryExtractDuctSizeFromText(
+                    source,
+                    out width,
+                    out height))
+            {
+                try
+                {
+                    Extents3d ext =
+                        blockRef.GeometricExtents;
+
+                    double ex =
+                        Math.Abs(
+                            ext.MaxPoint.X -
+                            ext.MinPoint.X);
+
+                    double ey =
+                        Math.Abs(
+                            ext.MaxPoint.Y -
+                            ext.MinPoint.Y);
+
+                    double maxXY =
+                        Math.Max(
+                            ex,
+                            ey);
+
+                    double minXY =
+                        Math.Min(
+                            ex,
+                            ey);
+
+                    // Nếu block quá nhỏ hoặc quá lớn,
+                    // coi như không phải miệng gió.
+                    if (maxXY < 40.0 ||
+                        maxXY > 2000.0)
+                    {
+                        if (!keywordMatched)
+                            return false;
+                    }
+
+                    if (maxXY >= 40.0)
+                    {
+                        if (minXY <= 1e-6)
+                            minXY = maxXY;
+
+                        if (maxXY / Math.Max(minXY, 1.0) > 1.8)
+                        {
+                            width =
+                                Math.Max(
+                                    250.0,
+                                    Math.Min(
+                                        maxXY,
+                                        1200.0));
+
+                            height =
+                                Math.Max(
+                                    100.0,
+                                    Math.Min(
+                                        minXY,
+                                        350.0));
+                        }
+                        else
+                        {
+                            width =
+                                Math.Max(
+                                    250.0,
+                                    Math.Min(
+                                        maxXY,
+                                        900.0));
+
+                            height =
+                                Math.Max(
+                                    250.0,
+                                    Math.Min(
+                                        minXY,
+                                        900.0));
+                        }
+                    }
+                }
+                catch
+                {
+                }
+            }
+
+            if (width <= 1e-6 ||
+                height <= 1e-6)
+            {
+                if (!keywordMatched)
+                    return false;
+
+                width = 600.0;
+                height = 150.0;
+            }
+
+            string kind =
+                width / Math.Max(height, 1.0) > 1.8
+                    ? "LINEAR"
+                    : "GRILLE";
+
+            terminal =
+                new Review3DAirTerminalData
+                {
+                    Position =
+                        new Point3d(
+                            blockRef.Position.X,
+                            blockRef.Position.Y,
+                            0.0),
+                    Rotation =
+                        blockRef.Rotation,
+                    Width = width,
+                    Height = height,
+                    DisplayLabel =
+                        width.ToString(
+                            "0.###",
+                            CultureInfo.InvariantCulture) +
+                        "x" +
+                        height.ToString(
+                            "0.###",
+                            CultureInfo.InvariantCulture),
+                    Kind = kind
+                };
+
+            return true;
+        }
+
+        private void AppendReview3DAirTerminals(
+            Transaction tr,
+            Database db,
+            BlockTableRecord space,
+            List<Review3DPipeData> pipes,
+            List<Review3DAirTerminalData> airTerminals,
+            double elevation)
+        {
+            if (pipes == null ||
+                airTerminals == null ||
+                airTerminals.Count == 0)
+            {
+                return;
+            }
+
+            List<Review3DPipeData> ducts =
+                pipes
+                    .Where(
+                        p =>
+                            p != null &&
+                            p.ProfileKind ==
+                                Review3DProfileKind.DuctRect &&
+                            p.Points != null &&
+                            p.Points.Count >= 2)
+                    .ToList();
+
+            if (ducts.Count == 0)
+                return;
+
+            foreach (Review3DAirTerminalData terminal
+                in airTerminals)
+            {
+                if (terminal == null)
+                    continue;
+
+                if (!TryFindNearestReview3DDuctSegment(
+                        ducts,
+                        terminal.Position,
+                        out Review3DPipeData duct,
+                        out Point3d attachPoint2D,
+                        out Vector3d segmentDirection,
+                        out double planDistance))
+                {
+                    continue;
+                }
+
+                double maxAttachDistance =
+                    Math.Max(
+                        duct.Width * 0.9,
+                        900.0);
+
+                if (planDistance >
+                    maxAttachDistance)
+                {
+                    continue;
+                }
+
+                AppendReview3DAirTerminalAtDuct(
+                    tr,
+                    db,
+                    space,
+                    duct,
+                    terminal,
+                    attachPoint2D,
+                    segmentDirection,
+                    elevation);
+            }
+        }
+
+        private bool TryFindNearestReview3DDuctSegment(
+            List<Review3DPipeData> ducts,
+            Point3d probe,
+            out Review3DPipeData bestDuct,
+            out Point3d bestPoint,
+            out Vector3d bestDirection,
+            out double bestDistance)
+        {
+            bestDuct = null;
+            bestPoint = Point3d.Origin;
+            bestDirection = Vector3d.XAxis;
+            bestDistance = double.MaxValue;
+
+            if (ducts == null)
+                return false;
+
+            foreach (Review3DPipeData duct
+                in ducts)
+            {
+                if (duct == null ||
+                    duct.Points == null ||
+                    duct.Points.Count < 2)
+                {
+                    continue;
+                }
+
+                for (int i = 0;
+                    i < duct.Points.Count - 1;
+                    i++)
+                {
+                    Point3d a = duct.Points[i];
+                    Point3d b = duct.Points[i + 1];
+
+                    Vector3d ab =
+                        new Vector3d(
+                            b.X - a.X,
+                            b.Y - a.Y,
+                            0.0);
+
+                    double len =
+                        ab.Length;
+
+                    if (len <= 1e-6)
+                        continue;
+
+                    Vector3d dir =
+                        ab.GetNormal();
+
+                    Vector3d ap =
+                        new Vector3d(
+                            probe.X - a.X,
+                            probe.Y - a.Y,
+                            0.0);
+
+                    double t =
+                        ap.DotProduct(dir);
+
+                    t =
+                        Math.Max(
+                            0.0,
+                            Math.Min(
+                                len,
+                                t));
+
+                    Point3d proj =
+                        new Point3d(
+                            a.X + dir.X * t,
+                            a.Y + dir.Y * t,
+                            0.0);
+
+                    double dist =
+                        PlanDistance(
+                            probe,
+                            proj);
+
+                    if (dist < bestDistance)
+                    {
+                        bestDistance = dist;
+                        bestDuct = duct;
+                        bestPoint = proj;
+                        bestDirection = dir;
+                    }
+                }
+            }
+
+            return bestDuct != null;
+        }
+
+        private void AppendReview3DAirTerminalAtDuct(
+            Transaction tr,
+            Database db,
+            BlockTableRecord space,
+            Review3DPipeData duct,
+            Review3DAirTerminalData terminal,
+            Point3d attachPoint2D,
+            Vector3d segmentDirection,
+            double elevation)
+        {
+            if (duct == null ||
+                terminal == null)
+            {
+                return;
+            }
+
+            Point3d attachBottomCenter =
+                new Point3d(
+                    attachPoint2D.X,
+                    attachPoint2D.Y,
+                    elevation -
+                    Math.Max(
+                        duct.Height,
+                        Review3DMinimumVisualSize) * 0.5);
+
+            double faceWidth =
+                Math.Max(
+                    150.0,
+                    Math.Min(
+                        terminal.Width,
+                        duct.Width * 0.95));
+
+            double faceHeight =
+                Math.Max(
+                    100.0,
+                    Math.Min(
+                        terminal.Height,
+                        duct.Width * 0.75));
+
+            double neckWidth =
+                Math.Max(
+                    120.0,
+                    Math.Min(
+                        faceWidth * 0.70,
+                        duct.Width * 0.70));
+
+            double neckHeight =
+                Math.Max(
+                    80.0,
+                    Math.Min(
+                        faceHeight * 0.70,
+                        duct.Width * 0.45));
+
+            double drop =
+                Math.Max(
+                    duct.Height * 0.90,
+                    180.0);
+
+            Point3d neckEnd =
+                new Point3d(
+                    attachBottomCenter.X,
+                    attachBottomCenter.Y,
+                    attachBottomCenter.Z -
+                    drop);
+
+            AppendReview3DRectSolidSegment(
+                tr,
+                db,
+                space,
+                attachBottomCenter,
+                neckEnd,
+                neckWidth,
+                neckHeight,
+                Review3DFittingSolidLayer);
+
+            double boxThickness =
+                Math.Max(
+                    24.0,
+                    faceHeight * 0.08);
+
+            Point3d grilleBottom =
+                new Point3d(
+                    neckEnd.X,
+                    neckEnd.Y,
+                    neckEnd.Z -
+                    boxThickness);
+
+            Solid3d grille =
+                CreateReview3DRectSolid(
+                    neckEnd,
+                    grilleBottom,
+                    faceWidth,
+                    faceHeight);
+
+            if (grille != null)
+            {
+                try
+                {
+                    double rot =
+                        Math.Abs(
+                            terminal.Rotation) > 1e-6
+                            ? terminal.Rotation
+                            : Math.Atan2(
+                                segmentDirection.Y,
+                                segmentDirection.X);
+
+                    Point3d center =
+                        new Point3d(
+                            neckEnd.X,
+                            neckEnd.Y,
+                            neckEnd.Z -
+                            boxThickness * 0.5);
+
+                    grille.TransformBy(
+                        Matrix3d.Rotation(
+                            rot,
+                            Vector3d.ZAxis,
+                            center));
+
+                    grille.SetDatabaseDefaults(db);
+                    grille.Layer =
+                        Review3DFittingSolidLayer;
+                    grille.ColorIndex =
+                        256;
+
+                    space.AppendEntity(
+                        grille);
+
+                    tr.AddNewlyCreatedDBObject(
+                        grille,
+                        true);
+                }
+                catch
+                {
+                    grille.Dispose();
+                }
+            }
+
+            AppendReview3DLabelText(
+                tr,
+                db,
+                space,
+                new Point3d(
+                    neckEnd.X +
+                    Math.Max(
+                        faceWidth * 0.65,
+                        140.0),
+                    neckEnd.Y,
+                    neckEnd.Z -
+                    boxThickness * 0.5),
+                terminal.DisplayLabel,
+                0.0);
+        }
+
+        private void AppendReview3DPrettyJoints(
+            Transaction tr,
+            Database db,
+            BlockTableRecord space,
+            List<Review3DPipeData> pipes,
+            List<Review3DRiserData> risers,
+            double elevation)
+        {
+            if (pipes == null)
+                return;
+
+            List<Point3d> placed =
+                new List<Point3d>();
+
+            // --------------------------------------------------------
+            // A) CO THẬT cho các vertex của Polyline ống tròn.
+            // Straight segments đã được trim trong AppendReview3DPrettyPipe.
+            // --------------------------------------------------------
+            foreach (Review3DPipeData pipe
+                in pipes)
+            {
+                if (pipe == null ||
+                    pipe.ProfileKind !=
+                        Review3DProfileKind.PipeRound ||
+                    !pipe.UseVertexJoints ||
+                    pipe.Points == null ||
+                    pipe.Points.Count < 3)
+                {
+                    continue;
+                }
+
+                for (int jointIndex = 1;
+                    jointIndex <
+                        pipe.Points.Count - 1;
+                    jointIndex++)
+                {
+                    if (AppendReview3DRealElbow(
+                            tr,
+                            db,
+                            space,
+                            pipe,
+                            jointIndex,
+                            elevation))
+                    {
+                        placed.Add(
+                            new Point3d(
+                                pipe.Points[jointIndex].X,
+                                pipe.Points[jointIndex].Y,
+                                elevation));
+                    }
+                }
+            }
+
+            // --------------------------------------------------------
+            // B) Gom endpoint thành NODE để nhận diện:
+            // - 2 tuyến thẳng khác DN => GIẢM
+            // - 2 tuyến cùng DN thẳng => NỐI / MĂNG SÔNG
+            // - 3+ nhánh => TÊ / TÊ GIẢM dạng fitting body
+            // - nút khó => fallback sphere nhỏ.
+            // --------------------------------------------------------
+            List<List<Review3DFittingConnection>> nodes =
+                BuildReview3DFittingNodes(
+                    pipes,
+                    risers,
+                    elevation);
+
+            foreach (List<Review3DFittingConnection> node
+                in nodes)
+            {
+                if (node == null ||
+                    node.Count < 2)
+                {
+                    continue;
+                }
+
+                Point3d center =
+                    node[0].Node;
+
+                bool alreadyPlaced =
+                    placed.Any(
+                        p =>
+                            p.DistanceTo(
+                                center) <=
+                            Review3DJoinTolerance * 0.35);
+
+                if (alreadyPlaced)
+                    continue;
+
+                List<Review3DFittingConnection> roundConnections =
+                    node
+                        .Where(
+                            c =>
+                                c != null &&
+                                c.Diameter > 0.0)
+                        .ToList();
+
+                if (roundConnections.Count < 2)
+                    continue;
+
+                bool handled =
+                    false;
+
+                if (roundConnections.Count == 2)
+                {
+                    Review3DFittingConnection a =
+                        roundConnections[0];
+
+                    Review3DFittingConnection b =
+                        roundConnections[1];
+
+                    double angleDeg =
+                        GetReview3DAngleDeg(
+                            a.Direction,
+                            b.Direction);
+
+                    bool nearlyStraight =
+                        angleDeg >=
+                        Review3DStraightAngleDeg;
+
+                    bool differentDiameter =
+                        Review3DDiametersDifferent(
+                            a.Diameter,
+                            b.Diameter);
+
+                    if (nearlyStraight &&
+                        differentDiameter)
+                    {
+                        handled =
+                            AppendReview3DReducerFitting(
+                                tr,
+                                db,
+                                space,
+                                center,
+                                a,
+                                b);
+                    }
+                    else if (nearlyStraight)
+                    {
+                        // Không chèn măng sông lồi ở 2 ống cùng size,
+                        // để khối nhìn liền mạch hơn.
+                        handled = true;
+                    }
+                    else
+                    {
+                        // Hai entity rời gặp góc: nếu cùng nằm ngang thì tạo co sweep.
+                        handled =
+                            AppendReview3DNodeElbow(
+                                tr,
+                                db,
+                                space,
+                                center,
+                                a,
+                                b);
+                    }
+                }
+                else
+                {
+                    handled =
+                        AppendReview3DTeeFitting(
+                            tr,
+                            db,
+                            space,
+                            center,
+                            roundConnections);
+                }
+
+                if (!handled)
+                {
+                    double maxDiameter =
+                        roundConnections
+                            .Max(
+                                c =>
+                                    Math.Max(
+                                        c.Diameter,
+                                        Review3DMinimumVisualSize));
+
+                    AppendReview3DJointSphereUnique(
+                        tr,
+                        db,
+                        space,
+                        placed,
+                        center,
+                        maxDiameter * 0.50);
+                }
+                else
+                {
+                    placed.Add(
+                        center);
+                }
+            }
+        }
+
+        private List<List<Review3DFittingConnection>> BuildReview3DFittingNodes(
+            List<Review3DPipeData> pipes,
+            List<Review3DRiserData> risers,
+            double elevation)
+        {
+            List<Review3DFittingConnection> all =
+                new List<Review3DFittingConnection>();
+
+            if (pipes != null)
+            {
+                foreach (Review3DPipeData pipe
+                    in pipes)
+                {
+                    if (pipe == null ||
+                        pipe.ProfileKind !=
+                            Review3DProfileKind.PipeRound ||
+                        pipe.Points == null ||
+                        pipe.Points.Count < 2)
+                    {
+                        continue;
+                    }
+
+                    double diameter =
+                        Math.Max(
+                            pipe.Width,
+                            Review3DMinimumVisualSize);
+
+                    Point3d s =
+                        pipe.StartPoint;
+
+                    Point3d sNext =
+                        pipe.Points[1];
+
+                    Vector3d sDir =
+                        new Vector3d(
+                            sNext.X - s.X,
+                            sNext.Y - s.Y,
+                            0.0);
+
+                    if (sDir.Length > 1e-6)
+                    {
+                        all.Add(
+                            new Review3DFittingConnection
+                            {
+                                Node =
+                                    new Point3d(
+                                        s.X,
+                                        s.Y,
+                                        elevation),
+                                Direction =
+                                    sDir.GetNormal(),
+                                Diameter =
+                                    diameter,
+                                Pipe =
+                                    pipe
+                            });
+                    }
+
+                    Point3d e =
+                        pipe.EndPoint;
+
+                    Point3d ePrev =
+                        pipe.Points[
+                            pipe.Points.Count - 2];
+
+                    Vector3d eDir =
+                        new Vector3d(
+                            ePrev.X - e.X,
+                            ePrev.Y - e.Y,
+                            0.0);
+
+                    if (eDir.Length > 1e-6)
+                    {
+                        all.Add(
+                            new Review3DFittingConnection
+                            {
+                                Node =
+                                    new Point3d(
+                                        e.X,
+                                        e.Y,
+                                        elevation),
+                                Direction =
+                                    eDir.GetNormal(),
+                                Diameter =
+                                    diameter,
+                                Pipe =
+                                    pipe
+                            });
+                    }
+                }
+            }
+
+            if (risers != null)
+            {
+                foreach (Review3DRiserData riser
+                    in risers)
+                {
+                    if (riser == null ||
+                        riser.ProfileKind !=
+                            Review3DProfileKind.PipeRound ||
+                        riser.HeightMeters <= 0.0)
+                    {
+                        continue;
+                    }
+
+                    bool isDown =
+                        string.Equals(
+                            (riser.Direction ?? "")
+                                .Trim(),
+                            "DOWN",
+                            StringComparison.OrdinalIgnoreCase);
+
+                    all.Add(
+                        new Review3DFittingConnection
+                        {
+                            Node =
+                                new Point3d(
+                                    riser.BasePoint.X,
+                                    riser.BasePoint.Y,
+                                    elevation),
+                            Direction =
+                                isDown
+                                    ? -Vector3d.ZAxis
+                                    : Vector3d.ZAxis,
+                            Diameter =
+                                Math.Max(
+                                    riser.Width,
+                                    Review3DMinimumVisualSize),
+                            Riser =
+                                riser,
+                            IsRiser =
+                                true
+                        });
+                }
+            }
+
+            List<List<Review3DFittingConnection>> nodes =
+                new List<List<Review3DFittingConnection>>();
+
+            foreach (Review3DFittingConnection connection
+                in all)
+            {
+                List<Review3DFittingConnection> target =
+                    null;
+
+                foreach (List<Review3DFittingConnection> existing
+                    in nodes)
+                {
+                    if (existing == null ||
+                        existing.Count == 0)
+                    {
+                        continue;
+                    }
+
+                    if (existing[0].Node.DistanceTo(
+                            connection.Node) <=
+                        Review3DJoinTolerance)
+                    {
+                        target =
+                            existing;
+                        break;
+                    }
+                }
+
+                if (target == null)
+                {
+                    target =
+                        new List<Review3DFittingConnection>();
+
+                    nodes.Add(
+                        target);
+                }
+
+                target.Add(
+                    connection);
+            }
+
+            return
+                nodes
+                    .Where(
+                        n =>
+                            n != null &&
+                            n.Count >= 2)
+                    .ToList();
+        }
+
+        private static bool Review3DDiametersDifferent(
+            double a,
+            double b)
+        {
+            double max =
+                Math.Max(
+                    Math.Abs(a),
+                    Math.Abs(b));
+
+            if (max <= 1e-6)
+                return false;
+
+            return
+                Math.Abs(
+                    a - b) /
+                max >=
+                Review3DDiameterDifferentRatio;
+        }
+
+        private static double GetReview3DAngleDeg(
+            Vector3d a,
+            Vector3d b)
+        {
+            if (a.Length <= 1e-6 ||
+                b.Length <= 1e-6)
+            {
+                return 0.0;
+            }
+
+            Vector3d an =
+                a.GetNormal();
+
+            Vector3d bn =
+                b.GetNormal();
+
+            double dot =
+                Math.Max(
+                    -1.0,
+                    Math.Min(
+                        1.0,
+                        an.DotProduct(
+                            bn)));
+
+            return
+                Math.Acos(
+                    dot) *
+                180.0 /
+                Math.PI;
+        }
+
+        private bool AppendReview3DRealElbow(
+            Transaction tr,
+            Database db,
+            BlockTableRecord space,
+            Review3DPipeData pipe,
+            int jointIndex,
+            double elevation)
+        {
+            if (pipe == null ||
+                pipe.Points == null ||
+                jointIndex <= 0 ||
+                jointIndex >=
+                    pipe.Points.Count - 1)
+            {
+                return false;
+            }
+
+            Point3d prev =
+                pipe.Points[jointIndex - 1];
+
+            Point3d joint =
+                pipe.Points[jointIndex];
+
+            Point3d next =
+                pipe.Points[jointIndex + 1];
+
+            Vector3d d1 =
+                new Vector3d(
+                    prev.X - joint.X,
+                    prev.Y - joint.Y,
+                    0.0);
+
+            Vector3d d2 =
+                new Vector3d(
+                    next.X - joint.X,
+                    next.Y - joint.Y,
+                    0.0);
+
+            if (d1.Length <= 1e-6 ||
+                d2.Length <= 1e-6)
+            {
+                return false;
+            }
+
+            d1 =
+                d1.GetNormal();
+
+            d2 =
+                d2.GetNormal();
+
+            double thetaDeg =
+                GetReview3DAngleDeg(
+                    d1,
+                    d2);
+
+            if (thetaDeg <
+                    Review3DElbowMinAngleDeg ||
+                thetaDeg >
+                    Review3DElbowMaxAngleDeg)
+            {
+                return false;
+            }
+
+            double theta =
+                thetaDeg *
+                Math.PI /
+                180.0;
+
+            double diameter =
+                Math.Max(
+                    pipe.Width,
+                    Review3DMinimumVisualSize);
+
+            double centerRadius =
+                Math.Max(
+                    diameter *
+                    Review3DElbowRadiusRatio,
+                    Review3DElbowMinCenterRadius);
+
+            double tanHalf =
+                Math.Tan(
+                    theta * 0.5);
+
+            if (Math.Abs(
+                    tanHalf) <= 1e-6)
+            {
+                return false;
+            }
+
+            double tangent =
+                centerRadius /
+                tanHalf;
+
+            tangent =
+                Math.Min(
+                    tangent,
+                    PlanDistance(
+                        prev,
+                        joint) * 0.42);
+
+            tangent =
+                Math.Min(
+                    tangent,
+                    PlanDistance(
+                        joint,
+                        next) * 0.42);
+
+            if (tangent <= 1e-6)
+                return false;
+
+            Point3d j3 =
+                new Point3d(
+                    joint.X,
+                    joint.Y,
+                    elevation);
+
+            Point3d p1 =
+                j3 +
+                d1 * tangent;
+
+            Point3d p2 =
+                j3 +
+                d2 * tangent;
+
+            Vector3d bisector =
+                d1 + d2;
+
+            if (bisector.Length <= 1e-6)
+                return false;
+
+            bisector =
+                bisector.GetNormal();
+
+            double sinHalf =
+                Math.Sin(
+                    theta * 0.5);
+
+            if (Math.Abs(
+                    sinHalf) <= 1e-6)
+            {
+                return false;
+            }
+
+            // Khi tangent bị giới hạn bởi đoạn ngắn, radius thực cũng giảm theo.
+            double actualRadius =
+                tangent *
+                tanHalf;
+
+            double centerDistance =
+                actualRadius /
+                sinHalf;
+
+            Point3d center =
+                j3 +
+                bisector *
+                centerDistance;
+
+            return
+                AppendReview3DArcElbowSolid(
+                    tr,
+                    db,
+                    space,
+                    center,
+                    p1,
+                    p2,
+                    diameter);
+        }
+
+        private bool AppendReview3DNodeElbow(
+            Transaction tr,
+            Database db,
+            BlockTableRecord space,
+            Point3d node,
+            Review3DFittingConnection a,
+            Review3DFittingConnection b)
+        {
+            if (a == null ||
+                b == null)
+            {
+                return false;
+            }
+
+            // Co sweep hiện tại chỉ xử lý hai nhánh cùng mặt phẳng ngang.
+            if (Math.Abs(
+                    a.Direction.Z) > 0.1 ||
+                Math.Abs(
+                    b.Direction.Z) > 0.1)
+            {
+                return false;
+            }
+
+            Vector3d d1 =
+                a.Direction.GetNormal();
+
+            Vector3d d2 =
+                b.Direction.GetNormal();
+
+            double thetaDeg =
+                GetReview3DAngleDeg(
+                    d1,
+                    d2);
+
+            if (thetaDeg <
+                    Review3DElbowMinAngleDeg ||
+                thetaDeg >
+                    Review3DElbowMaxAngleDeg)
+            {
+                return false;
+            }
+
+            double diameter =
+                Math.Max(
+                    a.Diameter,
+                    b.Diameter);
+
+            double theta =
+                thetaDeg *
+                Math.PI /
+                180.0;
+
+            double centerRadius =
+                Math.Max(
+                    diameter *
+                    Review3DElbowRadiusRatio,
+                    Review3DElbowMinCenterRadius);
+
+            double tangent =
+                centerRadius /
+                Math.Max(
+                    Math.Tan(
+                        theta * 0.5),
+                    1e-6);
+
+            tangent =
+                Math.Min(
+                    tangent,
+                    diameter * 2.5);
+
+            Point3d p1 =
+                node +
+                d1 * tangent;
+
+            Point3d p2 =
+                node +
+                d2 * tangent;
+
+            Vector3d bisector =
+                d1 + d2;
+
+            if (bisector.Length <= 1e-6)
+                return false;
+
+            bisector =
+                bisector.GetNormal();
+
+            double actualRadius =
+                tangent *
+                Math.Tan(
+                    theta * 0.5);
+
+            double centerDistance =
+                actualRadius /
+                Math.Max(
+                    Math.Sin(
+                        theta * 0.5),
+                    1e-6);
+
+            Point3d center =
+                node +
+                bisector *
+                centerDistance;
+
+            return
+                AppendReview3DArcElbowSolid(
+                    tr,
+                    db,
+                    space,
+                    center,
+                    p1,
+                    p2,
+                    diameter);
+        }
+
+        private bool AppendReview3DArcElbowSolid(
+            Transaction tr,
+            Database db,
+            BlockTableRecord space,
+            Point3d center,
+            Point3d p1,
+            Point3d p2,
+            double diameter)
+        {
+            Vector3d r1 =
+                p1 - center;
+
+            Vector3d r2 =
+                p2 - center;
+
+            if (r1.Length <= 1e-6 ||
+                r2.Length <= 1e-6)
+            {
+                return false;
+            }
+
+            double radius =
+                (r1.Length +
+                 r2.Length) * 0.5;
+
+            double startAngle =
+                Math.Atan2(
+                    r1.Y,
+                    r1.X);
+
+            double endAngle =
+                Math.Atan2(
+                    r2.Y,
+                    r2.X);
+
+            double signed =
+                Math.Atan2(
+                    r1.X * r2.Y -
+                    r1.Y * r2.X,
+                    r1.X * r2.X +
+                    r1.Y * r2.Y);
+
+            // Arc luôn chạy CCW theo +Z.
+            // Nếu góc ký hiệu âm thì đảo hai đầu để lấy cung ngắn.
+            if (signed < 0.0)
+            {
+                Point3d tmpP =
+                    p1;
+                p1 =
+                    p2;
+                p2 =
+                    tmpP;
+
+                Vector3d tmpR =
+                    r1;
+                r1 =
+                    r2;
+                r2 =
+                    tmpR;
+
+                startAngle =
+                    Math.Atan2(
+                        r1.Y,
+                        r1.X);
+
+                endAngle =
+                    Math.Atan2(
+                        r2.Y,
+                        r2.X);
+            }
+
+            while (endAngle <=
+                startAngle)
+            {
+                endAngle +=
+                    Math.PI * 2.0;
+            }
+
+            if (endAngle -
+                startAngle >
+                Math.PI)
+            {
+                // Sau khi đảo mà vẫn > 180° thì không dùng sweep co.
+                return false;
+            }
+
+            Arc path =
+                new Arc(
+                    center,
+                    Vector3d.ZAxis,
+                    radius,
+                    startAngle,
+                    endAngle);
+
+            Circle profile =
+                new Circle(
+                    Point3d.Origin,
+                    Vector3d.ZAxis,
+                    Math.Max(
+                        diameter,
+                        Review3DMinimumVisualSize) *
+                    0.5);
+
+            DBObjectCollection curves =
+                new DBObjectCollection();
+
+            DBObjectCollection regions =
+                null;
+
+            Solid3d solid =
+                null;
+
+            try
+            {
+                Vector3d radial =
+                    path.StartPoint -
+                    center;
+
+                Vector3d tangent =
+                    Vector3d.ZAxis
+                        .CrossProduct(
+                            radial)
+                        .GetNormal();
+
+                profile.TransformBy(
+                    BuildReview3DProfileTransform(
+                        path.StartPoint,
+                        tangent));
+
+                curves.Add(
+                    profile);
+
+                regions =
+                    Autodesk.AutoCAD.DatabaseServices.Region
+                        .CreateFromCurves(
+                            curves);
+
+                if (regions == null ||
+                    regions.Count == 0)
+                {
+                    return false;
+                }
+
+                Autodesk.AutoCAD.DatabaseServices.Region region =
+                    regions[0] as Autodesk.AutoCAD.DatabaseServices.Region;
+
+                if (region == null)
+                    return false;
+
+                SweepOptionsBuilder builder =
+                    new SweepOptionsBuilder();
+
+                builder.Align =
+                    SweepOptionsAlignOption
+                        .AlignSweepEntityToPath;
+                builder.AlignStart = true;
+                builder.BasePoint =
+                    path.StartPoint;
+                builder.CheckIntersections =
+                    false;
+
+                solid =
+                    new Solid3d();
+
+                solid.RecordHistory =
+                    false;
+
+                solid.CreateSweptSolid(
+                    region,
+                    path,
+                    builder.ToSweepOptions());
+
+                solid.SetDatabaseDefaults(db);
+                solid.Layer =
+                    Review3DFittingSolidLayer;
+                solid.ColorIndex = 256;
+
+                space.AppendEntity(
+                    solid);
+
+                tr.AddNewlyCreatedDBObject(
+                    solid,
+                    true);
+
+                region.Dispose();
+
+                for (int i = 1;
+                    i < regions.Count;
+                    i++)
+                {
+                    if (regions[i] is IDisposable d)
+                        d.Dispose();
+                }
+
+                path.Dispose();
+                profile.Dispose();
+
+                return true;
+            }
+            catch
+            {
+                if (solid != null)
+                    solid.Dispose();
+
+                try
+                {
+                    path.Dispose();
+                }
+                catch
+                {
+                }
+
+                try
+                {
+                    profile.Dispose();
+                }
+                catch
+                {
+                }
+
+                if (regions != null)
+                {
+                    foreach (object obj
+                        in regions)
+                    {
+                        if (obj is IDisposable d)
+                        {
+                            try
+                            {
+                                d.Dispose();
+                            }
+                            catch
+                            {
+                            }
+                        }
+                    }
+                }
+
+                return false;
+            }
+        }
+
+        private bool AppendReview3DReducerFitting(
+            Transaction tr,
+            Database db,
+            BlockTableRecord space,
+            Point3d node,
+            Review3DFittingConnection a,
+            Review3DFittingConnection b)
+        {
+            if (a == null ||
+                b == null)
+            {
+                return false;
+            }
+
+            Review3DFittingConnection large =
+                a.Diameter >= b.Diameter
+                    ? a
+                    : b;
+
+            Review3DFittingConnection small =
+                ReferenceEquals(
+                    large,
+                    a)
+                    ? b
+                    : a;
+
+            double largeD =
+                Math.Max(
+                    large.Diameter,
+                    Review3DMinimumVisualSize);
+
+            double smallD =
+                Math.Max(
+                    small.Diameter,
+                    Review3DMinimumVisualSize);
+
+            // Reducer kéo dài và thuôn hơn.
+            double length =
+                Math.Max(
+                    Review3DReducerMinLength * 1.4,
+                    largeD * 3.2);
+
+            Point3d start =
+                node +
+                large.Direction.GetNormal() *
+                (length * 0.5);
+
+            Point3d end =
+                node +
+                small.Direction.GetNormal() *
+                (length * 0.5);
+
+            Vector3d axis =
+                end - start;
+
+            if (axis.Length <= 1e-6)
+                return false;
+
+            Solid3d reducer =
+                new Solid3d();
+
+            try
+            {
+                reducer.CreateFrustum(
+                    axis.Length,
+                    largeD * 0.5,
+                    largeD * 0.5,
+                    smallD * 0.5);
+
+                Matrix3d transform =
+                    BuildReview3DProfileTransform(
+                        start,
+                        axis);
+
+                reducer.TransformBy(
+                    transform);
+
+                reducer.SetDatabaseDefaults(db);
+                reducer.Layer =
+                    Review3DFittingSolidLayer;
+                reducer.ColorIndex = 256;
+
+                space.AppendEntity(
+                    reducer);
+
+                tr.AddNewlyCreatedDBObject(
+                    reducer,
+                    true);
+
+                return true;
+            }
+            catch
+            {
+                reducer.Dispose();
+                return false;
+            }
+        }
+
+        private bool AppendReview3DCouplingFitting(
+            Transaction tr,
+            Database db,
+            BlockTableRecord space,
+            Point3d node,
+            Review3DFittingConnection a,
+            Review3DFittingConnection b)
+        {
+            if (a == null ||
+                b == null)
+            {
+                return false;
+            }
+
+            double diameter =
+                Math.Max(
+                    Math.Max(
+                        a.Diameter,
+                        b.Diameter),
+                    Review3DMinimumVisualSize);
+
+            double outerDiameter =
+                diameter *
+                Review3DFittingDiameterScale;
+
+            double length =
+                Math.Max(
+                    diameter *
+                    Review3DFittingSleeveLengthRatio,
+                    70.0);
+
+            Point3d start =
+                node +
+                a.Direction.GetNormal() *
+                (length * 0.5);
+
+            Point3d end =
+                node +
+                b.Direction.GetNormal() *
+                (length * 0.5);
+
+            if (start.DistanceTo(
+                    end) <= 1e-6)
+            {
+                return false;
+            }
+
+            AppendReview3DRoundSolidSegment(
+                tr,
+                db,
+                space,
+                start,
+                end,
+                outerDiameter,
+                Review3DFittingSolidLayer);
+
+            return true;
+        }
+
+        private bool AppendReview3DTeeFitting(
+            Transaction tr,
+            Database db,
+            BlockTableRecord space,
+            Point3d node,
+            List<Review3DFittingConnection> connections)
+        {
+            if (connections == null ||
+                connections.Count < 3)
+            {
+                return false;
+            }
+
+            double maxDiameter =
+                connections
+                    .Max(
+                        c =>
+                            Math.Max(
+                                c.Diameter,
+                                Review3DMinimumVisualSize));
+
+            double bodyDiameter =
+                maxDiameter *
+                1.02;
+
+            double legLength =
+                Math.Max(
+                    maxDiameter *
+                    0.75,
+                    70.0);
+
+            int created =
+                0;
+
+            foreach (Review3DFittingConnection c
+                in connections)
+            {
+                if (c == null ||
+                    c.Direction.Length <= 1e-6)
+                {
+                    continue;
+                }
+
+                Point3d end =
+                    node +
+                    c.Direction.GetNormal() *
+                    legLength;
+
+                AppendReview3DRoundSolidSegment(
+                    tr,
+                    db,
+                    space,
+                    node,
+                    end,
+                    Math.Max(
+                        c.Diameter *
+                        1.03,
+                        bodyDiameter * 0.78),
+                    Review3DFittingSolidLayer);
+
+                created++;
+            }
+
+            // Một hub tròn nhỏ tại tâm để các sleeve giao nhau kín.
+            Solid3d hub =
+                new Solid3d();
+
+            try
+            {
+                hub.CreateSphere(
+                    bodyDiameter * 0.34);
+
+                hub.TransformBy(
+                    Matrix3d.Displacement(
+                        node -
+                        Point3d.Origin));
+
+                hub.SetDatabaseDefaults(db);
+                hub.Layer =
+                    Review3DFittingSolidLayer;
+                hub.ColorIndex = 256;
+
+                space.AppendEntity(
+                    hub);
+
+                tr.AddNewlyCreatedDBObject(
+                    hub,
+                    true);
+
+                created++;
+            }
+            catch
+            {
+                hub.Dispose();
+            }
+
+            return
+                created >= 3;
+        }
+
+        private static void AppendReview3DJointSphereUnique(
+            Transaction tr,
+            Database db,
+            BlockTableRecord space,
+            List<Point3d> placed,
+            Point3d center,
+            double radius)
+        {
+            if (radius <= 1e-6)
+                return;
+
+            if (placed != null)
+            {
+                foreach (Point3d existing
+                    in placed)
+                {
+                    if (existing.DistanceTo(
+                            center) <=
+                        Review3DJoinTolerance * 0.35)
+                    {
+                        return;
+                    }
+                }
+            }
+
+            Solid3d sphere =
+                new Solid3d();
+
+            try
+            {
+                sphere.CreateSphere(
+                    radius);
+
+                sphere.TransformBy(
+                    Matrix3d.Displacement(
+                        center -
+                        Point3d.Origin));
+
+                sphere.SetDatabaseDefaults(db);
+                sphere.Layer =
+                    Review3DFittingSolidLayer;
+                sphere.ColorIndex = 256;
+
+                space.AppendEntity(
+                    sphere);
+
+                tr.AddNewlyCreatedDBObject(
+                    sphere,
+                    true);
+
+                placed?.Add(
+                    center);
+            }
+            catch
+            {
+                sphere.Dispose();
+            }
+        }
+
+        private void AppendReview3DPipeSizeLabel(
+            Transaction tr,
+            Database db,
+            BlockTableRecord space,
+            Review3DPipeData pipe,
+            double elevation)
+        {
+            if (pipe == null ||
+                pipe.ProfileKind !=
+                    Review3DProfileKind.PipeRound ||
+                pipe.Points == null ||
+                pipe.Points.Count < 2)
+            {
+                return;
+            }
+
+            string label =
+                NormalizeReview3DSizeLabel(
+                    pipe.DisplayLabel);
+
+            if (string.IsNullOrWhiteSpace(
+                    label))
+            {
+                return;
+            }
+
+            int segIndex =
+                0;
+
+            double bestLen =
+                -1.0;
+
+            for (int i = 0;
+                i < pipe.Points.Count - 1;
+                i++)
+            {
+                double len =
+                    PlanDistance(
+                        pipe.Points[i],
+                        pipe.Points[i + 1]);
+
+                if (len > bestLen)
+                {
+                    bestLen = len;
+                    segIndex = i;
+                }
+            }
+
+            Point3d a =
+                pipe.Points[segIndex];
+            Point3d b =
+                pipe.Points[segIndex + 1];
+
+            Point3d mid =
+                new Point3d(
+                    (a.X + b.X) * 0.5,
+                    (a.Y + b.Y) * 0.5,
+                    elevation +
+                    Math.Max(
+                        pipe.Width * 0.5 +
+                        Review3DLabelOffset,
+                        Review3DLabelOffset));
+
+            double angle =
+                Math.Atan2(
+                    b.Y - a.Y,
+                    b.X - a.X);
+
+            AppendReview3DLabelText(
+                tr,
+                db,
+                space,
+                mid,
+                label,
+                angle);
+        }
+
+        private void AppendReview3DRiserSizeLabel(
+            Transaction tr,
+            Database db,
+            BlockTableRecord space,
+            Review3DRiserData riser,
+            double elevation)
+        {
+            if (riser == null ||
+                riser.ProfileKind !=
+                    Review3DProfileKind.PipeRound)
+            {
+                return;
+            }
+
+            string label =
+                NormalizeReview3DSizeLabel(
+                    riser.DisplayLabel);
+
+            if (string.IsNullOrWhiteSpace(
+                    label))
+            {
+                return;
+            }
+
+            bool isDown =
+                string.Equals(
+                    (riser.Direction ?? "")
+                        .Trim(),
+                    "DOWN",
+                    StringComparison.OrdinalIgnoreCase);
+
+            double topZ =
+                elevation +
+                (isDown ? -1.0 : 1.0) *
+                Math.Max(
+                    riser.HeightMeters,
+                    0.0) * 1000.0;
+
+            Point3d p =
+                new Point3d(
+                    riser.BasePoint.X +
+                    Math.Max(
+                        riser.Width * 0.8,
+                        120.0),
+                    riser.BasePoint.Y,
+                    (elevation + topZ) * 0.5);
+
+            AppendReview3DLabelText(
+                tr,
+                db,
+                space,
+                p,
+                label,
+                0.0);
+        }
+
+        private static string NormalizeReview3DSizeLabel(
+            string raw)
+        {
+            if (string.IsNullOrWhiteSpace(
+                    raw))
+            {
+                return "";
+            }
+
+            string s =
+                raw.Trim()
+                    .ToUpperInvariant();
+
+            if (s.StartsWith(
+                    "DN"))
+            {
+                Match m =
+                    Regex.Match(
+                        s,
+                        @"DN\s*(\d+(?:\.\d+)?)",
+                        RegexOptions.IgnoreCase);
+
+                if (m.Success)
+                {
+                    return
+                        "DN" +
+                        m.Groups[1].Value;
+                }
+
+                return s;
+            }
+
+            return "";
+        }
+
+        private static void AppendReview3DLabelText(
+            Transaction tr,
+            Database db,
+            BlockTableRecord space,
+            Point3d position,
+            string textValue,
+            double rotation)
+        {
+            if (string.IsNullOrWhiteSpace(
+                    textValue))
+            {
+                return;
+            }
+
+            DBText text =
+                new DBText();
+
+            text.SetDatabaseDefaults(db);
+            text.TextStyleId =
+                db.Textstyle;
+            text.TextString =
+                textValue;
+            text.Height =
+                Review3DLabelTextHeight;
+            text.WidthFactor =
+                0.9;
+            text.Layer =
+                Review3DLabelLayer;
+            text.ColorIndex =
+                256;
+            text.Position =
+                position;
+            text.Rotation =
+                rotation;
+
+            space.AppendEntity(
+                text);
+
+            tr.AddNewlyCreatedDBObject(
+                text,
+                true);
+        }
+
+        private static void AppendReview3DErrorMarker(
+            Transaction tr,
+            Database db,
+            BlockTableRecord space,
+            Review3DErrorData error)
+        {
+            if (error == null)
+                return;
+
+            Point3d p =
+                error.Point;
+
+            double s =
+                Review3DErrorMarkerSize;
+
+            AppendReview3DMarkerLine(
+                tr,
+                db,
+                space,
+                new Point3d(
+                    p.X - s,
+                    p.Y,
+                    p.Z),
+                new Point3d(
+                    p.X + s,
+                    p.Y,
+                    p.Z));
+
+            AppendReview3DMarkerLine(
+                tr,
+                db,
+                space,
+                new Point3d(
+                    p.X,
+                    p.Y - s,
+                    p.Z),
+                new Point3d(
+                    p.X,
+                    p.Y + s,
+                    p.Z));
+
+            AppendReview3DMarkerLine(
+                tr,
+                db,
+                space,
+                new Point3d(
+                    p.X,
+                    p.Y,
+                    p.Z - s),
+                new Point3d(
+                    p.X,
+                    p.Y,
+                    p.Z + s));
+
+            DBText text =
+                new DBText();
+
+            text.SetDatabaseDefaults(db);
+            text.TextStyleId =
+                db.Textstyle;
+            text.TextString =
+                string.IsNullOrWhiteSpace(
+                    error.Text)
+                    ? "HỞ"
+                    : error.Text;
+            text.Height =
+                Review3DErrorTextHeight;
+            text.WidthFactor = 1.0;
+            text.Layer =
+                Review3DErrorLayer;
+            text.ColorIndex = 256;
+            text.Position =
+                new Point3d(
+                    p.X + s * 1.15,
+                    p.Y + s * 1.15,
+                    p.Z);
+
+            space.AppendEntity(text);
+            tr.AddNewlyCreatedDBObject(
+                text,
+                true);
+        }
+
+        private static void AppendReview3DPrettyErrorMarker(
+            Transaction tr,
+            Database db,
+            BlockTableRecord space,
+            Review3DErrorData error)
+        {
+            if (error == null)
+                return;
+
+            Point3d p =
+                error.Point;
+
+            double radius =
+                Review3DErrorMarkerSize * 0.42;
+
+            // Quả cầu đỏ 3D: nhìn thấy rõ từ mọi góc.
+            Solid3d markerSphere =
+                new Solid3d();
+
+            try
+            {
+                markerSphere.CreateSphere(
+                    radius);
+
+                markerSphere.TransformBy(
+                    Matrix3d.Displacement(
+                        p -
+                        Point3d.Origin));
+
+                markerSphere.SetDatabaseDefaults(db);
+                markerSphere.Layer =
+                    Review3DErrorLayer;
+                markerSphere.ColorIndex = 256;
+
+                space.AppendEntity(
+                    markerSphere);
+
+                tr.AddNewlyCreatedDBObject(
+                    markerSphere,
+                    true);
+            }
+            catch
+            {
+                markerSphere.Dispose();
+            }
+
+            // Vòng tròn mảnh để vẫn nhận ra điểm lỗi khi visual style đổi.
+            Circle ring =
+                new Circle(
+                    p,
+                    Vector3d.ZAxis,
+                    radius * 1.35);
+
+            ring.SetDatabaseDefaults(db);
+            ring.Layer =
+                Review3DErrorLayer;
+            ring.ColorIndex = 256;
+
+            space.AppendEntity(ring);
+            tr.AddNewlyCreatedDBObject(
+                ring,
+                true);
+
+            DBText label =
+                new DBText();
+
+            label.SetDatabaseDefaults(db);
+            label.TextStyleId =
+                db.Textstyle;
+            label.TextString =
+                string.IsNullOrWhiteSpace(
+                    error.Text)
+                    ? "HỞ"
+                    : error.Text;
+            label.Height =
+                Review3DErrorTextHeight * 0.78;
+            label.WidthFactor = 1.0;
+            label.Layer =
+                Review3DErrorLayer;
+            label.ColorIndex = 256;
+            label.Position =
+                new Point3d(
+                    p.X + radius * 1.65,
+                    p.Y + radius * 1.05,
+                    p.Z + radius * 0.55);
+
+            space.AppendEntity(label);
+            tr.AddNewlyCreatedDBObject(
+                label,
+                true);
+        }
+
+        private static void AppendReview3DMarkerLine(
+            Transaction tr,
+            Database db,
+            BlockTableRecord space,
+            Point3d a,
+            Point3d b)
+        {
+            Line line =
+                new Line(
+                    a,
+                    b);
+
+            line.SetDatabaseDefaults(db);
+            line.Layer =
+                Review3DErrorLayer;
+            line.ColorIndex = 256;
+
+            space.AppendEntity(line);
+            tr.AddNewlyCreatedDBObject(
+                line,
+                true);
+        }
+
+        private void MergeReview3DSolidsLikeRevit(
+            Transaction tr,
+            Database db)
+        {
+            if (tr == null ||
+                db == null)
+            {
+                return;
+            }
+
+            List<ObjectId> solids =
+                CollectReview3DMergeCandidateIds(
+                    tr,
+                    db);
+
+            if (solids.Count <= 1)
+                return;
+
+            bool mergedSomething =
+                true;
+
+            while (mergedSomething)
+            {
+                mergedSomething =
+                    false;
+
+                for (int i = 0;
+                    i < solids.Count;
+                    i++)
+                {
+                    if (!TryGetReview3DSolidExtents(
+                            tr,
+                            solids[i],
+                            out Extents3d extA))
+                    {
+                        continue;
+                    }
+
+                    for (int j = i + 1;
+                        j < solids.Count;
+                        j++)
+                    {
+                        if (!TryGetReview3DSolidExtents(
+                                tr,
+                                solids[j],
+                                out Extents3d extB))
+                        {
+                            continue;
+                        }
+
+                        if (!AreReview3DExtentsNear(
+                                extA,
+                                extB,
+                                Review3DUnionSearchTolerance))
+                        {
+                            continue;
+                        }
+
+                        bool merged =
+                            TryUniteReview3DSolidPair(
+                                tr,
+                                solids[i],
+                                solids[j]);
+
+                        if (!merged)
+                            continue;
+
+                        solids.RemoveAt(
+                            j);
+
+                        mergedSomething =
+                            true;
+                        break;
+                    }
+
+                    if (mergedSomething)
+                        break;
+                }
+            }
+        }
+
+        private List<ObjectId> CollectReview3DMergeCandidateIds(
+            Transaction tr,
+            Database db)
+        {
+            List<ObjectId> ids =
+                new List<ObjectId>();
+
+            BlockTableRecord space =
+                (BlockTableRecord)tr.GetObject(
+                    db.CurrentSpaceId,
+                    OpenMode.ForRead);
+
+            foreach (ObjectId id in space)
+            {
+                if (id.IsNull ||
+                    !id.IsValid)
+                {
+                    continue;
+                }
+
+                Entity ent =
+                    tr.GetObject(
+                        id,
+                        OpenMode.ForRead,
+                        false) as Entity;
+
+                if (ent == null ||
+                    ent.IsErased ||
+                    !(ent is Solid3d))
+                {
+                    continue;
+                }
+
+                if (!IsReview3DMergeCandidateLayer(
+                        ent.Layer))
+                {
+                    continue;
+                }
+
+                ids.Add(
+                    id);
+            }
+
+            return ids;
+        }
+
+        private static bool IsReview3DMergeCandidateLayer(
+            string layerName)
+        {
+            if (string.IsNullOrWhiteSpace(
+                    layerName))
+            {
+                return false;
+            }
+
+            return
+                layerName.Equals(
+                    Review3DPipeSolidLayer,
+                    StringComparison.OrdinalIgnoreCase) ||
+                layerName.Equals(
+                    Review3DRiserSolidLayer,
+                    StringComparison.OrdinalIgnoreCase) ||
+                layerName.Equals(
+                    Review3DFittingSolidLayer,
+                    StringComparison.OrdinalIgnoreCase) ||
+                layerName.Equals(
+                    Review3DDuctSolidLayer,
+                    StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static bool TryGetReview3DSolidExtents(
+            Transaction tr,
+            ObjectId id,
+            out Extents3d extents)
+        {
+            extents =
+                default(Extents3d);
+
+            if (id.IsNull ||
+                !id.IsValid)
+            {
+                return false;
+            }
+
+            try
+            {
+                Solid3d solid =
+                    tr.GetObject(
+                        id,
+                        OpenMode.ForRead,
+                        false) as Solid3d;
+
+                if (solid == null ||
+                    solid.IsErased)
+                {
+                    return false;
+                }
+
+                extents =
+                    solid.GeometricExtents;
+
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        private static bool AreReview3DExtentsNear(
+            Extents3d a,
+            Extents3d b,
+            double tol)
+        {
+            return
+                a.MinPoint.X <= b.MaxPoint.X + tol &&
+                a.MaxPoint.X >= b.MinPoint.X - tol &&
+                a.MinPoint.Y <= b.MaxPoint.Y + tol &&
+                a.MaxPoint.Y >= b.MinPoint.Y - tol &&
+                a.MinPoint.Z <= b.MaxPoint.Z + tol &&
+                a.MaxPoint.Z >= b.MinPoint.Z - tol;
+        }
+
+        private bool TryUniteReview3DSolidPair(
+            Transaction tr,
+            ObjectId keeperId,
+            ObjectId otherId)
+        {
+            if (keeperId.IsNull ||
+                otherId.IsNull ||
+                keeperId == otherId)
+            {
+                return false;
+            }
+
+            Solid3d keeper =
+                tr.GetObject(
+                    keeperId,
+                    OpenMode.ForWrite,
+                    false) as Solid3d;
+
+            Solid3d other =
+                tr.GetObject(
+                    otherId,
+                    OpenMode.ForWrite,
+                    false) as Solid3d;
+
+            if (keeper == null ||
+                other == null ||
+                keeper.IsErased ||
+                other.IsErased)
+            {
+                return false;
+            }
+
+            try
+            {
+                if (!AreReview3DExtentsNear(
+                        keeper.GeometricExtents,
+                        other.GeometricExtents,
+                        Review3DUnionBoundingTolerance))
+                {
+                    return false;
+                }
+            }
+            catch
+            {
+            }
+
+            Solid3d toolClone =
+                null;
+
+            try
+            {
+                toolClone =
+                    other.Clone() as Solid3d;
+
+                if (toolClone == null)
+                    return false;
+
+                keeper.BooleanOperation(
+                    BooleanOperationType.BoolUnite,
+                    toolClone);
+
+                if (!other.IsErased)
+                {
+                    other.Erase();
+                }
+
+                if (string.Equals(
+                        keeper.Layer,
+                        Review3DFittingSolidLayer,
+                        StringComparison.OrdinalIgnoreCase))
+                {
+                    keeper.Layer =
+                        Review3DPipeSolidLayer;
+                }
+
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
+            finally
+            {
+                if (toolClone != null)
+                {
+                    try
+                    {
+                        toolClone.Dispose();
+                    }
+                    catch
+                    {
+                    }
+                }
+            }
+        }
+
+        private void CaptureReview3DOriginalViewIfNeeded(
+            Editor ed)
+        {
+            if (_review3DOriginalViewCaptured ||
+                ed == null)
+            {
+                return;
+            }
+
+            try
+            {
+                using (ViewTableRecord view =
+                    ed.GetCurrentView())
+                {
+                    _review3DOriginalTarget =
+                        view.Target;
+                    _review3DOriginalCenterPoint =
+                        view.CenterPoint;
+                    _review3DOriginalViewDirection =
+                        view.ViewDirection;
+                    _review3DOriginalViewTwist =
+                        view.ViewTwist;
+                    _review3DOriginalViewWidth =
+                        view.Width;
+                    _review3DOriginalViewHeight =
+                        view.Height;
+                }
+
+                try
+                {
+                    object value =
+                        Autodesk.AutoCAD.ApplicationServices.Application
+                            .GetSystemVariable(
+                                "VSCURRENT");
+
+                    _review3DOriginalVisualStyle =
+                        Convert.ToString(
+                            value) ?? "";
+                }
+                catch
+                {
+                    _review3DOriginalVisualStyle =
+                        "";
+                }
+
+                try
+                {
+                    _review3DOriginalFacetRes =
+                        Convert.ToDouble(
+                            Autodesk.AutoCAD.ApplicationServices.Application
+                                .GetSystemVariable(
+                                    "FACETRES"),
+                            CultureInfo.InvariantCulture);
+                }
+                catch
+                {
+                }
+
+                try
+                {
+                    _review3DOriginalIsoLines =
+                        Convert.ToInt32(
+                            Autodesk.AutoCAD.ApplicationServices.Application
+                                .GetSystemVariable(
+                                    "ISOLINES"),
+                            CultureInfo.InvariantCulture);
+                }
+                catch
+                {
+                }
+
+                try
+                {
+                    _review3DOriginalDispSilh =
+                        Convert.ToInt32(
+                            Autodesk.AutoCAD.ApplicationServices.Application
+                                .GetSystemVariable(
+                                    "DISPSILH"),
+                            CultureInfo.InvariantCulture);
+                }
+                catch
+                {
+                }
+
+                _review3DOriginalViewCaptured =
+                    true;
+            }
+            catch
+            {
+                _review3DOriginalViewCaptured =
+                    false;
+            }
+        }
+
+        private void RestoreReview3DOriginalView(
+            Editor ed)
+        {
+            if (!_review3DOriginalViewCaptured ||
+                ed == null)
+            {
+                SetReview3DTopView(
+                    ed);
+                return;
+            }
+
+            try
+            {
+                if (!string.IsNullOrWhiteSpace(
+                        _review3DOriginalVisualStyle))
+                {
+                    Autodesk.AutoCAD.ApplicationServices.Application
+                        .SetSystemVariable(
+                            "VSCURRENT",
+                            _review3DOriginalVisualStyle);
+                }
+            }
+            catch
+            {
+                try
+                {
+                    Autodesk.AutoCAD.ApplicationServices.Application
+                        .SetSystemVariable(
+                            "VSCURRENT",
+                            "2D Wireframe");
+                }
+                catch
+                {
+                }
+            }
+
+            try
+            {
+                Autodesk.AutoCAD.ApplicationServices.Application
+                    .SetSystemVariable(
+                        "FACETRES",
+                        _review3DOriginalFacetRes);
+            }
+            catch
+            {
+            }
+
+            try
+            {
+                Autodesk.AutoCAD.ApplicationServices.Application
+                    .SetSystemVariable(
+                        "ISOLINES",
+                        _review3DOriginalIsoLines);
+            }
+            catch
+            {
+            }
+
+            try
+            {
+                Autodesk.AutoCAD.ApplicationServices.Application
+                    .SetSystemVariable(
+                        "DISPSILH",
+                        _review3DOriginalDispSilh);
+            }
+            catch
+            {
+            }
+
+            try
+            {
+                using (ViewTableRecord view =
+                    ed.GetCurrentView())
+                {
+                    view.Target =
+                        _review3DOriginalTarget;
+                    view.CenterPoint =
+                        _review3DOriginalCenterPoint;
+                    view.ViewDirection =
+                        _review3DOriginalViewDirection;
+                    view.ViewTwist =
+                        _review3DOriginalViewTwist;
+                    view.Width =
+                        _review3DOriginalViewWidth;
+                    view.Height =
+                        _review3DOriginalViewHeight;
+
+                    ed.SetCurrentView(
+                        view);
+                }
+            }
+            catch
+            {
+                SetReview3DTopView(
+                    ed);
+            }
+        }
+
+        private void ClearReview3DOriginalViewCapture()
+        {
+            _review3DOriginalViewCaptured =
+                false;
+            _review3DOriginalVisualStyle =
+                "";
+        }
+
+        private static bool IsReview3DEscapePressed()
+        {
+            try
+            {
+                return
+                    (GetAsyncKeyState(
+                        Review3DVirtualKeyEscape) &
+                     0x8000) != 0;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        private void StartReview3DEscapeWatcher()
+        {
+            if (_review3DEscapeWatcherAttached)
+                return;
+
+            _review3DEscapeWasDown =
+                IsReview3DEscapePressed();
+
+            Autodesk.AutoCAD.ApplicationServices.Core.Application
+                .Idle +=
+                Review3DEscapeIdle;
+
+            _review3DEscapeWatcherAttached =
+                true;
+        }
+
+        private void StopReview3DEscapeWatcher()
+        {
+            if (!_review3DEscapeWatcherAttached)
+                return;
+
+            try
+            {
+                Autodesk.AutoCAD.ApplicationServices.Core.Application
+                    .Idle -=
+                    Review3DEscapeIdle;
+            }
+            catch
+            {
+            }
+
+            _review3DEscapeWatcherAttached =
+                false;
+            _review3DEscapeWasDown =
+                false;
+        }
+
+        private void Review3DEscapeIdle(
+            object sender,
+            EventArgs e)
+        {
+            if (!_review3DEscapeWatcherAttached ||
+                _review3DExitByEscapeInProgress ||
+                _review3DIsIn2DFocus)
+            {
+                return;
+            }
+
+            bool down =
+                IsReview3DEscapePressed();
+
+            if (down &&
+                !_review3DEscapeWasDown)
+            {
+                ExitReview3DByEscape();
+            }
+
+            _review3DEscapeWasDown =
+                down;
+        }
+
+        private void ExitReview3DByEscape()
+        {
+            if (_review3DExitByEscapeInProgress)
+                return;
+
+            Document doc =
+                Autodesk.AutoCAD.ApplicationServices.Core.Application
+                    .DocumentManager
+                    .MdiActiveDocument;
+
+            if (doc == null)
+            {
+                StopReview3DEscapeWatcher();
+                return;
+            }
+
+            Editor ed =
+                doc.Editor;
+
+            Database db =
+                doc.Database;
+
+            _review3DExitByEscapeInProgress =
+                true;
+
+            StopReview3DEscapeWatcher();
+
+            try
+            {
+                // Trả lại toàn bộ object 2D đã bị ISOLATEOBJECTS ẩn.
+                TryUnisolateReview3DObjects(
+                    doc,
+                    ed);
+
+                try
+                {
+                    ed.SetImpliedSelection(
+                        new ObjectId[0]);
+                }
+                catch
+                {
+                }
+
+                using (doc.LockDocument())
+                using (Transaction tr =
+                    db.TransactionManager.StartTransaction())
+                {
+                    DeleteReview2DFocusMarker(
+                        tr,
+                        db);
+
+                    // ESC = thoát hẳn chế độ 3D, xóa preview tạm.
+                    DeleteReview3DPreview(
+                        tr,
+                        db);
+
+                    tr.Commit();
+                }
+
+                _review3DIsIn2DFocus =
+                    false;
+
+                // Trả đúng góc nhìn/zoom/visual style trước khi vào 3D.
+                RestoreReview3DOriginalView(
+                    ed);
+
+                ed.Regen();
+
+                ed.WriteMessage(
+                    "\n[KIỂM TRA 3D] ESC: Đã thoát chế độ 3D và trở về bản vẽ 2D ban đầu.");
+
+                ClearReview3DOriginalViewCapture();
+            }
+            catch
+            {
+                try
+                {
+                    RestoreReview3DOriginalView(
+                        ed);
+                    ed.Regen();
+                }
+                catch
+                {
+                }
+
+                ClearReview3DOriginalViewCapture();
+            }
+            finally
+            {
+                _review3DExitByEscapeInProgress =
+                    false;
+            }
+        }
+
+        private bool TryFocusReview3DErrorIn2D(
+            Document doc,
+            Editor ed,
+            Database db)
+        {
+            if (doc == null ||
+                ed == null ||
+                db == null)
+            {
+                return false;
+            }
+
+            PromptEntityOptions options =
+                new PromptEntityOptions(
+                    "\n[KIỂM TRA 3D] Click trực tiếp vào DẤU LỖI ĐỎ cần kiểm tra: ");
+
+            options.AllowNone =
+                false;
+
+            PromptEntityResult result =
+                ed.GetEntity(
+                    options);
+
+            if (result.Status !=
+                PromptStatus.OK)
+            {
+                return false;
+            }
+
+            Point3d errorPoint =
+                Point3d.Origin;
+
+            string errorText =
+                "VỊ TRÍ CẦN KIỂM TRA";
+
+            bool valid =
+                false;
+
+            using (Transaction tr =
+                db.TransactionManager.StartTransaction())
+            {
+                Entity ent =
+                    tr.GetObject(
+                        result.ObjectId,
+                        OpenMode.ForRead,
+                        false) as Entity;
+
+                if (ent == null ||
+                    ent.IsErased ||
+                    !string.Equals(
+                        ent.Layer,
+                        Review3DErrorLayer,
+                        StringComparison.OrdinalIgnoreCase))
+                {
+                    MessageBox.Show(
+                        "Đối tượng vừa chọn không phải marker lỗi 3D.\n\n" +
+                        "Hãy click vào quả cầu / vòng / chữ màu đỏ của vị trí lỗi.",
+                        "KIỂM TRA 3D");
+                    return false;
+                }
+
+                if (ent is DBText dbText)
+                {
+                    errorPoint =
+                        dbText.Position;
+
+                    if (!string.IsNullOrWhiteSpace(
+                            dbText.TextString))
+                    {
+                        errorText =
+                            dbText.TextString;
+                    }
+
+                    valid =
+                        true;
+                }
+                else if (ent is MText mt)
+                {
+                    errorPoint =
+                        mt.Location;
+
+                    if (!string.IsNullOrWhiteSpace(
+                            mt.Contents))
+                    {
+                        errorText =
+                            mt.Contents;
+                    }
+
+                    valid =
+                        true;
+                }
+                else if (ent is Circle circle)
+                {
+                    errorPoint =
+                        circle.Center;
+                    valid =
+                        true;
+                }
+                else if (ent is Line line)
+                {
+                    errorPoint =
+                        new Point3d(
+                            (line.StartPoint.X +
+                             line.EndPoint.X) * 0.5,
+                            (line.StartPoint.Y +
+                             line.EndPoint.Y) * 0.5,
+                            (line.StartPoint.Z +
+                             line.EndPoint.Z) * 0.5);
+
+                    valid =
+                        true;
+                }
+                else
+                {
+                    try
+                    {
+                        Extents3d ex =
+                            ent.GeometricExtents;
+
+                        errorPoint =
+                            new Point3d(
+                                (ex.MinPoint.X +
+                                 ex.MaxPoint.X) * 0.5,
+                                (ex.MinPoint.Y +
+                                 ex.MaxPoint.Y) * 0.5,
+                                (ex.MinPoint.Z +
+                                 ex.MaxPoint.Z) * 0.5);
+
+                        valid =
+                            true;
+                    }
+                    catch
+                    {
+                        valid =
+                            false;
+                    }
+                }
+
+                tr.Commit();
+            }
+
+            if (!valid)
+            {
+                MessageBox.Show(
+                    "Không xác định được vị trí marker lỗi vừa chọn.",
+                    "KIỂM TRA 3D");
+                return false;
+            }
+
+            TryUnisolateReview3DObjects(
+                doc,
+                ed);
+
+            using (doc.LockDocument())
+            using (Transaction tr =
+                db.TransactionManager.StartTransaction())
+            {
+                DeleteReview2DFocusMarker(
+                    tr,
+                    db);
+
+                SetReview3DPreviewVisibility(
+                    tr,
+                    db,
+                    false);
+
+                EnsureLayerExists(
+                    tr,
+                    db,
+                    Review2DFocusLayer,
+                    false);
+
+                SetReview3DLayerColor(
+                    tr,
+                    db,
+                    Review2DFocusLayer,
+                    1);
+
+                AppendReview2DFocusMarker(
+                    tr,
+                    db,
+                    errorPoint,
+                    errorText);
+
+                tr.Commit();
+            }
+
+            Point3d planPoint =
+                new Point3d(
+                    errorPoint.X,
+                    errorPoint.Y,
+                    0.0);
+
+            ZoomToReview2DPoint(
+                ed,
+                planPoint);
+
+            ed.Regen();
+
+            ed.WriteMessage(
+                "\n[KIỂM TRA 3D] Đã quay về mặt bằng đúng vị trí lỗi. " +
+                "Bấm KIỂM TRA 3D > Quay3D để quay lại mô hình.");
+
+            return true;
+        }
+
+        private static void SetReview3DPreviewVisibility(
+            Transaction tr,
+            Database db,
+            bool visible)
+        {
+            if (tr == null ||
+                db == null)
+            {
+                return;
+            }
+
+            BlockTableRecord space =
+                (BlockTableRecord)tr.GetObject(
+                    db.CurrentSpaceId,
+                    OpenMode.ForRead);
+
+            foreach (ObjectId id in space)
+            {
+                Entity ent =
+                    tr.GetObject(
+                        id,
+                        OpenMode.ForRead,
+                        false) as Entity;
+
+                if (ent == null ||
+                    ent.IsErased ||
+                    !IsReview3DTempLayer(
+                        ent.Layer))
+                {
+                    continue;
+                }
+
+                ent.UpgradeOpen();
+                ent.Visible =
+                    visible;
+            }
+        }
+
+        private static void DeleteReview2DFocusMarker(
+            Transaction tr,
+            Database db)
+        {
+            if (tr == null ||
+                db == null)
+            {
+                return;
+            }
+
+            BlockTableRecord space =
+                (BlockTableRecord)tr.GetObject(
+                    db.CurrentSpaceId,
+                    OpenMode.ForRead);
+
+            List<ObjectId> ids =
+                new List<ObjectId>();
+
+            foreach (ObjectId id in space)
+            {
+                Entity ent =
+                    tr.GetObject(
+                        id,
+                        OpenMode.ForRead,
+                        false) as Entity;
+
+                if (ent != null &&
+                    !ent.IsErased &&
+                    string.Equals(
+                        ent.Layer,
+                        Review2DFocusLayer,
+                        StringComparison.OrdinalIgnoreCase))
+                {
+                    ids.Add(
+                        id);
+                }
+            }
+
+            foreach (ObjectId id in ids)
+            {
+                Entity ent =
+                    tr.GetObject(
+                        id,
+                        OpenMode.ForWrite,
+                        false) as Entity;
+
+                if (ent != null &&
+                    !ent.IsErased)
+                {
+                    ent.Erase();
+                }
+            }
+        }
+
+        private static void AppendReview2DFocusMarker(
+            Transaction tr,
+            Database db,
+            Point3d sourcePoint,
+            string errorText)
+        {
+            BlockTableRecord space =
+                (BlockTableRecord)tr.GetObject(
+                    db.CurrentSpaceId,
+                    OpenMode.ForWrite);
+
+            Point3d p =
+                new Point3d(
+                    sourcePoint.X,
+                    sourcePoint.Y,
+                    0.0);
+
+            double radius =
+                Math.Max(
+                    Review3DErrorMarkerSize * 2.0,
+                    350.0);
+
+            Circle circle =
+                new Circle(
+                    p,
+                    Vector3d.ZAxis,
+                    radius);
+
+            circle.SetDatabaseDefaults(db);
+            circle.Layer =
+                Review2DFocusLayer;
+            circle.ColorIndex =
+                256;
+
+            space.AppendEntity(
+                circle);
+
+            tr.AddNewlyCreatedDBObject(
+                circle,
+                true);
+
+            Line cross1 =
+                new Line(
+                    new Point3d(
+                        p.X - radius * 0.72,
+                        p.Y - radius * 0.72,
+                        0.0),
+                    new Point3d(
+                        p.X + radius * 0.72,
+                        p.Y + radius * 0.72,
+                        0.0));
+
+            cross1.SetDatabaseDefaults(db);
+            cross1.Layer =
+                Review2DFocusLayer;
+            cross1.ColorIndex =
+                256;
+
+            space.AppendEntity(
+                cross1);
+
+            tr.AddNewlyCreatedDBObject(
+                cross1,
+                true);
+
+            Line cross2 =
+                new Line(
+                    new Point3d(
+                        p.X - radius * 0.72,
+                        p.Y + radius * 0.72,
+                        0.0),
+                    new Point3d(
+                        p.X + radius * 0.72,
+                        p.Y - radius * 0.72,
+                        0.0));
+
+            cross2.SetDatabaseDefaults(db);
+            cross2.Layer =
+                Review2DFocusLayer;
+            cross2.ColorIndex =
+                256;
+
+            space.AppendEntity(
+                cross2);
+
+            tr.AddNewlyCreatedDBObject(
+                cross2,
+                true);
+
+            DBText label =
+                new DBText();
+
+            label.SetDatabaseDefaults(db);
+            label.TextStyleId =
+                db.Textstyle;
+            label.TextString =
+                "KIỂM TRA: " +
+                (string.IsNullOrWhiteSpace(
+                    errorText)
+                    ? "VỊ TRÍ NÀY"
+                    : errorText);
+            label.Height =
+                Math.Max(
+                    Review3DErrorTextHeight,
+                    160.0);
+            label.WidthFactor =
+                1.0;
+            label.Layer =
+                Review2DFocusLayer;
+            label.ColorIndex =
+                256;
+            label.Position =
+                new Point3d(
+                    p.X + radius * 1.15,
+                    p.Y + radius * 0.65,
+                    0.0);
+
+            space.AppendEntity(
+                label);
+
+            tr.AddNewlyCreatedDBObject(
+                label,
+                true);
+        }
+
+        private static void ZoomToReview2DPoint(
+            Editor ed,
+            Point3d point)
+        {
+            if (ed == null)
+                return;
+
+            try
+            {
+                using (ViewTableRecord view =
+                    ed.GetCurrentView())
+                {
+                    double oldHeight =
+                        Math.Max(
+                            view.Height,
+                            1.0);
+
+                    double oldWidth =
+                        Math.Max(
+                            view.Width,
+                            oldHeight);
+
+                    double aspect =
+                        oldWidth /
+                        oldHeight;
+
+                    double targetHeight =
+                        3000.0;
+
+                    view.ViewDirection =
+                        Vector3d.ZAxis;
+                    view.ViewTwist =
+                        0.0;
+                    view.Target =
+                        point;
+                    view.CenterPoint =
+                        Point2d.Origin;
+                    view.Height =
+                        targetHeight;
+                    view.Width =
+                        targetHeight *
+                        aspect;
+
+                    ed.SetCurrentView(
+                        view);
+                }
+            }
+            catch
+            {
+                SetReview3DTopView(
+                    ed);
+            }
+        }
+
+        private List<ObjectId> CollectReview3DPreviewIds(
+            Database db)
+        {
+            List<ObjectId> ids =
+                new List<ObjectId>();
+
+            if (db == null)
+                return ids;
+
+            try
+            {
+                using (Transaction tr =
+                    db.TransactionManager.StartTransaction())
+                {
+                    BlockTableRecord space =
+                        (BlockTableRecord)tr.GetObject(
+                            db.CurrentSpaceId,
+                            OpenMode.ForRead);
+
+                    foreach (ObjectId id in space)
+                    {
+                        Entity ent =
+                            tr.GetObject(
+                                id,
+                                OpenMode.ForRead,
+                                false) as Entity;
+
+                        if (ent != null &&
+                            !ent.IsErased &&
+                            IsReview3DTempLayer(
+                                ent.Layer))
+                        {
+                            ids.Add(id);
+                        }
+                    }
+
+                    tr.Commit();
+                }
+            }
+            catch
+            {
+            }
+
+            return ids;
+        }
+
+        private void TryIsolateReview3DPreview(
+            Document doc,
+            Editor ed,
+            Database db)
+        {
+            if (doc == null ||
+                ed == null ||
+                db == null)
+            {
+                return;
+            }
+
+            try
+            {
+                List<ObjectId> previewIds =
+                    CollectReview3DPreviewIds(
+                        db);
+
+                if (previewIds == null ||
+                    previewIds.Count == 0)
+                {
+                    return;
+                }
+
+                ed.SetImpliedSelection(
+                    previewIds.ToArray());
+
+                doc.SendStringToExecute(
+                    "._ISOLATEOBJECTS \n",
+                    true,
+                    false,
+                    false);
+            }
+            catch
+            {
+            }
+        }
+
+        private static void TryUnisolateReview3DObjects(
+            Document doc,
+            Editor ed)
+        {
+            if (doc == null)
+                return;
+
+            try
+            {
+                if (ed != null)
+                {
+                    ed.SetImpliedSelection(
+                        new ObjectId[0]);
+                }
+
+                doc.SendStringToExecute(
+                    "._UNISOLATEOBJECTS \n",
+                    true,
+                    false,
+                    false);
+            }
+            catch
+            {
+            }
+        }
+
+        private static void TryZoomExtents(
+            Document doc)
+        {
+            if (doc == null)
+                return;
+
+            try
+            {
+                doc.SendStringToExecute(
+                    "._ZOOM _E \n",
+                    true,
+                    false,
+                    false);
+            }
+            catch
+            {
+            }
+        }
+
+        private static void SetReview3DIsometricView(
+            Editor ed)
+        {
+            if (ed == null)
+                return;
+
+            try
+            {
+                using (ViewTableRecord view =
+                    ed.GetCurrentView())
+                {
+                    view.ViewDirection =
+                        new Vector3d(
+                            1.0,
+                            -1.0,
+                            1.0);
+
+                    view.ViewTwist = 0.0;
+
+                    ed.SetCurrentView(
+                        view);
+                }
+            }
+            catch
+            {
+            }
+        }
+
+        private static void SetReview3DTopView(
+            Editor ed)
+        {
+            if (ed == null)
+                return;
+
+            try
+            {
+                using (ViewTableRecord view =
+                    ed.GetCurrentView())
+                {
+                    view.ViewDirection =
+                        Vector3d.ZAxis;
+                    view.ViewTwist = 0.0;
+                    ed.SetCurrentView(
+                        view);
+                }
+            }
+            catch
+            {
+            }
+        }
+
+        private static void SetReview3DConceptualVisualStyle()
+        {
+            // Mục tiêu thật sự ở đây là ép AutoCAD hiển thị SOLID dạng SHADED,
+            // không phải wireframe. Nếu chỉ đổi góc nhìn mà visual style vẫn
+            // là 2D Wireframe thì Solid3d sẽ chỉ hiện thành các nét như ảnh user gửi.
+            try
+            {
+                Autodesk.AutoCAD.ApplicationServices.Application
+                    .SetSystemVariable(
+                        "FACETRES",
+                        10.0);
+            }
+            catch
+            {
+            }
+
+            try
+            {
+                Autodesk.AutoCAD.ApplicationServices.Application
+                    .SetSystemVariable(
+                        "ISOLINES",
+                        0);
+            }
+            catch
+            {
+            }
+
+            try
+            {
+                Autodesk.AutoCAD.ApplicationServices.Application
+                    .SetSystemVariable(
+                        "DISPSILH",
+                        0);
+            }
+            catch
+            {
+            }
+
+            try
+            {
+                Autodesk.AutoCAD.ApplicationServices.Application
+                    .SetSystemVariable(
+                        "VSCURRENT",
+                        "Shaded");
+            }
+            catch
+            {
+                try
+                {
+                    Autodesk.AutoCAD.ApplicationServices.Application
+                        .SetSystemVariable(
+                            "SHADEMODE",
+                            "Gouraud");
+                }
+                catch
+                {
+                }
+            }
+
+            try
+            {
+                var doc =
+                    Autodesk.AutoCAD.ApplicationServices.Core.Application
+                        .DocumentManager
+                        .MdiActiveDocument;
+
+                if (doc != null)
+                {
+                    // Gọi command trực tiếp để chắc chắn viewport chuyển sang SHADED,
+                    // kể cả trường hợp SetSystemVariable không làm viewport cập nhật ngay.
+                    doc.SendStringToExecute(
+                        "._VSCURRENT _Shaded \n",
+                        true,
+                        false,
+                        false);
+
+                    doc.SendStringToExecute(
+                        "._REGEN \n",
+                        true,
+                        false,
+                        false);
+                }
+            }
+            catch
+            {
+            }
+        }
+
 
         private void BtnVeOng_Click(
             object sender,
@@ -20706,6 +28150,577 @@ namespace ClassLibrary4
         }
 
 
+        private void BtnVeShopThuCongCTN_Click(
+            object sender,
+            RoutedEventArgs e)
+        {
+            PipeUiContext ctx = _ctxCTN ?? GetContext(sender);
+
+            string selectedSize =
+                GetSelectedPipeSizeName(ctx);
+
+            string material =
+                GetSelectedPipeMaterialName(ctx);
+
+            if (string.IsNullOrWhiteSpace(selectedSize))
+            {
+                MessageBox.Show(
+                    "Hãy chọn SIZE ống CTN trước khi bấm VẼ SHOP.",
+                    "VẼ SHOP CTN");
+                return;
+            }
+
+            if (!TryGetCtnManualShopSize(
+                    material,
+                    selectedSize,
+                    out string shopSize,
+                    out double outsideDiameter))
+            {
+                MessageBox.Show(
+                    "Không nhận được kích thước SHOP từ SIZE đang chọn: " +
+                    selectedSize,
+                    "VẼ SHOP CTN");
+                return;
+            }
+
+            Document doc =
+                Autodesk.AutoCAD.ApplicationServices.Core.Application
+                    .DocumentManager
+                    .MdiActiveDocument;
+
+            if (doc == null)
+                return;
+
+            Editor ed = doc.Editor;
+            Database db = doc.Database;
+
+            Autodesk.AutoCAD.Internal.Utils.SetFocusToDwgView();
+
+            List<Tuple<Point3d, Point3d>> spans =
+                PromptManualShopSpans(
+                    ed,
+                    "VẼ SHOP CTN");
+
+            if (spans == null || spans.Count == 0)
+                return;
+
+            using (doc.LockDocument())
+            using (Transaction tr =
+                db.TransactionManager.StartTransaction())
+            {
+                BlockTable bt =
+                    (BlockTable)tr.GetObject(
+                        db.BlockTableId,
+                        OpenMode.ForRead);
+
+                BlockTableRecord btr =
+                    (BlockTableRecord)tr.GetObject(
+                        bt[BlockTableRecord.ModelSpace],
+                        OpenMode.ForWrite);
+
+                List<Line> temporaryLines =
+                    new List<Line>();
+
+                List<ShopPipeCandidate> newPipes =
+                    new List<ShopPipeCandidate>();
+
+                try
+                {
+                    foreach (Tuple<Point3d, Point3d> span in spans)
+                    {
+                        Line center =
+                            new Line(
+                                span.Item1,
+                                span.Item2);
+
+                        temporaryLines.Add(center);
+
+                        ShopPipeCandidate pipe =
+                            CreateCtnManualShopPipeCandidate(
+                                center,
+                                material,
+                                shopSize,
+                                outsideDiameter);
+
+                        if (pipe != null)
+                            newPipes.Add(pipe);
+                    }
+
+                    if (newPipes.Count == 0)
+                    {
+                        MessageBox.Show(
+                            "Không tạo được đoạn SHOP CTN hợp lệ.",
+                            "VẼ SHOP CTN");
+                        return;
+                    }
+
+                    List<ShopPipeCandidate> oldPipes =
+                        CollectConnectedCtnManualShopPipes(
+                            tr,
+                            btr,
+                            material,
+                            newPipes);
+
+                    List<ShopPipeCandidate> topologyPipes =
+                        new List<ShopPipeCandidate>();
+
+                    topologyPipes.AddRange(oldPipes);
+                    topologyPipes.AddRange(newPipes);
+
+                    string libraryPath =
+                        FindShopFittingLibraryPath(
+                            material,
+                            db);
+
+                    if (string.IsNullOrWhiteSpace(libraryPath))
+                    {
+                        ed.WriteMessage(
+                            "\n[VẼ SHOP CTN] Không tìm thấy thư viện phụ kiện cho [" +
+                            material +
+                            "]. Tool vẫn vẽ ống nhưng chưa thể chèn phụ kiện.");
+                    }
+
+                    List<ShopFittingGapInfo> fittingGaps =
+                        new List<ShopFittingGapInfo>();
+
+                    int reducerCount;
+                    int elbow90Count;
+                    int elbow45Count;
+                    int teeCount;
+                    int sprinklerElbowCount;
+
+                    int fittingCount =
+                        DrawSmartShopFittings(
+                            tr,
+                            db,
+                            btr,
+                            topologyPipes,
+                            new List<Point3d>(),
+                            libraryPath,
+                            fittingGaps,
+                            out reducerCount,
+                            out elbow90Count,
+                            out elbow45Count,
+                            out teeCount,
+                            out sprinklerElbowCount);
+
+                    // Chỉ mở khe tại phụ kiện trên tuyến cũ, không xóa tuyến cũ.
+                    TrimExistingManualShopEdges(
+                        tr,
+                        db,
+                        btr,
+                        oldPipes,
+                        fittingGaps);
+
+                    int drawnCount = 0;
+
+                    foreach (ShopPipeCandidate pipe in newPipes)
+                    {
+                        EnsureShopLayerExists(
+                            tr,
+                            db,
+                            pipe.LayerName);
+
+                        drawnCount +=
+                            DrawShopParallelPipeWithGaps(
+                                tr,
+                                db,
+                                btr,
+                                pipe,
+                                fittingGaps);
+
+                        AppendManualShopSourceLine(
+                            tr,
+                            db,
+                            btr,
+                            pipe.Start,
+                            pipe.End,
+                            material,
+                            pipe.SizeText);
+                    }
+
+                    tr.Commit();
+
+                    try { ed.Regen(); }
+                    catch { }
+
+                    ed.WriteMessage(
+                        "\n[VẼ SHOP CTN] Hoàn tất " +
+                        newPipes.Count +
+                        " đoạn, " +
+                        drawnCount +
+                        " nét; phụ kiện=" + fittingCount +
+                        " (giảm " + reducerCount +
+                        ", co90 " + elbow90Count +
+                        ", co45 " + elbow45Count +
+                        ", tê/tê giảm " + teeCount +
+                        "). Size SHOP=" + shopSize +
+                        ", Ø ngoài=" + outsideDiameter.ToString("0.##") +
+                        " mm.");
+                }
+                finally
+                {
+                    foreach (Line line in temporaryLines)
+                    {
+                        try { line.Dispose(); }
+                        catch { }
+                    }
+                }
+            }
+        }
+
+        private List<Tuple<Point3d, Point3d>> PromptManualShopSpans(
+            Editor ed,
+            string title)
+        {
+            if (ed == null)
+                return null;
+
+            List<Tuple<Point3d, Point3d>> spans =
+                new List<Tuple<Point3d, Point3d>>();
+
+            PromptPointResult firstResult =
+                ed.GetPoint(
+                    "\n[" + title + "] Chọn điểm đầu tim ống: ");
+
+            if (firstResult.Status != PromptStatus.OK)
+                return null;
+
+            Point3d current = firstResult.Value;
+
+            while (true)
+            {
+                PromptPointOptions options =
+                    new PromptPointOptions(
+                        "\n[" + title + "] Chọn điểm tiếp theo hoặc Enter để kết thúc: ")
+                    {
+                        UseBasePoint = true,
+                        BasePoint = current,
+                        AllowNone = true
+                    };
+
+                PromptPointResult result =
+                    ed.GetPoint(options);
+
+                if (result.Status == PromptStatus.None)
+                    break;
+
+                if (result.Status != PromptStatus.OK)
+                    return null;
+
+                Point3d next = result.Value;
+
+                if (PlanDistance(current, next) < 5.0)
+                {
+                    ed.WriteMessage(
+                        "\n[" + title + "] Đoạn quá ngắn, hãy chọn điểm khác.");
+                    continue;
+                }
+
+                spans.Add(
+                    Tuple.Create(current, next));
+
+                current = next;
+            }
+
+            return spans;
+        }
+
+        private bool TryGetCtnManualShopSize(
+            string material,
+            string sourceText,
+            out string sizeText,
+            out double outsideDiameter)
+        {
+            sizeText = "";
+            outsideDiameter = 0.0;
+
+            string materialKey =
+                NormalizeShopKey(material ?? "");
+
+            if (materialKey.Contains("PPR"))
+            {
+                return TryParseCtnPprShopSize(
+                    sourceText,
+                    out sizeText,
+                    out outsideDiameter);
+            }
+
+            // uPVC và HDPE có thể đã ghi trực tiếp đường kính ngoài D/Ø.
+            Match outsideMatch =
+                Regex.Match(
+                    NormalizePipeLabel(sourceText ?? "")
+                        .Replace(',', '.')
+                        .ToUpperInvariant(),
+                    @"(?<![A-Z0-9])(?:D|Ø|Φ)\s*(?<SIZE>\d{1,4}(?:\.\d+)?)(?:\s*MM)?(?![A-Z0-9])",
+                    RegexOptions.IgnoreCase);
+
+            if ((materialKey.Contains("UPVC") ||
+                 materialKey.Contains("PVC") ||
+                 materialKey.Contains("HDPE")) &&
+                outsideMatch.Success &&
+                double.TryParse(
+                    outsideMatch.Groups["SIZE"].Value,
+                    NumberStyles.AllowDecimalPoint,
+                    CultureInfo.InvariantCulture,
+                    out double explicitOutside) &&
+                explicitOutside > 0.0)
+            {
+                outsideDiameter = explicitOutside;
+                sizeText =
+                    "D" +
+                    FormatShopDnNumber(explicitOutside);
+                return true;
+            }
+
+            if (!TryParseAutomaticPipeSize(
+                    _ctxCTN,
+                    sourceText,
+                    out string nominalSizeText,
+                    out double nominalDn))
+            {
+                return false;
+            }
+
+            if (materialKey.Contains("UPVC") ||
+                materialKey.Contains("PVC"))
+            {
+                outsideDiameter =
+                    MapCtnUpvcNominalToOutside(
+                        nominalDn);
+
+                sizeText =
+                    "D" +
+                    FormatShopDnNumber(
+                        outsideDiameter);
+
+                return outsideDiameter > 0.0;
+            }
+
+            if (materialKey.Contains("HDPE"))
+            {
+                outsideDiameter = nominalDn;
+                sizeText =
+                    "D" +
+                    FormatShopDnNumber(
+                        outsideDiameter);
+
+                return outsideDiameter > 0.0;
+            }
+
+            // Tráng kẽm / nhúng nóng / inox: dùng đúng Ø ngoài ống kim loại.
+            outsideDiameter =
+                GetFireSteelOutsideDiameterForSize(
+                    nominalSizeText,
+                    nominalDn);
+
+            sizeText = nominalSizeText;
+
+            return outsideDiameter > 0.0;
+        }
+
+        private static double MapCtnUpvcNominalToOutside(
+            double nominalDn)
+        {
+            double[][] map =
+                new double[][]
+                {
+                    new double[] { 15, 21 },
+                    new double[] { 20, 27 },
+                    new double[] { 25, 34 },
+                    new double[] { 32, 42 },
+                    new double[] { 40, 49 },
+                    new double[] { 50, 60 },
+                    new double[] { 65, 75 },
+                    new double[] { 80, 90 },
+                    new double[] { 100, 110 },
+                    new double[] { 125, 140 },
+                    new double[] { 150, 168 },
+                    new double[] { 200, 220 },
+                    new double[] { 250, 250 },
+                    new double[] { 300, 315 }
+                };
+
+            foreach (double[] row in map)
+            {
+                if (Math.Abs(row[0] - nominalDn) <= 0.01)
+                    return row[1];
+            }
+
+            return nominalDn;
+        }
+
+        private ShopPipeCandidate CreateCtnManualShopPipeCandidate(
+            Curve curve,
+            string material,
+            string sizeText,
+            double outsideDiameter)
+        {
+            if (curve == null ||
+                string.IsNullOrWhiteSpace(sizeText) ||
+                outsideDiameter <= 0.0)
+            {
+                return null;
+            }
+
+            try
+            {
+                Point3d start = curve.StartPoint;
+                Point3d end = curve.EndPoint;
+
+                Vector3d startDir =
+                    GetShopCurveDirection(curve, true);
+
+                Vector3d endDir =
+                    GetShopCurveDirection(curve, false);
+
+                if (startDir.Length < 1e-9 ||
+                    endDir.Length < 1e-9)
+                {
+                    return null;
+                }
+
+                Vector3d startNormal =
+                    GetPlanNormal(startDir);
+
+                Vector3d endNormal =
+                    GetPlanNormal(endDir);
+
+                double half = outsideDiameter / 2.0;
+
+                string materialToken =
+                    CleanLayerText(material ?? "ONG")
+                        .Replace(" ", "_");
+
+                string layerName =
+                    "CTN_SHOP_" +
+                    materialToken +
+                    "_" +
+                    CleanLayerText(sizeText);
+
+                return new ShopPipeCandidate
+                {
+                    Curve = curve,
+                    SizeText = sizeText,
+                    Width = outsideDiameter,
+                    LayerName = layerName,
+                    Start = start,
+                    End = end,
+                    StartLeft = start + startNormal * half,
+                    StartRight = start - startNormal * half,
+                    EndLeft = end + endNormal * half,
+                    EndRight = end - endNormal * half
+                };
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private List<ShopPipeCandidate> CollectConnectedCtnManualShopPipes(
+            Transaction tr,
+            BlockTableRecord btr,
+            string material,
+            List<ShopPipeCandidate> newPipes)
+        {
+            List<ShopPipeCandidate> sourceCandidates =
+                new List<ShopPipeCandidate>();
+
+            List<ShopPipeCandidate> centerlineCandidates =
+                new List<ShopPipeCandidate>();
+
+            if (tr == null || btr == null ||
+                newPipes == null || newPipes.Count == 0)
+            {
+                return sourceCandidates;
+            }
+
+            string materialKey =
+                NormalizeShopKey(material ?? "");
+
+            foreach (ObjectId id in btr.Cast<ObjectId>().ToList())
+            {
+                Line line =
+                    tr.GetObject(
+                        id,
+                        OpenMode.ForRead,
+                        false) as Line;
+
+                if (line == null || line.IsErased)
+                    continue;
+
+                string layer = line.Layer ?? "";
+
+                bool isManualSource =
+                    layer.StartsWith(
+                        "TDL_MSHOP_SRC_",
+                        StringComparison.OrdinalIgnoreCase);
+
+                bool isCtnCenterline =
+                    layer.StartsWith(
+                        "CTN_SHOP_TAM_",
+                        StringComparison.OrdinalIgnoreCase);
+
+                if (!isManualSource && !isCtnCenterline)
+                    continue;
+
+                string layerKey =
+                    NormalizeShopKey(layer);
+
+                if (!string.IsNullOrWhiteSpace(materialKey) &&
+                    !layerKey.Contains(materialKey))
+                {
+                    continue;
+                }
+
+                if (!TryGetCtnManualShopSize(
+                        material,
+                        layer,
+                        out string sizeText,
+                        out double outsideD))
+                {
+                    continue;
+                }
+
+                ShopPipeCandidate candidate =
+                    CreateCtnManualShopPipeCandidate(
+                        line,
+                        material,
+                        sizeText,
+                        outsideD);
+
+                if (candidate == null ||
+                    !newPipes.Any(
+                        pipe => ManualShopPipesTouch(
+                            pipe,
+                            candidate)))
+                {
+                    continue;
+                }
+
+                if (isManualSource)
+                    sourceCandidates.Add(candidate);
+                else
+                    centerlineCandidates.Add(candidate);
+            }
+
+            foreach (ShopPipeCandidate center in centerlineCandidates)
+            {
+                if (sourceCandidates.Any(
+                        source => ManualShopPipesOverlap(
+                            source,
+                            center)))
+                {
+                    continue;
+                }
+
+                sourceCandidates.Add(center);
+            }
+
+            return sourceCandidates;
+        }
+
         // VẼ SHOP THỦ CÔNG:
         // Người dùng chỉ điểm theo TIM ống. Tool tự vẽ hai biên + tim nét đứt,
         // đồng thời đưa các tuyến SHOP cũ lân cận vào cùng đồ thị nút để chèn
@@ -32385,12 +40400,14 @@ namespace ClassLibrary4
                 // - ống SHOP cũng không thống kê được vì SHOP chủ yếu là LINE.
                 //
                 // Mở rộng cho LINE / LWPOLYLINE / ARC.
+                // TRỤC ĐỨNG được lưu bằng BlockReference có XData riêng,
+                // nên bổ sung INSERT vào bộ lọc.
                 TypedValue[] tvs =
                     new TypedValue[]
                     {
                         new TypedValue(
                             (int)DxfCode.Start,
-                            "LINE,LWPOLYLINE,ARC")
+                            "LINE,LWPOLYLINE,ARC,INSERT")
                     };
 
                 SelectionFilter filter =
@@ -32401,7 +40418,7 @@ namespace ClassLibrary4
 
                 pso.MessageForAdding =
                     "\nQuét chọn khu vực ống cần thống kê " +
-                    "(hỗ trợ ống thường + ống SHOP): ";
+                    "(hỗ trợ ống thường + ống SHOP + TRỤC ĐỨNG): ";
 
                 PromptSelectionResult psr =
                     ed.GetSelection(
@@ -32415,12 +40432,17 @@ namespace ClassLibrary4
                     return;
                 }
 
-                Dictionary<string, double> dictChieuDai =
+                Dictionary<string, double> dictChieuDaiNgang =
+                    new Dictionary<string, double>(
+                        StringComparer.OrdinalIgnoreCase);
+
+                Dictionary<string, double> dictChieuDaiDung =
                     new Dictionary<string, double>(
                         StringComparer.OrdinalIgnoreCase);
 
                 int shopCenterCount = 0;
                 int normalPipeCount = 0;
+                int verticalRiserCount = 0;
 
                 using (Transaction tr =
                     db.TransactionManager.StartTransaction())
@@ -32442,6 +40464,37 @@ namespace ClassLibrary4
                         if (ent == null ||
                             ent.IsErased)
                         {
+                            continue;
+                        }
+
+                        // ==================================================
+                        // TRỤC ĐỨNG
+                        // ==================================================
+                        // Chiều cao đã nhập là mét. Đổi sang mm khi đưa vào
+                        // dictionary để cùng đơn vị với Curve hiện tại.
+                        if (ent is BlockReference &&
+                            TryReadVerticalRiserData(
+                                ent,
+                                out VerticalRiserData riser))
+                        {
+                            string riserLayer =
+                                (riser.PipeLayer ?? ent.Layer ?? "")
+                                    .Trim();
+
+                            if (string.IsNullOrWhiteSpace(riserLayer) ||
+                                !LaLayerCuaTool(riserLayer) ||
+                                riser.HeightMeters <= 0.0)
+                            {
+                                continue;
+                            }
+
+                            if (!dictChieuDaiDung.ContainsKey(riserLayer))
+                                dictChieuDaiDung[riserLayer] = 0.0;
+
+                            dictChieuDaiDung[riserLayer] +=
+                                riser.HeightMeters * 1000.0;
+
+                            verticalRiserCount++;
                             continue;
                         }
 
@@ -32487,10 +40540,10 @@ namespace ClassLibrary4
                             if (length <= 1e-9)
                                 continue;
 
-                            if (!dictChieuDai.ContainsKey(outputLayer))
-                                dictChieuDai[outputLayer] = 0.0;
+                            if (!dictChieuDaiNgang.ContainsKey(outputLayer))
+                                dictChieuDaiNgang[outputLayer] = 0.0;
 
-                            dictChieuDai[outputLayer] += length;
+                            dictChieuDaiNgang[outputLayer] += length;
                             shopCenterCount++;
                             continue;
                         }
@@ -32517,24 +40570,26 @@ namespace ClassLibrary4
                         if (normalLength <= 1e-9)
                             continue;
 
-                        if (!dictChieuDai.ContainsKey(layer))
-                            dictChieuDai[layer] = 0.0;
+                        if (!dictChieuDaiNgang.ContainsKey(layer))
+                            dictChieuDaiNgang[layer] = 0.0;
 
-                        dictChieuDai[layer] += normalLength;
+                        dictChieuDaiNgang[layer] += normalLength;
                         normalPipeCount++;
                     }
 
                     tr.Commit();
                 }
 
-                if (dictChieuDai.Count == 0)
+                if (dictChieuDaiNgang.Count == 0 &&
+                    dictChieuDaiDung.Count == 0)
                 {
                     MessageBox.Show(
                         "Không tìm thấy ống hợp lệ trong vùng chọn.\n\n" +
                         "Hỗ trợ:\n" +
                         "• Ống thường: LINE / POLYLINE / ARC trên layer ống của tool.\n" +
                         "• Ống SHOP: tự lấy đường tâm FF_SHOP_TAM_DN... " +
-                        "để không bị nhân đôi chiều dài.",
+                        "để không bị nhân đôi chiều dài.\n" +
+                        "• TRỤC ĐỨNG: block được tạo bằng nút TRỤC ĐỨNG.",
                         "THỐNG KÊ ỐNG");
                     return;
                 }
@@ -32542,13 +40597,35 @@ namespace ClassLibrary4
                 List<ThongKeOng> danhSachThongKe =
                     new List<ThongKeOng>();
 
-                foreach (var item in dictChieuDai)
+                HashSet<string> statisticLayers =
+                    new HashSet<string>(
+                        dictChieuDaiNgang.Keys,
+                        StringComparer.OrdinalIgnoreCase);
+
+                statisticLayers.UnionWith(
+                    dictChieuDaiDung.Keys);
+
+                foreach (string statisticLayer in statisticLayers)
                 {
+                    double horizontalDrawingLength =
+                        dictChieuDaiNgang.TryGetValue(
+                            statisticLayer,
+                            out double horizontalValue)
+                            ? horizontalValue
+                            : 0.0;
+
+                    double verticalDrawingLength =
+                        dictChieuDaiDung.TryGetValue(
+                            statisticLayer,
+                            out double verticalValue)
+                            ? verticalValue
+                            : 0.0;
+
                     double kichThuoc = 0.0;
 
                     Match match =
                         Regex.Match(
-                            item.Key,
+                            statisticLayer,
                             @"\d+(\.\d+)?");
 
                     if (match.Success)
@@ -32561,7 +40638,7 @@ namespace ClassLibrary4
                     }
 
                     string heThongSort =
-                        item.Key;
+                        statisticLayer;
 
                     if (heThongSort.StartsWith(
                             "FF_SHOP_",
@@ -32581,31 +40658,48 @@ namespace ClassLibrary4
                             heThongSort.Split('_')[0];
                     }
 
+                    double horizontalLengthM =
+                        horizontalDrawingLength / 1000.0;
+
+                    double verticalLengthM =
+                        verticalDrawingLength / 1000.0;
+
                     double lengthM =
-                        item.Value / 1000.0;
+                        horizontalLengthM +
+                        verticalLengthM;
 
                     danhSachThongKe.Add(
                         new ThongKeOng
                         {
-                            TenLayer = item.Key,
+                            TenLayer = statisticLayer,
                             SoLuong =
                                 Math.Round(
                                     lengthM,
                                     2),
 
+                            ChieuDaiNgang =
+                                Math.Round(
+                                    horizontalLengthM,
+                                    2),
+
+                            ChieuDaiDung =
+                                Math.Round(
+                                    verticalLengthM,
+                                    2),
+
                             // Ống SHOP tròn không tính M2 bằng công thức ống gió.
                             // Các layer ống thường vẫn giữ nguyên logic cũ.
                             M2 =
-                                (item.Key.StartsWith(
+                                (statisticLayer.StartsWith(
                                      "FF_SHOP_",
                                      StringComparison.OrdinalIgnoreCase) ||
-                                 item.Key.StartsWith(
+                                 statisticLayer.StartsWith(
                                      "CTN_SHOP_",
                                      StringComparison.OrdinalIgnoreCase))
                                     ? 0.0
                                     : Math.Round(
                                         TinhM2OngGioTuLayer(
-                                            item.Key,
+                                            statisticLayer,
                                             lengthM),
                                         2),
 
@@ -32633,15 +40727,17 @@ namespace ClassLibrary4
                 }
 
                 ed.WriteMessage(
-                    $"\n[THỐNG KÊ ỐNG FIX40] " +
+                    $"\n[THỐNG KÊ ỐNG + TRỤC ĐỨNG] " +
                     $"Ống thường={normalPipeCount} entity | " +
                     $"SHOP tâm={shopCenterCount} entity | " +
+                    $"Trục đứng={verticalRiserCount} block | " +
                     $"Chủng loại={danhSachDaSapXep.Count}");
 
                 XuatBangRaCad(
                     danhSachDaSapXep,
                     "BẢNG THỐNG KÊ KHỐI LƯỢNG ỐNG",
                     "SỐ LƯỢNG (m)",
+                    true,
                     true);
             }
         }
@@ -33258,6 +41354,9 @@ namespace ClassLibrary4
                             List<Entity> texts =
                                 new List<Entity>();
 
+                            List<BlockReference> verticalRisers =
+                                new List<BlockReference>();
+
                             bool isShopStatLayer =
                                 layerName.StartsWith(
                                     "FF_SHOP_",
@@ -33309,6 +41408,14 @@ namespace ClassLibrary4
                                 {
                                     texts.Add(o);
                                 }
+                                else if (o is BlockReference riserBlock &&
+                                         TryReadVerticalRiserData(
+                                             riserBlock,
+                                             out VerticalRiserData _))
+                                {
+                                    verticalRisers.Add(
+                                        riserBlock);
+                                }
                             }
 
                             // Với SHOP: chỉ dùng TIM làm vị trí mũi tên/vòng tròn
@@ -33347,6 +41454,21 @@ namespace ClassLibrary4
                                         circleIds.Add(
                                             t.ObjectId);
                                     }
+                                }
+                            }
+
+                            // Trục đứng dùng BlockReference + XData, không phải Curve.
+                            // Luôn thêm tâm block làm đích tìm kiếm, kể cả khi cùng
+                            // layer đang có các đoạn ống ngang.
+                            foreach (BlockReference riser in verticalRisers)
+                            {
+                                targets.Add(
+                                    riser.Position);
+
+                                if (khoanhTron)
+                                {
+                                    circleIds.Add(
+                                        riser.ObjectId);
                                 }
                             }
                         }
@@ -35056,7 +43178,8 @@ namespace ClassLibrary4
             List<ThongKeOng> data,
             string tieuDe = "BẢNG THỐNG KÊ KHỐI LƯỢNG ỐNG",
             string cotSoLuong = "SỐ LƯỢNG (m)",
-            bool themCotM2OngGio = false)
+            bool themCotM2OngGio = false,
+            bool themCotTrucDung = false)
         {
             var doc =
                 Autodesk.AutoCAD.ApplicationServices.Core.Application
@@ -35098,9 +43221,20 @@ namespace ClassLibrary4
                         ColorMethod.ByAci,
                         2);
 
-                int soCot = themCotM2OngGio ? 4 : 3;
+                // Bảng ống mới:
+                // STT | LAYER | ỐNG NGANG | TRỤC ĐỨNG | TỔNG | M2
+                // Các bảng thiết bị/van vẫn giữ bố cục cũ.
+                int soCot =
+                    themCotTrucDung
+                        ? (themCotM2OngGio ? 6 : 5)
+                        : (themCotM2OngGio ? 4 : 3);
+
+                bool hasTotalRow =
+                    themCotM2OngGio ||
+                    themCotTrucDung;
+
                 int soDong = data.Count + 2 +
-                    (themCotM2OngGio ? 1 : 0);
+                    (hasTotalRow ? 1 : 0);
 
                 tb.SetSize(soDong, soCot);
                 tb.Position = ppr.Value;
@@ -35125,13 +43259,29 @@ namespace ClassLibrary4
                     }
                 }
 
-                // STT | LAYER | Số lượng | M2 (chỉ bảng ống gió)
+                // Độ rộng cột thay đổi theo chế độ bảng.
                 tb.Columns[0].Width = 900.0 * sf;     // STT
                 tb.Columns[1].Width =
-                    (themCotM2OngGio ? 4500.0 : 4800.0) * sf;
-                tb.Columns[2].Width = 2200.0 * sf;    // Số lượng
-                if (themCotM2OngGio)
-                    tb.Columns[3].Width = 1800.0 * sf; // M2
+                    (themCotTrucDung
+                        ? 4300.0
+                        : (themCotM2OngGio ? 4500.0 : 4800.0)) * sf;
+
+                if (themCotTrucDung)
+                {
+                    tb.Columns[2].Width = 2100.0 * sf; // ngang
+                    tb.Columns[3].Width = 2100.0 * sf; // đứng
+                    tb.Columns[4].Width = 2000.0 * sf; // tổng
+
+                    if (themCotM2OngGio)
+                        tb.Columns[5].Width = 1800.0 * sf;
+                }
+                else
+                {
+                    tb.Columns[2].Width = 2200.0 * sf;
+
+                    if (themCotM2OngGio)
+                        tb.Columns[3].Width = 1800.0 * sf;
+                }
 
                 // Gộp hàng tiêu đề theo số cột thực tế
                 try
@@ -35150,9 +43300,23 @@ namespace ClassLibrary4
 
                 tb.Cells[1, 0].TextString = "STT";
                 tb.Cells[1, 1].TextString = "TÊN LAYER";
-                tb.Cells[1, 2].TextString = cotSoLuong;
-                if (themCotM2OngGio)
-                    tb.Cells[1, 3].TextString = "M2";
+
+                if (themCotTrucDung)
+                {
+                    tb.Cells[1, 2].TextString = "ỐNG NGANG (m)";
+                    tb.Cells[1, 3].TextString = "TRỤC ĐỨNG (m)";
+                    tb.Cells[1, 4].TextString = "TỔNG (m)";
+
+                    if (themCotM2OngGio)
+                        tb.Cells[1, 5].TextString = "M2";
+                }
+                else
+                {
+                    tb.Cells[1, 2].TextString = cotSoLuong;
+
+                    if (themCotM2OngGio)
+                        tb.Cells[1, 3].TextString = "M2";
+                }
 
                 for (int i = 0; i < soCot; i++)
                 {
@@ -35176,25 +43340,60 @@ namespace ClassLibrary4
                     tb.Cells[row, 1].Alignment =
                         CellAlignment.MiddleLeft;
 
-                    tb.Cells[row, 2].TextString =
-                        FormatSoThongKe(item.SoLuong);
-
-                    tb.Cells[row, 2].Alignment =
-                        CellAlignment.MiddleCenter;
-
-                    if (themCotM2OngGio)
+                    if (themCotTrucDung)
                     {
+                        tb.Cells[row, 2].TextString =
+                            FormatSoThongKe(
+                                item.ChieuDaiNgang);
+
                         tb.Cells[row, 3].TextString =
-                            FormatSoThongKe(item.M2);
+                            FormatSoThongKe(
+                                item.ChieuDaiDung);
+
+                        tb.Cells[row, 4].TextString =
+                            FormatSoThongKe(
+                                item.SoLuong);
+
+                        tb.Cells[row, 2].Alignment =
+                            CellAlignment.MiddleCenter;
 
                         tb.Cells[row, 3].Alignment =
                             CellAlignment.MiddleCenter;
+
+                        tb.Cells[row, 4].Alignment =
+                            CellAlignment.MiddleCenter;
+
+                        if (themCotM2OngGio)
+                        {
+                            tb.Cells[row, 5].TextString =
+                                FormatSoThongKe(item.M2);
+
+                            tb.Cells[row, 5].Alignment =
+                                CellAlignment.MiddleCenter;
+                        }
+                    }
+                    else
+                    {
+                        tb.Cells[row, 2].TextString =
+                            FormatSoThongKe(item.SoLuong);
+
+                        tb.Cells[row, 2].Alignment =
+                            CellAlignment.MiddleCenter;
+
+                        if (themCotM2OngGio)
+                        {
+                            tb.Cells[row, 3].TextString =
+                                FormatSoThongKe(item.M2);
+
+                            tb.Cells[row, 3].Alignment =
+                                CellAlignment.MiddleCenter;
+                        }
                     }
 
                     row++;
                 }
 
-                if (themCotM2OngGio)
+                if (hasTotalRow)
                 {
                     try
                     {
@@ -35209,19 +43408,58 @@ namespace ClassLibrary4
                     tb.Cells[row, 0].Alignment =
                         CellAlignment.MiddleCenter;
 
-                    tb.Cells[row, 2].TextString =
-                        FormatSoThongKe(
-                            data.Sum(x => x.SoLuong));
+                    if (themCotTrucDung)
+                    {
+                        tb.Cells[row, 2].TextString =
+                            FormatSoThongKe(
+                                data.Sum(x => x.ChieuDaiNgang));
 
-                    tb.Cells[row, 2].Alignment =
-                        CellAlignment.MiddleCenter;
+                        tb.Cells[row, 3].TextString =
+                            FormatSoThongKe(
+                                data.Sum(x => x.ChieuDaiDung));
 
-                    tb.Cells[row, 3].TextString =
-                        FormatSoThongKe(
-                            data.Sum(x => x.M2));
+                        tb.Cells[row, 4].TextString =
+                            FormatSoThongKe(
+                                data.Sum(x => x.SoLuong));
 
-                    tb.Cells[row, 3].Alignment =
-                        CellAlignment.MiddleCenter;
+                        tb.Cells[row, 2].Alignment =
+                            CellAlignment.MiddleCenter;
+
+                        tb.Cells[row, 3].Alignment =
+                            CellAlignment.MiddleCenter;
+
+                        tb.Cells[row, 4].Alignment =
+                            CellAlignment.MiddleCenter;
+
+                        if (themCotM2OngGio)
+                        {
+                            tb.Cells[row, 5].TextString =
+                                FormatSoThongKe(
+                                    data.Sum(x => x.M2));
+
+                            tb.Cells[row, 5].Alignment =
+                                CellAlignment.MiddleCenter;
+                        }
+                    }
+                    else
+                    {
+                        tb.Cells[row, 2].TextString =
+                            FormatSoThongKe(
+                                data.Sum(x => x.SoLuong));
+
+                        tb.Cells[row, 2].Alignment =
+                            CellAlignment.MiddleCenter;
+
+                        if (themCotM2OngGio)
+                        {
+                            tb.Cells[row, 3].TextString =
+                                FormatSoThongKe(
+                                    data.Sum(x => x.M2));
+
+                            tb.Cells[row, 3].Alignment =
+                                CellAlignment.MiddleCenter;
+                        }
+                    }
                 }
 
                 tb.GenerateLayout();
@@ -35861,6 +44099,8 @@ namespace ClassLibrary4
         {
             if (_isWaitingForPline)
                 CleanupEvents(_plineWatcherDocument);
+
+            StopReview3DEscapeWatcher();
         }
 
         /// <summary>
@@ -36907,6 +45147,8 @@ namespace ClassLibrary4
     {
         public int STT { get; set; }
         public string TenLayer { get; set; }
+        public double ChieuDaiNgang { get; set; }
+        public double ChieuDaiDung { get; set; }
         public double SoLuong { get; set; }
         public double M2 { get; set; }
         public string HeThongSort { get; set; }

@@ -210,7 +210,7 @@
                                         </Style>
                                     </Grid.Style>
                                     <StackPanel Orientation="Vertical">
-                                        <ComboBox x:Name="CmbHeThong" Visibility="Collapsed" SelectedIndex="0" SelectionChanged="CmbHeThong_SelectionChanged">
+                                        <ComboBox x:Name="CmbHeThong" Visibility="Collapsed" SelectedIndex="0">
                                             <ComboBoxItem Content="Chữa cháy _ FF"/>
                                         </ComboBox>
                                         <ComboBox x:Name="CmbVatLieuOng" Visibility="Collapsed"/>
@@ -323,6 +323,32 @@
                                                 Margin="0,8,0,0" HorizontalAlignment="Stretch" Visibility="Visible" Panel.ZIndex="10"
                                                 FontSize="12" FontWeight="Bold" Background="#FF005A9C" Foreground="White"
                                                 Cursor="Hand" Click="BtnVeShopThuCong_Click"/>
+
+                                        <!-- Trục đứng: lấy hệ/vật liệu/size đang chọn, nhập hướng + chiều cao -->
+                                        <Button x:Name="BtnTrucDung" Content="VẼ TRỤC ĐỨNG" Height="36" MinHeight="36"
+                                                Margin="0,8,0,0" HorizontalAlignment="Stretch" Visibility="Visible" Panel.ZIndex="10"
+                                                FontSize="12" FontWeight="Bold" Background="#FFE46C0A" Foreground="White"
+                                                Cursor="Hand" Click="BtnTrucDung_Click">
+                                            <Button.ToolTip>
+                                                <ToolTip>
+                                                    <TextBlock MaxWidth="280" TextWrapping="Wrap"
+                                                               Text="TRỤC ĐỨNG: Chọn vật liệu + size, nhập hướng lên/xuống và chiều cao (m), sau đó đặt ký hiệu trên bản vẽ. Chiều dài trục đứng được cộng tự động trong THỐNG KÊ ỐNG."/>
+                                                </ToolTip>
+                                            </Button.ToolTip>
+                                        </Button>
+
+                                        <!-- Kiểm tra mô hình 3D: ống ngang + trục đứng + cảnh báo đầu hở -->
+                                        <Button x:Name="BtnKiemTra3D" Content="KIỂM TRA 3D" Height="38" MinHeight="38"
+                                                Margin="0,8,0,0" HorizontalAlignment="Stretch" Visibility="Visible" Panel.ZIndex="10"
+                                                FontSize="13" FontWeight="Bold" Background="#FF2E7D32" Foreground="White"
+                                                Cursor="Hand" Click="BtnKiemTra3D_Click">
+                                            <Button.ToolTip>
+                                                <ToolTip>
+                                                    <TextBlock MaxWidth="300" TextWrapping="Wrap"
+                                                               Text="KIỂM TRA 3D: Bấm nút rồi chọn chế độ Nhanh hoặc Đẹp. Chế độ Nhanh dựng line 3D nhẹ máy; chế độ Đẹp dựng mô hình BIM mini với ống tròn / ống gió hộp / trục đứng 3D, tự chuyển Conceptual và đánh dấu HỞ / TRỤC CHƯA NỐI."/>
+                                                </ToolTip>
+                                            </Button.ToolTip>
+                                        </Button>
                                     </StackPanel>
                                 </Grid>
 
@@ -741,7 +767,7 @@
                                         </Style>
                                     </Grid.Style>
                                     <StackPanel Orientation="Vertical">
-                                        <ComboBox x:Name="CmbHeThongACMV" Visibility="Collapsed" SelectedIndex="0" SelectionChanged="CmbHeThong_SelectionChanged">
+                                        <ComboBox x:Name="CmbHeThongACMV" Visibility="Collapsed" SelectedIndex="0">
                                             <ComboBoxItem Content="ACMV _ ACMV"/>
                                         </ComboBox>
                                         <ComboBox x:Name="CmbVatLieuOngACMV" Visibility="Collapsed"/>
@@ -929,6 +955,31 @@
                                                 <ToolTip>
                                                     <TextBlock MaxWidth="280" TextWrapping="Wrap"
                                                                Text="VẼ OG TỰ ĐỘNG: Quét vùng có ống gió + phụ kiện + chữ size/tên OG. Tool bỏ hình chữ nhật có dấu X/gạch chéo, tự vẽ tâm ống, reducer chia 50/50, co 90 vẽ cong và thêm EI/CN vào layer + chữ."/>
+                                                </ToolTip>
+                                            </Button.ToolTip>
+                                        </Button>
+
+                                        <!-- Chỉ dùng cho nhóm Ống ACMV, không dùng cho ống gió -->
+                                        <Button x:Name="BtnTrucDungACMV" Content="VẼ TRỤC ĐỨNG" Height="36" MinHeight="36"
+                                                Margin="0,8,0,0" HorizontalAlignment="Stretch" Visibility="Visible" Panel.ZIndex="10"
+                                                FontSize="12" FontWeight="Bold" Background="#FFE46C0A" Foreground="White"
+                                                Cursor="Hand" Click="BtnTrucDung_Click">
+                                            <Button.ToolTip>
+                                                <ToolTip>
+                                                    <TextBlock MaxWidth="280" TextWrapping="Wrap"
+                                                               Text="TRỤC ĐỨNG: Chọn nhóm Ống, vật liệu + size, nhập hướng lên/xuống và chiều cao (m), sau đó đặt ký hiệu. Không áp dụng cho nhóm Ống gió."/>
+                                                </ToolTip>
+                                            </Button.ToolTip>
+                                        </Button>
+
+                                        <Button x:Name="BtnKiemTra3DACMV" Content="KIỂM TRA 3D" Height="38" MinHeight="38"
+                                                Margin="0,8,0,0" HorizontalAlignment="Stretch" Visibility="Visible" Panel.ZIndex="10"
+                                                FontSize="13" FontWeight="Bold" Background="#FF2E7D32" Foreground="White"
+                                                Cursor="Hand" Click="BtnKiemTra3D_Click">
+                                            <Button.ToolTip>
+                                                <ToolTip>
+                                                    <TextBlock MaxWidth="300" TextWrapping="Wrap"
+                                                               Text="KIỂM TRA 3D ACMV: Chọn Nhanh hoặc Đẹp. Bản Đẹp hỗ trợ cả ống tròn và ống gió có size WxH trong layer, dựng thành mô hình BIM mini để rà tuyến và phát hiện vị trí nghi hở."/>
                                                 </ToolTip>
                                             </Button.ToolTip>
                                         </Button>
@@ -1304,7 +1355,7 @@
                                         </Style>
                                     </Grid.Style>
                                     <StackPanel Orientation="Vertical">
-                                        <ComboBox x:Name="CmbHeThongCTN" Visibility="Collapsed" SelectedIndex="0" SelectionChanged="CmbHeThong_SelectionChanged">
+                                        <ComboBox x:Name="CmbHeThongCTN" Visibility="Collapsed" SelectedIndex="0">
                                             <ComboBoxItem Content="CTN _ CTN"/>
                                         </ComboBox>
                                         <ComboBox x:Name="CmbVatLieuOngCTN" Visibility="Collapsed"/>
@@ -1409,6 +1460,36 @@
                                             <Button x:Name="BtnAutoDrawByTemplateCTN" Grid.Column="2" Content="VẼ ỐNG MẪU" Height="32" FontSize="12" FontWeight="Bold"
                                                     Background="#FF00875A" Foreground="White" Cursor="Hand" Click="BtnAutoDrawByTemplate_Click"/>
                                         </Grid>
+                                        <!-- SHOP thủ công CTN: vẽ theo tim, tự tạo hai biên và phụ kiện -->
+                                        <Button x:Name="BtnVeShopThuCongCTN" Content="VẼ SHOP THỦ CÔNG" Height="36" MinHeight="36"
+                                                Margin="0,8,0,0" HorizontalAlignment="Stretch" Visibility="Visible" Panel.ZIndex="10"
+                                                FontSize="12" FontWeight="Bold" Background="#FF005A9C" Foreground="White"
+                                                Cursor="Hand" Click="BtnVeShopThuCongCTN_Click"/>
+
+                                        <!-- Trục đứng CTN -->
+                                        <Button x:Name="BtnTrucDungCTN" Content="VẼ TRỤC ĐỨNG" Height="36" MinHeight="36"
+                                                Margin="0,8,0,0" HorizontalAlignment="Stretch" Visibility="Visible" Panel.ZIndex="10"
+                                                FontSize="12" FontWeight="Bold" Background="#FFE46C0A" Foreground="White"
+                                                Cursor="Hand" Click="BtnTrucDung_Click">
+                                            <Button.ToolTip>
+                                                <ToolTip>
+                                                    <TextBlock MaxWidth="280" TextWrapping="Wrap"
+                                                               Text="TRỤC ĐỨNG: Chọn vật liệu + size/PN, nhập hướng lên/xuống và chiều cao (m), sau đó đặt ký hiệu. Chiều dài được cộng tự động trong THỐNG KÊ ỐNG."/>
+                                                </ToolTip>
+                                            </Button.ToolTip>
+                                        </Button>
+
+                                        <Button x:Name="BtnKiemTra3DCTN" Content="KIỂM TRA 3D" Height="38" MinHeight="38"
+                                                Margin="0,8,0,0" HorizontalAlignment="Stretch" Visibility="Visible" Panel.ZIndex="10"
+                                                FontSize="13" FontWeight="Bold" Background="#FF2E7D32" Foreground="White"
+                                                Cursor="Hand" Click="BtnKiemTra3D_Click">
+                                            <Button.ToolTip>
+                                                <ToolTip>
+                                                    <TextBlock MaxWidth="300" TextWrapping="Wrap"
+                                                               Text="KIỂM TRA 3D CTN: Chọn Nhanh hoặc Đẹp. Chế độ Đẹp dựng ống thành khối tròn 3D, dựng trục đứng đúng chiều cao và đánh dấu các vị trí nghi hở / trục chưa nối."/>
+                                                </ToolTip>
+                                            </Button.ToolTip>
+                                        </Button>
                                     </StackPanel>
                                 </Grid>
 
