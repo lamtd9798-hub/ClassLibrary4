@@ -41014,6 +41014,35 @@ namespace ClassLibrary4
             public int SoLuong { get; set; }
         }
 
+        private class SmartAuditRow
+        {
+            public string Status { get; set; } = "OK";
+            public string Name { get; set; } = "";
+            public string Size { get; set; } = "-";
+            public string Source { get; set; } = "";
+            public string Note { get; set; } = "";
+            public Point3d Point { get; set; } = Point3d.Origin;
+        }
+
+        private class SmartAuditGeometryCluster
+        {
+            public Point3d Center { get; set; } = Point3d.Origin;
+            public double Width { get; set; }
+            public double Height { get; set; }
+            public int EntityCount { get; set; }
+            public List<ObjectId> ObjectIds { get; set; } =
+                new List<ObjectId>();
+        }
+
+        private const string SmartAuditOkLayer =
+            "TDL_AUDIT_OK";
+
+        private const string SmartAuditCheckLayer =
+            "TDL_AUDIT_CHECK";
+
+        private const string SmartAuditMissingLayer =
+            "TDL_AUDIT_MISSING";
+
         // Ghi đúng bước đang chạy để nếu có lỗi tiếp thì biết chính xác
         // lỗi ở MENU / HỌC BLOCK / CHỌN TEXT / QUÉT / SUY DN / XUẤT BẢNG.
         private string _smartValveStage = "IDLE";
@@ -42035,6 +42064,8 @@ namespace ClassLibrary4
                 new System.Windows.Forms.Button())
             using (System.Windows.Forms.Label title =
                 new System.Windows.Forms.Label())
+            using (System.Windows.Forms.Label subTitle =
+                new System.Windows.Forms.Label())
             {
                 form.Text =
                     "KIỂM TRA BẢNG KÝ HIỆU - VAN / THIẾT BỊ";
@@ -42043,10 +42074,10 @@ namespace ClassLibrary4
                     System.Windows.Forms.FormStartPosition.CenterScreen;
 
                 form.Width =
-                    1080;
+                    1140;
 
                 form.Height =
-                    680;
+                    720;
 
                 form.MinimizeBox =
                     false;
@@ -42054,45 +42085,83 @@ namespace ClassLibrary4
                 form.MaximizeBox =
                     true;
 
+                form.BackColor =
+                    System.Drawing.Color.White;
+
                 title.Text =
-                    "Tool đã tự tách KÝ HIỆU + TÊN. " +
-                    "Sửa tên nếu cần, tích THEO DN cho thiết bị lấy size theo tuyến ống, rồi bấm OK - QUÉT BẢN VẼ.";
+                    "KIỂM TRA BẢNG KÝ HIỆU - VAN / THIẾT BỊ";
 
                 title.Left =
-                    14;
+                    18;
 
                 title.Top =
                     12;
 
                 title.Width =
-                    1030;
+                    1060;
 
                 title.Height =
-                    38;
+                    28;
 
                 title.Font =
                     new System.Drawing.Font(
                         "Segoe UI",
-                        10.0f,
+                        12.0f,
                         System.Drawing.FontStyle.Bold);
 
+                title.ForeColor =
+                    System.Drawing.Color.FromArgb(
+                        40,
+                        60,
+                        95);
+
+                subTitle.Text =
+                    "Tool đã tự tách KÝ HIỆU + TÊN. Có thể sửa tên, tick THEO DN cho thiết bị lấy size theo tuyến ống, rồi bấm OK - QUÉT BẢN VẼ.";
+
+                subTitle.Left =
+                    18;
+
+                subTitle.Top =
+                    42;
+
+                subTitle.Width =
+                    1060;
+
+                subTitle.Height =
+                    36;
+
+                subTitle.Font =
+                    new System.Drawing.Font(
+                        "Segoe UI",
+                        9.5f,
+                        System.Drawing.FontStyle.Regular);
+
+                subTitle.ForeColor =
+                    System.Drawing.Color.FromArgb(
+                        70,
+                        70,
+                        70);
+
                 grid.Left =
-                    14;
+                    18;
 
                 grid.Top =
-                    55;
+                    84;
 
                 grid.Width =
-                    1035;
+                    1085;
 
                 grid.Height =
-                    520;
+                    560;
 
                 grid.AllowUserToAddRows =
                     false;
 
                 grid.AllowUserToDeleteRows =
                     true;
+
+                grid.AllowUserToResizeRows =
+                    false;
 
                 grid.RowHeadersVisible =
                     false;
@@ -42101,7 +42170,7 @@ namespace ClassLibrary4
                     System.Windows.Forms.DataGridViewAutoSizeRowsMode.None;
 
                 grid.RowTemplate.Height =
-                    68;
+                    72;
 
                 grid.SelectionMode =
                     System.Windows.Forms.DataGridViewSelectionMode.FullRowSelect;
@@ -42112,13 +42181,67 @@ namespace ClassLibrary4
                 grid.BackgroundColor =
                     System.Drawing.Color.White;
 
+                grid.BorderStyle =
+                    System.Windows.Forms.BorderStyle.FixedSingle;
+
+                grid.GridColor =
+                    System.Drawing.Color.FromArgb(
+                        210,
+                        210,
+                        210);
+
+                grid.EnableHeadersVisualStyles =
+                    false;
+
                 grid.ColumnHeadersHeight =
-                    38;
+                    42;
+
+                grid.ColumnHeadersBorderStyle =
+                    System.Windows.Forms.DataGridViewHeaderBorderStyle.Single;
 
                 grid.Font =
                     new System.Drawing.Font(
                         "Segoe UI",
                         10.0f);
+
+                grid.DefaultCellStyle.SelectionBackColor =
+                    System.Drawing.Color.FromArgb(
+                        230,
+                        240,
+                        255);
+
+                grid.DefaultCellStyle.SelectionForeColor =
+                    System.Drawing.Color.Black;
+
+                grid.AlternatingRowsDefaultCellStyle.BackColor =
+                    System.Drawing.Color.FromArgb(
+                        248,
+                        250,
+                        252);
+
+                grid.ColumnHeadersDefaultCellStyle.BackColor =
+                    System.Drawing.Color.FromArgb(
+                        236,
+                        242,
+                        248);
+
+                grid.ColumnHeadersDefaultCellStyle.ForeColor =
+                    System.Drawing.Color.FromArgb(
+                        35,
+                        50,
+                        70);
+
+                grid.ColumnHeadersDefaultCellStyle.Font =
+                    new System.Drawing.Font(
+                        "Segoe UI",
+                        10.0f,
+                        System.Drawing.FontStyle.Bold);
+
+                grid.ColumnHeadersDefaultCellStyle.Alignment =
+                    System.Windows.Forms.DataGridViewContentAlignment.MiddleCenter;
+
+                grid.DefaultCellStyle.Alignment =
+                    System.Windows.Forms.DataGridViewContentAlignment.MiddleLeft;
 
                 System.Windows.Forms.DataGridViewTextBoxColumn sttColumn =
                     new System.Windows.Forms.DataGridViewTextBoxColumn();
@@ -42130,10 +42253,13 @@ namespace ClassLibrary4
                     "STT";
 
                 sttColumn.Width =
-                    60;
+                    62;
 
                 sttColumn.ReadOnly =
                     true;
+
+                sttColumn.DefaultCellStyle.Alignment =
+                    System.Windows.Forms.DataGridViewContentAlignment.MiddleCenter;
 
                 grid.Columns.Add(
                     sttColumn);
@@ -42148,13 +42274,16 @@ namespace ClassLibrary4
                     "KÝ HIỆU";
 
                 symbolColumn.Width =
-                    170;
+                    180;
 
                 symbolColumn.ImageLayout =
                     System.Windows.Forms.DataGridViewImageCellLayout.Zoom;
 
                 symbolColumn.ReadOnly =
                     true;
+
+                symbolColumn.DefaultCellStyle.Alignment =
+                    System.Windows.Forms.DataGridViewContentAlignment.MiddleCenter;
 
                 grid.Columns.Add(
                     symbolColumn);
@@ -42171,6 +42300,9 @@ namespace ClassLibrary4
                 nameColumn.AutoSizeMode =
                     System.Windows.Forms.DataGridViewAutoSizeColumnMode.Fill;
 
+                nameColumn.DefaultCellStyle.Alignment =
+                    System.Windows.Forms.DataGridViewContentAlignment.MiddleLeft;
+
                 grid.Columns.Add(
                     nameColumn);
 
@@ -42184,13 +42316,16 @@ namespace ClassLibrary4
                     "THEO DN";
 
                 dnColumn.Width =
-                    105;
+                    110;
 
                 dnColumn.TrueValue =
                     true;
 
                 dnColumn.FalseValue =
                     false;
+
+                dnColumn.DefaultCellStyle.Alignment =
+                    System.Windows.Forms.DataGridViewContentAlignment.MiddleCenter;
 
                 grid.Columns.Add(
                     dnColumn);
@@ -42210,15 +42345,21 @@ namespace ClassLibrary4
                 modeColumn.ReadOnly =
                     true;
 
+                modeColumn.DefaultCellStyle.Alignment =
+                    System.Windows.Forms.DataGridViewContentAlignment.MiddleCenter;
+
                 grid.Columns.Add(
                     modeColumn);
+
+                int stt =
+                    1;
 
                 foreach (SmartLegendAutoRow row
                     in rows)
                 {
                     int index =
                         grid.Rows.Add(
-                            row.STT,
+                            stt++,
                             row.Preview,
                             row.DisplayName,
                             row.FollowDn,
@@ -42230,20 +42371,141 @@ namespace ClassLibrary4
                         row;
                 }
 
+                grid.CellPainting +=
+                    (s, e) =>
+                    {
+                        if (e.RowIndex < 0 ||
+                            e.ColumnIndex < 0)
+                        {
+                            return;
+                        }
+
+                        if (grid.Columns[e.ColumnIndex].Name !=
+                            "FOLLOW_DN")
+                        {
+                            return;
+                        }
+
+                        e.PaintBackground(
+                            e.CellBounds,
+                            true);
+
+                        System.Windows.Forms.VisualStyles.CheckBoxState state =
+                            System.Windows.Forms.VisualStyles.CheckBoxState.UncheckedNormal;
+
+                        object raw =
+                            grid.Rows[e.RowIndex]
+                                .Cells[e.ColumnIndex]
+                                .Value;
+
+                        bool isChecked =
+                            false;
+
+                        if (raw != null)
+                        {
+                            bool.TryParse(
+                                Convert.ToString(
+                                    raw),
+                                out isChecked);
+                        }
+
+                        if (isChecked)
+                        {
+                            state =
+                                System.Windows.Forms.VisualStyles.CheckBoxState.CheckedNormal;
+                        }
+
+                        System.Drawing.Size size =
+                            System.Windows.Forms.CheckBoxRenderer.GetGlyphSize(
+                                e.Graphics,
+                                state);
+
+                        System.Drawing.Point pt =
+                            new System.Drawing.Point(
+                                e.CellBounds.X +
+                                (e.CellBounds.Width - size.Width) / 2,
+                                e.CellBounds.Y +
+                                (e.CellBounds.Height - size.Height) / 2);
+
+                        System.Windows.Forms.CheckBoxRenderer.DrawCheckBox(
+                            e.Graphics,
+                            pt,
+                            state);
+
+                        e.Handled =
+                            true;
+                    };
+
+                grid.CellContentClick +=
+                    (s, e) =>
+                    {
+                        if (e.RowIndex < 0 ||
+                            e.ColumnIndex < 0)
+                        {
+                            return;
+                        }
+
+                        if (grid.Columns[e.ColumnIndex].Name !=
+                            "FOLLOW_DN")
+                        {
+                            return;
+                        }
+
+                        object raw =
+                            grid.Rows[e.RowIndex]
+                                .Cells[e.ColumnIndex]
+                                .Value;
+
+                        bool current =
+                            false;
+
+                        if (raw != null)
+                        {
+                            bool.TryParse(
+                                Convert.ToString(
+                                    raw),
+                                out current);
+                        }
+
+                        grid.Rows[e.RowIndex]
+                            .Cells[e.ColumnIndex]
+                            .Value =
+                            !current;
+
+                        grid.InvalidateCell(
+                            e.ColumnIndex,
+                            e.RowIndex);
+                    };
+
+                grid.RowsRemoved +=
+                    (s, e) =>
+                    {
+                        for (int i = 0;
+                            i < grid.Rows.Count;
+                            i++)
+                        {
+                            if (!grid.Rows[i].IsNewRow)
+                            {
+                                grid.Rows[i].Cells["STT"].Value =
+                                    i + 1;
+                            }
+                        }
+                    };
+
                 okButton.Text =
                     "OK - QUÉT BẢN VẼ";
 
                 okButton.Width =
-                    180;
+                    190;
 
                 okButton.Height =
-                    38;
+                    40;
 
                 okButton.Left =
-                    680;
+                    700;
 
                 okButton.Top =
-                    590;
+                    654;
 
                 okButton.DialogResult =
                     System.Windows.Forms.DialogResult.OK;
@@ -42254,6 +42516,18 @@ namespace ClassLibrary4
                         10.0f,
                         System.Drawing.FontStyle.Bold);
 
+                okButton.BackColor =
+                    System.Drawing.Color.FromArgb(
+                        37,
+                        99,
+                        235);
+
+                okButton.ForeColor =
+                    System.Drawing.Color.White;
+
+                okButton.FlatStyle =
+                    System.Windows.Forms.FlatStyle.Flat;
+
                 cancelButton.Text =
                     "HỦY";
 
@@ -42261,19 +42535,37 @@ namespace ClassLibrary4
                     120;
 
                 cancelButton.Height =
-                    38;
+                    40;
 
                 cancelButton.Left =
-                    875;
+                    905;
 
                 cancelButton.Top =
-                    590;
+                    654;
 
                 cancelButton.DialogResult =
                     System.Windows.Forms.DialogResult.Cancel;
 
+                cancelButton.Font =
+                    new System.Drawing.Font(
+                        "Segoe UI",
+                        10.0f,
+                        System.Drawing.FontStyle.Bold);
+
+                cancelButton.BackColor =
+                    System.Drawing.Color.FromArgb(
+                        245,
+                        245,
+                        245);
+
+                cancelButton.FlatStyle =
+                    System.Windows.Forms.FlatStyle.Flat;
+
                 form.Controls.Add(
                     title);
+
+                form.Controls.Add(
+                    subTitle);
 
                 form.Controls.Add(
                     grid);
@@ -42302,7 +42594,7 @@ namespace ClassLibrary4
                 List<SmartLegendAutoRow> acceptedRows =
                     new List<SmartLegendAutoRow>();
 
-                int stt =
+                stt =
                     1;
 
                 foreach (System.Windows.Forms.DataGridViewRow gridRow
@@ -42369,14 +42661,18 @@ namespace ClassLibrary4
             }
         }
 
+
         private List<SmartSymbolRule> MergeSmartLegendRowsIntoLibrary(
             List<SmartLegendAutoRow> rows)
         {
-            List<SmartSymbolRule> rules =
+            List<SmartSymbolRule> library =
                 LoadSmartSymbolRules();
 
+            List<SmartSymbolRule> currentProjectRules =
+                new List<SmartSymbolRule>();
+
             if (rows == null)
-                return rules;
+                return currentProjectRules;
 
             foreach (SmartLegendAutoRow row
                 in rows)
@@ -42393,6 +42689,24 @@ namespace ClassLibrary4
                         ? "THEO_ONG"
                         : "KHONG_SIZE";
 
+                SmartSymbolRule currentRule =
+                    new SmartSymbolRule
+                    {
+                        BlockKey =
+                            row.BlockKey,
+                        DisplayName =
+                            row.DisplayName,
+                        SizeRule =
+                            sizeRule,
+                        MatchMode =
+                            row.MatchMode,
+                        GeometryFingerprint =
+                            row.GeometryFingerprint ?? ""
+                    };
+
+                currentProjectRules.Add(
+                    currentRule);
+
                 SmartSymbolRule existing =
                     null;
 
@@ -42402,7 +42716,7 @@ namespace ClassLibrary4
                         StringComparison.OrdinalIgnoreCase))
                 {
                     existing =
-                        rules.FirstOrDefault(
+                        library.FirstOrDefault(
                             r =>
                                 r != null &&
                                 string.Equals(
@@ -42417,7 +42731,7 @@ namespace ClassLibrary4
                 else
                 {
                     existing =
-                        rules.FirstOrDefault(
+                        library.FirstOrDefault(
                             r =>
                                 r != null &&
                                 !string.Equals(
@@ -42432,43 +42746,47 @@ namespace ClassLibrary4
 
                 if (existing == null)
                 {
-                    rules.Add(
+                    library.Add(
                         new SmartSymbolRule
                         {
                             BlockKey =
-                                row.BlockKey,
+                                currentRule.BlockKey,
                             DisplayName =
-                                row.DisplayName,
+                                currentRule.DisplayName,
                             SizeRule =
-                                sizeRule,
+                                currentRule.SizeRule,
                             MatchMode =
-                                row.MatchMode,
+                                currentRule.MatchMode,
                             GeometryFingerprint =
-                                row.GeometryFingerprint ?? ""
+                                currentRule.GeometryFingerprint
                         });
                 }
                 else
                 {
                     existing.DisplayName =
-                        row.DisplayName;
+                        currentRule.DisplayName;
 
                     existing.SizeRule =
-                        sizeRule;
+                        currentRule.SizeRule;
 
                     existing.MatchMode =
-                        row.MatchMode;
+                        currentRule.MatchMode;
 
                     existing.GeometryFingerprint =
-                        row.GeometryFingerprint ?? "";
+                        currentRule.GeometryFingerprint;
                 }
             }
 
             SaveSmartSymbolRules(
-                rules);
+                library);
 
+            // Quan trọng:
+            // lần quét hiện tại chỉ dùng đúng Legend của dự án vừa quét,
+            // không kéo ký hiệu cũ của dự án khác vào kiểm tra "0 lần".
             return
-                LoadSmartSymbolRules();
+                currentProjectRules;
         }
+
 
         private void DisposeSmartLegendPreviews(
             List<SmartLegendAutoRow> rows)
@@ -44126,8 +44444,7 @@ namespace ClassLibrary4
                 rules.Count == 0)
             {
                 MessageBox.Show(
-                    "Thư viện ký hiệu đang trống.\n" +
-                    "Hãy chọn Học ký hiệu trước.",
+                    "Danh sách ký hiệu của Legend đang trống.",
                     "NHẬN DIỆN THÔNG MINH");
                 return;
             }
@@ -44142,7 +44459,7 @@ namespace ClassLibrary4
                 new PromptSelectionOptions();
 
             pso.MessageForAdding =
-                "\nQuét vùng mặt bằng cần nhận diện VAN / THIẾT BỊ: ";
+                "\nQuét vùng mặt bằng cần nhận diện VAN / THIẾT BỊ + KIỂM TRA SÓT: ";
 
             _smartValveStage =
                 "SCAN_SELECT_AREA";
@@ -44173,8 +44490,7 @@ namespace ClassLibrary4
             if (rules.Count == 0)
             {
                 MessageBox.Show(
-                    "Thư viện ký hiệu không có mẫu hợp lệ.\n" +
-                    "Hãy HỌC KÝ HIỆU lại.",
+                    "Không có ký hiệu hợp lệ để quét.",
                     "NHẬN DIỆN THÔNG MINH");
                 return;
             }
@@ -44223,11 +44539,11 @@ namespace ClassLibrary4
             List<ObjectId> matchedBlocks =
                 new List<ObjectId>();
 
-            List<ObjectId> geometryPrimitiveIds =
+            List<ObjectId> unknownBlocks =
                 new List<ObjectId>();
 
-            int unknownBlockCount =
-                0;
+            List<ObjectId> geometryPrimitiveIds =
+                new List<ObjectId>();
 
             _smartValveStage =
                 "SCAN_COLLECT_OBJECTS";
@@ -44256,11 +44572,20 @@ namespace ClassLibrary4
                         continue;
                     }
 
+                    string entLayer =
+                        (ent.Layer ?? "")
+                            .Trim();
+
+                    if (IsSmartAuditLayer(
+                            entLayer))
+                    {
+                        continue;
+                    }
+
                     if (ent is Curve curve)
                     {
                         string layer =
-                            (curve.Layer ?? "")
-                                .Trim();
+                            entLayer;
 
                         if (LaLayerBienOngShop(
                                 layer) ||
@@ -44297,13 +44622,13 @@ namespace ClassLibrary4
                             continue;
                         }
 
-                        // Nếu có mẫu GEOMETRY thì giữ lại các nét nhỏ ngoài layer ống
-                        // để gom cluster và so fingerprint sau transaction.
-                        if (geometryRules.Count > 0 &&
-                            (ent is Line ||
-                             ent is Arc ||
-                             ent is Circle ||
-                             ent is Polyline))
+                        // Giữ lại hình học nhỏ ngoài ống để:
+                        // 1) match mẫu EXPLODE đã học
+                        // 2) chạy vòng kiểm tra chéo tìm ký hiệu chưa học.
+                        if (ent is Line ||
+                            ent is Arc ||
+                            ent is Circle ||
+                            ent is Polyline)
                         {
                             geometryPrimitiveIds.Add(
                                 curve.ObjectId);
@@ -44335,7 +44660,8 @@ namespace ClassLibrary4
                         }
                         else
                         {
-                            unknownBlockCount++;
+                            unknownBlocks.Add(
+                                br.ObjectId);
                         }
                     }
                 }
@@ -44347,24 +44673,22 @@ namespace ClassLibrary4
                 "SCAN_MATCH_EXPLODED_GEOMETRY";
 
             List<SmartGeometryMatch> geometryMatches =
-                FindSmartGeometryMatches(
-                    db,
-                    geometryPrimitiveIds,
-                    geometryRules);
-
-            if (matchedBlocks.Count == 0 &&
-                geometryMatches.Count == 0)
-            {
-                MessageBox.Show(
-                    "Không tìm thấy ký hiệu nào khớp thư viện trong vùng chọn.\n\n" +
-                    "• BLOCK: so theo BlockDefinition.\n" +
-                    "• EXPLODE: so theo dấu vân tay hình học đã học.",
-                    "NHẬN DIỆN THÔNG MINH");
-                return;
-            }
+                geometryRules.Count > 0
+                    ? FindSmartGeometryMatches(
+                        db,
+                        geometryPrimitiveIds,
+                        geometryRules)
+                    : new List<SmartGeometryMatch>();
 
             Dictionary<string, int> counts =
                 new Dictionary<string, int>(
+                    StringComparer.OrdinalIgnoreCase);
+
+            List<SmartAuditRow> auditRows =
+                new List<SmartAuditRow>();
+
+            HashSet<string> detectedLegendNames =
+                new HashSet<string>(
                     StringComparer.OrdinalIgnoreCase);
 
             int sizeMatched =
@@ -44413,6 +44737,12 @@ namespace ClassLibrary4
                     string size =
                         "-";
 
+                    string auditStatus =
+                        "OK";
+
+                    string auditNote =
+                        "Đã nhận diện BLOCK.";
+
                     if (string.Equals(
                             rule.SizeRule,
                             "THEO_ONG",
@@ -44434,6 +44764,7 @@ namespace ClassLibrary4
                         {
                             size =
                                 inferredSize;
+
                             sizeMatched++;
                         }
                         else if (found &&
@@ -44441,12 +44772,26 @@ namespace ClassLibrary4
                         {
                             size =
                                 "CẦN KIỂM TRA";
+
+                            auditStatus =
+                                "DN_CHECK";
+
+                            auditNote =
+                                "Nhận được loại nhưng có nhiều DN gần vị trí này.";
+
                             sizeUncertain++;
                         }
                         else
                         {
                             size =
                                 "KHÔNG RÕ DN";
+
+                            auditStatus =
+                                "NO_DN";
+
+                            auditNote =
+                                "Nhận được loại nhưng chưa tìm thấy tuyến ống đủ gần.";
+
                             noPipeNearby++;
                         }
                     }
@@ -44464,6 +44809,29 @@ namespace ClassLibrary4
                     }
 
                     counts[countKey]++;
+
+                    detectedLegendNames.Add(
+                        rule.DisplayName);
+
+                    auditRows.Add(
+                        new SmartAuditRow
+                        {
+                            Status =
+                                auditStatus,
+                            Name =
+                                rule.DisplayName,
+                            Size =
+                                size,
+                            Source =
+                                "BLOCK",
+                            Note =
+                                auditNote,
+                            Point =
+                                new Point3d(
+                                    br.Position.X,
+                                    br.Position.Y,
+                                    0.0)
+                        });
                 }
 
                 foreach (SmartGeometryMatch match
@@ -44480,6 +44848,12 @@ namespace ClassLibrary4
 
                     string size =
                         "-";
+
+                    string auditStatus =
+                        "OK";
+
+                    string auditNote =
+                        "Đã nhận diện HÌNH EXPLODE.";
 
                     if (string.Equals(
                             rule.SizeRule,
@@ -44502,6 +44876,7 @@ namespace ClassLibrary4
                         {
                             size =
                                 inferredSize;
+
                             sizeMatched++;
                         }
                         else if (found &&
@@ -44509,12 +44884,26 @@ namespace ClassLibrary4
                         {
                             size =
                                 "CẦN KIỂM TRA";
+
+                            auditStatus =
+                                "DN_CHECK";
+
+                            auditNote =
+                                "Nhận được loại nhưng có nhiều DN gần vị trí này.";
+
                             sizeUncertain++;
                         }
                         else
                         {
                             size =
                                 "KHÔNG RÕ DN";
+
+                            auditStatus =
+                                "NO_DN";
+
+                            auditNote =
+                                "Nhận được loại nhưng chưa tìm thấy tuyến ống đủ gần.";
+
                             noPipeNearby++;
                         }
                     }
@@ -44532,10 +44921,220 @@ namespace ClassLibrary4
                     }
 
                     counts[countKey]++;
+
+                    detectedLegendNames.Add(
+                        rule.DisplayName);
+
+                    auditRows.Add(
+                        new SmartAuditRow
+                        {
+                            Status =
+                                auditStatus,
+                            Name =
+                                rule.DisplayName,
+                            Size =
+                                size,
+                            Source =
+                                "HÌNH EXPLODE",
+                            Note =
+                                auditNote,
+                            Point =
+                                new Point3d(
+                                    match.Center.X,
+                                    match.Center.Y,
+                                    0.0)
+                        });
                 }
 
                 tr.Commit();
             }
+
+            _smartValveStage =
+                "AUDIT_FIND_UNKNOWN_BLOCKS";
+
+            using (Transaction tr =
+                db.TransactionManager.StartTransaction())
+            {
+                foreach (ObjectId blockId
+                    in unknownBlocks)
+                {
+                    BlockReference br =
+                        tr.GetObject(
+                            blockId,
+                            OpenMode.ForRead,
+                            false) as BlockReference;
+
+                    if (br == null ||
+                        br.IsErased)
+                    {
+                        continue;
+                    }
+
+                    if (!IsSmartPotentialUnknownBlock(
+                            tr,
+                            br,
+                            pipeCandidates))
+                    {
+                        continue;
+                    }
+
+                    Point3d center =
+                        new Point3d(
+                            br.Position.X,
+                            br.Position.Y,
+                            0.0);
+
+                    if (IsSmartPointNearRecognized(
+                            center,
+                            auditRows,
+                            140.0))
+                    {
+                        continue;
+                    }
+
+                    string inferredSize =
+                        "";
+
+                    bool uncertain =
+                        false;
+
+                    bool foundPipe =
+                        TryInferSmartBlockPipeSize(
+                            tr,
+                            center,
+                            pipeCandidates,
+                            out inferredSize,
+                            out uncertain);
+
+                    string displaySize =
+                        foundPipe
+                            ? (uncertain
+                                ? "CẦN KIỂM TRA"
+                                : inferredSize)
+                            : "KHÔNG RÕ DN";
+
+                    string blockName =
+                        GetShopStatBlockName(
+                            tr,
+                            br);
+
+                    auditRows.Add(
+                        new SmartAuditRow
+                        {
+                            Status =
+                                "MISSING",
+                            Name =
+                                "CHƯA NHẬN DIỆN",
+                            Size =
+                                displaySize,
+                            Source =
+                                "BLOCK CHƯA HỌC",
+                            Note =
+                                "Block gần tuyến ống nhưng không khớp Legend: " +
+                                (string.IsNullOrWhiteSpace(
+                                     blockName)
+                                    ? "(không tên)"
+                                    : blockName),
+                            Point =
+                                center
+                        });
+                }
+
+                tr.Commit();
+            }
+
+            _smartValveStage =
+                "AUDIT_FIND_UNKNOWN_GEOMETRY";
+
+            List<SmartAuditGeometryCluster> geometryClusters =
+                FindSmartAuditGeometryClusters(
+                    db,
+                    geometryPrimitiveIds);
+
+            using (Transaction tr =
+                db.TransactionManager.StartTransaction())
+            {
+                foreach (SmartAuditGeometryCluster cluster
+                    in geometryClusters)
+                {
+                    if (cluster == null)
+                        continue;
+
+                    if (IsSmartPointNearRecognized(
+                            cluster.Center,
+                            auditRows,
+                            140.0))
+                    {
+                        continue;
+                    }
+
+                    string inferredSize =
+                        "";
+
+                    bool uncertain =
+                        false;
+
+                    bool foundPipe =
+                        TryInferSmartBlockPipeSize(
+                            tr,
+                            cluster.Center,
+                            pipeCandidates,
+                            out inferredSize,
+                            out uncertain);
+
+                    // Vòng kiểm tra chéo chỉ coi là ứng viên "sót"
+                    // khi cụm hình thực sự nằm gần một tuyến ống.
+                    if (!foundPipe)
+                        continue;
+
+                    string displaySize =
+                        uncertain
+                            ? "CẦN KIỂM TRA"
+                            : inferredSize;
+
+                    auditRows.Add(
+                        new SmartAuditRow
+                        {
+                            Status =
+                                "MISSING",
+                            Name =
+                                "CHƯA NHẬN DIỆN",
+                            Size =
+                                displaySize,
+                            Source =
+                                "HÌNH CHƯA HỌC",
+                            Note =
+                                "Cụm " +
+                                cluster.EntityCount +
+                                " nét nhỏ nằm trên/gần tuyến ống nhưng không khớp mẫu Legend.",
+                            Point =
+                                cluster.Center
+                        });
+                }
+
+                tr.Commit();
+            }
+
+            // Loại trùng ứng viên đỏ nếu hai thuật toán cùng chỉ vào một vị trí.
+            auditRows =
+                DeduplicateSmartAuditRows(
+                    auditRows);
+
+            List<string> legendZero =
+                rules
+                    .Select(
+                        r =>
+                            r.DisplayName)
+                    .Where(
+                        name =>
+                            !detectedLegendNames.Contains(
+                                name))
+                    .Distinct(
+                        StringComparer.OrdinalIgnoreCase)
+                    .OrderBy(
+                        name =>
+                            name)
+                    .ToList();
 
             List<SmartValveStatRow> rows =
                 counts
@@ -44572,27 +45171,1089 @@ namespace ClassLibrary4
                     .ToList();
 
             _smartValveStage =
-                "SCAN_OUTPUT_TABLE";
+                "AUDIT_DRAW_MARKERS";
 
-            XuatBangThongKeVanThongMinh(
-                rows);
+            DrawSmartAuditMarkers(
+                doc,
+                auditRows);
+
+            if (rows.Count > 0)
+            {
+                _smartValveStage =
+                    "SCAN_OUTPUT_TABLE";
+
+                XuatBangThongKeVanThongMinh(
+                    rows);
+            }
+
+            _smartValveStage =
+                "AUDIT_REVIEW";
+
+            ShowSmartAuditReportDialog(
+                auditRows,
+                legendZero);
+
+            int recognizedCount =
+                auditRows.Count(
+                    r =>
+                        !string.Equals(
+                            r.Status,
+                            "MISSING",
+                            StringComparison.OrdinalIgnoreCase));
+
+            int missingCount =
+                auditRows.Count(
+                    r =>
+                        string.Equals(
+                            r.Status,
+                            "MISSING",
+                            StringComparison.OrdinalIgnoreCase));
+
+            int certainCount =
+                auditRows.Count(
+                    r =>
+                        string.Equals(
+                            r.Status,
+                            "OK",
+                            StringComparison.OrdinalIgnoreCase));
+
+            int candidateCount =
+                recognizedCount +
+                missingCount;
+
+            double coverage =
+                candidateCount > 0
+                    ? recognizedCount * 100.0 /
+                      candidateCount
+                    : 100.0;
+
+            double certainCoverage =
+                candidateCount > 0
+                    ? certainCount * 100.0 /
+                      candidateCount
+                    : 100.0;
 
             MessageBox.Show(
-                "NHẬN DIỆN THÔNG MINH hoàn tất.\n\n" +
-                "• Ký hiệu BLOCK nhận được: " +
-                matchedBlocks.Count +
-                "\n• Ký hiệu EXPLODE nhận được: " +
-                geometryMatches.Count +
-                "\n• DN suy ra chắc chắn: " +
-                sizeMatched +
-                "\n• DN cần kiểm tra: " +
-                sizeUncertain +
-                "\n• Không tìm thấy ống gần ký hiệu: " +
-                noPipeNearby +
+                "KIỂM TRA CHÉO hoàn tất.\n\n" +
+                "• Tổng ứng viên: " +
+                candidateCount +
+                "\n• Đã nhận diện: " +
+                recognizedCount +
+                "\n• Nhận diện chắc chắn: " +
+                certainCount +
+                "\n• Có khả năng bị sót: " +
+                missingCount +
+                "\n• Legend có nhưng mặt bằng chưa thấy: " +
+                legendZero.Count +
                 "\n\n" +
-                "Nguyên tắc: loại van/TB lấy từ ký hiệu đã học; " +
-                "DN lấy từ tuyến ống gần/tại tâm ký hiệu.",
-                "THỐNG KÊ VAN / THIẾT BỊ");
+                "Độ phủ nhận diện: " +
+                coverage.ToString(
+                    "0.0",
+                    CultureInfo.InvariantCulture) +
+                "%\n" +
+                "Độ phủ chắc chắn: " +
+                certainCoverage.ToString(
+                    "0.0",
+                    CultureInfo.InvariantCulture) +
+                "%\n\n" +
+                "Màu trên CAD:\n" +
+                "XANH = OK | CAM = cần kiểm tra DN | ĐỎ = nghi bị sót.",
+                "KIỂM TRA SÓT VAN / THIẾT BỊ");
+        }
+
+
+        private static bool IsSmartAuditLayer(
+            string layer)
+        {
+            if (string.IsNullOrWhiteSpace(
+                    layer))
+            {
+                return false;
+            }
+
+            return
+                layer.Equals(
+                    SmartAuditOkLayer,
+                    StringComparison.OrdinalIgnoreCase) ||
+                layer.Equals(
+                    SmartAuditCheckLayer,
+                    StringComparison.OrdinalIgnoreCase) ||
+                layer.Equals(
+                    SmartAuditMissingLayer,
+                    StringComparison.OrdinalIgnoreCase);
+        }
+
+        private bool IsSmartPotentialUnknownBlock(
+            Transaction tr,
+            BlockReference br,
+            List<SmartPipeCandidate> pipes)
+        {
+            if (tr == null ||
+                br == null ||
+                pipes == null ||
+                pipes.Count == 0)
+            {
+                return false;
+            }
+
+            double maxSize =
+                0.0;
+
+            try
+            {
+                Extents3d ex =
+                    br.GeometricExtents;
+
+                double dx =
+                    Math.Abs(
+                        ex.MaxPoint.X -
+                        ex.MinPoint.X);
+
+                double dy =
+                    Math.Abs(
+                        ex.MaxPoint.Y -
+                        ex.MinPoint.Y);
+
+                maxSize =
+                    Math.Max(
+                        dx,
+                        dy);
+
+                // Chặn các block kiến trúc / title / viewport quá lớn.
+                if (maxSize < 8.0 ||
+                    maxSize > 1600.0)
+                {
+                    return false;
+                }
+            }
+            catch
+            {
+                maxSize = 300.0;
+            }
+
+            string size;
+            bool uncertain;
+
+            bool nearPipe =
+                TryInferSmartBlockPipeSize(
+                    tr,
+                    br.Position,
+                    pipes,
+                    out size,
+                    out uncertain);
+
+            return nearPipe;
+        }
+
+        private List<SmartAuditGeometryCluster> FindSmartAuditGeometryClusters(
+            Database db,
+            List<ObjectId> primitiveIds)
+        {
+            List<SmartAuditGeometryCluster> result =
+                new List<SmartAuditGeometryCluster>();
+
+            if (db == null ||
+                primitiveIds == null ||
+                primitiveIds.Count == 0)
+            {
+                return result;
+            }
+
+            List<SmartGeometryPrimitive> primitives =
+                new List<SmartGeometryPrimitive>();
+
+            using (Transaction tr =
+                db.TransactionManager.StartTransaction())
+            {
+                foreach (ObjectId id
+                    in primitiveIds)
+                {
+                    Entity ent =
+                        tr.GetObject(
+                            id,
+                            OpenMode.ForRead,
+                            false) as Entity;
+
+                    if (ent == null ||
+                        ent.IsErased ||
+                        !(ent is Curve))
+                    {
+                        continue;
+                    }
+
+                    try
+                    {
+                        Extents3d ex =
+                            ent.GeometricExtents;
+
+                        double dx =
+                            Math.Abs(
+                                ex.MaxPoint.X -
+                                ex.MinPoint.X);
+
+                        double dy =
+                            Math.Abs(
+                                ex.MaxPoint.Y -
+                                ex.MinPoint.Y);
+
+                        double max =
+                            Math.Max(
+                                dx,
+                                dy);
+
+                        // Chỉ giữ nét nhỏ có khả năng là ký hiệu.
+                        if (max > 1400.0)
+                            continue;
+
+                        primitives.Add(
+                            new SmartGeometryPrimitive
+                            {
+                                Id =
+                                    id,
+                                Extents =
+                                    ex,
+                                Center =
+                                    new Point3d(
+                                        (ex.MinPoint.X +
+                                         ex.MaxPoint.X) * 0.5,
+                                        (ex.MinPoint.Y +
+                                         ex.MaxPoint.Y) * 0.5,
+                                        0.0)
+                            });
+                    }
+                    catch
+                    {
+                    }
+                }
+
+                tr.Commit();
+            }
+
+            if (primitives.Count == 0)
+                return result;
+
+            const double clusterGap =
+                70.0;
+
+            HashSet<ObjectId> used =
+                new HashSet<ObjectId>();
+
+            foreach (SmartGeometryPrimitive seed
+                in primitives)
+            {
+                if (used.Contains(
+                        seed.Id))
+                {
+                    continue;
+                }
+
+                Queue<SmartGeometryPrimitive> queue =
+                    new Queue<SmartGeometryPrimitive>();
+
+                List<SmartGeometryPrimitive> cluster =
+                    new List<SmartGeometryPrimitive>();
+
+                queue.Enqueue(
+                    seed);
+
+                used.Add(
+                    seed.Id);
+
+                while (queue.Count > 0)
+                {
+                    SmartGeometryPrimitive current =
+                        queue.Dequeue();
+
+                    cluster.Add(
+                        current);
+
+                    if (cluster.Count > 24)
+                        break;
+
+                    foreach (SmartGeometryPrimitive other
+                        in primitives)
+                    {
+                        if (used.Contains(
+                                other.Id))
+                        {
+                            continue;
+                        }
+
+                        if (AreSmartGeometryExtentsNear(
+                                current.Extents,
+                                other.Extents,
+                                clusterGap))
+                        {
+                            used.Add(
+                                other.Id);
+
+                            queue.Enqueue(
+                                other);
+                        }
+                    }
+                }
+
+                if (cluster.Count <= 0 ||
+                    cluster.Count > 24)
+                {
+                    continue;
+                }
+
+                double minX =
+                    cluster.Min(
+                        p =>
+                            p.Extents.MinPoint.X);
+
+                double minY =
+                    cluster.Min(
+                        p =>
+                            p.Extents.MinPoint.Y);
+
+                double maxX =
+                    cluster.Max(
+                        p =>
+                            p.Extents.MaxPoint.X);
+
+                double maxY =
+                    cluster.Max(
+                        p =>
+                            p.Extents.MaxPoint.Y);
+
+                double width =
+                    maxX -
+                    minX;
+
+                double height =
+                    maxY -
+                    minY;
+
+                double maxDim =
+                    Math.Max(
+                        width,
+                        height);
+
+                if (maxDim < 8.0 ||
+                    maxDim > 1400.0)
+                {
+                    continue;
+                }
+
+                result.Add(
+                    new SmartAuditGeometryCluster
+                    {
+                        Center =
+                            new Point3d(
+                                (minX + maxX) * 0.5,
+                                (minY + maxY) * 0.5,
+                                0.0),
+                        Width =
+                            width,
+                        Height =
+                            height,
+                        EntityCount =
+                            cluster.Count,
+                        ObjectIds =
+                            cluster
+                                .Select(
+                                    p =>
+                                        p.Id)
+                                .ToList()
+                    });
+            }
+
+            return result;
+        }
+
+        private static bool IsSmartPointNearRecognized(
+            Point3d point,
+            List<SmartAuditRow> rows,
+            double tolerance)
+        {
+            if (rows == null)
+                return false;
+
+            foreach (SmartAuditRow row
+                in rows)
+            {
+                if (row == null ||
+                    string.Equals(
+                        row.Status,
+                        "MISSING",
+                        StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                if (PlanDistance(
+                        point,
+                        row.Point) <=
+                    tolerance)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private List<SmartAuditRow> DeduplicateSmartAuditRows(
+            List<SmartAuditRow> rows)
+        {
+            List<SmartAuditRow> result =
+                new List<SmartAuditRow>();
+
+            if (rows == null)
+                return result;
+
+            foreach (SmartAuditRow row
+                in rows)
+            {
+                if (row == null)
+                    continue;
+
+                SmartAuditRow duplicate =
+                    result.FirstOrDefault(
+                        r =>
+                            string.Equals(
+                                r.Status,
+                                row.Status,
+                                StringComparison.OrdinalIgnoreCase) &&
+                            PlanDistance(
+                                r.Point,
+                                row.Point) <=
+                            100.0);
+
+                if (duplicate == null)
+                {
+                    result.Add(
+                        row);
+                }
+                else
+                {
+                    // Nếu trùng vị trí, ưu tiên thông tin BLOCK rõ hơn hình học.
+                    if (row.Source.StartsWith(
+                            "BLOCK",
+                            StringComparison.OrdinalIgnoreCase) &&
+                        !duplicate.Source.StartsWith(
+                            "BLOCK",
+                            StringComparison.OrdinalIgnoreCase))
+                    {
+                        duplicate.Name =
+                            row.Name;
+
+                        duplicate.Size =
+                            row.Size;
+
+                        duplicate.Source =
+                            row.Source;
+
+                        duplicate.Note =
+                            row.Note;
+                    }
+                }
+            }
+
+            return result;
+        }
+
+        private void DrawSmartAuditMarkers(
+            Document doc,
+            List<SmartAuditRow> rows)
+        {
+            if (doc == null)
+                return;
+
+            Database db =
+                doc.Database;
+
+            using (doc.LockDocument())
+            using (Transaction tr =
+                db.TransactionManager.StartTransaction())
+            {
+                EnsureLayerExists(
+                    tr,
+                    db,
+                    SmartAuditOkLayer,
+                    false);
+
+                EnsureLayerExists(
+                    tr,
+                    db,
+                    SmartAuditCheckLayer,
+                    false);
+
+                EnsureLayerExists(
+                    tr,
+                    db,
+                    SmartAuditMissingLayer,
+                    false);
+
+                SetReview3DLayerColor(
+                    tr,
+                    db,
+                    SmartAuditOkLayer,
+                    3);
+
+                SetReview3DLayerColor(
+                    tr,
+                    db,
+                    SmartAuditCheckLayer,
+                    30);
+
+                SetReview3DLayerColor(
+                    tr,
+                    db,
+                    SmartAuditMissingLayer,
+                    1);
+
+                BlockTableRecord space =
+                    (BlockTableRecord)tr.GetObject(
+                        db.CurrentSpaceId,
+                        OpenMode.ForWrite);
+
+                List<ObjectId> oldMarkers =
+                    new List<ObjectId>();
+
+                foreach (ObjectId id
+                    in space)
+                {
+                    Entity ent =
+                        tr.GetObject(
+                            id,
+                            OpenMode.ForRead,
+                            false) as Entity;
+
+                    if (ent != null &&
+                        !ent.IsErased &&
+                        IsSmartAuditLayer(
+                            ent.Layer))
+                    {
+                        oldMarkers.Add(
+                            id);
+                    }
+                }
+
+                foreach (ObjectId id
+                    in oldMarkers)
+                {
+                    Entity ent =
+                        tr.GetObject(
+                            id,
+                            OpenMode.ForWrite,
+                            false) as Entity;
+
+                    if (ent != null &&
+                        !ent.IsErased)
+                    {
+                        ent.Erase();
+                    }
+                }
+
+                foreach (SmartAuditRow row
+                    in rows ?? new List<SmartAuditRow>())
+                {
+                    if (row == null)
+                        continue;
+
+                    string layer =
+                        SmartAuditOkLayer;
+
+                    double radius =
+                        120.0;
+
+                    string shortText =
+                        "";
+
+                    if (string.Equals(
+                            row.Status,
+                            "MISSING",
+                            StringComparison.OrdinalIgnoreCase))
+                    {
+                        layer =
+                            SmartAuditMissingLayer;
+
+                        radius =
+                            260.0;
+
+                        shortText =
+                            "CHƯA NHẬN DIỆN";
+                    }
+                    else if (string.Equals(
+                                 row.Status,
+                                 "DN_CHECK",
+                                 StringComparison.OrdinalIgnoreCase) ||
+                             string.Equals(
+                                 row.Status,
+                                 "NO_DN",
+                                 StringComparison.OrdinalIgnoreCase))
+                    {
+                        layer =
+                            SmartAuditCheckLayer;
+
+                        radius =
+                            210.0;
+
+                        shortText =
+                            row.Size;
+                    }
+
+                    Circle marker =
+                        new Circle(
+                            new Point3d(
+                                row.Point.X,
+                                row.Point.Y,
+                                0.0),
+                            Vector3d.ZAxis,
+                            radius);
+
+                    marker.SetDatabaseDefaults(
+                        db);
+
+                    marker.Layer =
+                        layer;
+
+                    marker.ColorIndex =
+                        256;
+
+                    space.AppendEntity(
+                        marker);
+
+                    tr.AddNewlyCreatedDBObject(
+                        marker,
+                        true);
+
+                    if (!string.IsNullOrWhiteSpace(
+                            shortText))
+                    {
+                        DBText label =
+                            new DBText();
+
+                        label.SetDatabaseDefaults(
+                            db);
+
+                        label.TextStyleId =
+                            db.Textstyle;
+
+                        label.TextString =
+                            shortText;
+
+                        label.Height =
+                            110.0;
+
+                        label.Layer =
+                            layer;
+
+                        label.ColorIndex =
+                            256;
+
+                        label.Position =
+                            new Point3d(
+                                row.Point.X +
+                                radius * 1.2,
+                                row.Point.Y +
+                                radius * 0.7,
+                                0.0);
+
+                        space.AppendEntity(
+                            label);
+
+                        tr.AddNewlyCreatedDBObject(
+                            label,
+                            true);
+                    }
+                }
+
+                tr.Commit();
+            }
+
+            try
+            {
+                doc.Editor.Regen();
+            }
+            catch
+            {
+            }
+        }
+
+        private void ShowSmartAuditReportDialog(
+            List<SmartAuditRow> rows,
+            List<string> legendZero)
+        {
+            rows =
+                rows ??
+                new List<SmartAuditRow>();
+
+            legendZero =
+                legendZero ??
+                new List<string>();
+
+            int recognized =
+                rows.Count(
+                    r =>
+                        !string.Equals(
+                            r.Status,
+                            "MISSING",
+                            StringComparison.OrdinalIgnoreCase));
+
+            int missing =
+                rows.Count(
+                    r =>
+                        string.Equals(
+                            r.Status,
+                            "MISSING",
+                            StringComparison.OrdinalIgnoreCase));
+
+            int certain =
+                rows.Count(
+                    r =>
+                        string.Equals(
+                            r.Status,
+                            "OK",
+                            StringComparison.OrdinalIgnoreCase));
+
+            int needCheck =
+                rows.Count(
+                    r =>
+                        string.Equals(
+                            r.Status,
+                            "DN_CHECK",
+                            StringComparison.OrdinalIgnoreCase) ||
+                        string.Equals(
+                            r.Status,
+                            "NO_DN",
+                            StringComparison.OrdinalIgnoreCase));
+
+            int total =
+                recognized +
+                missing;
+
+            double coverage =
+                total > 0
+                    ? recognized * 100.0 /
+                      total
+                    : 100.0;
+
+            using (System.Windows.Forms.Form form =
+                new System.Windows.Forms.Form())
+            using (System.Windows.Forms.Label summary =
+                new System.Windows.Forms.Label())
+            using (System.Windows.Forms.DataGridView grid =
+                new System.Windows.Forms.DataGridView())
+            using (System.Windows.Forms.Button closeButton =
+                new System.Windows.Forms.Button())
+            {
+                form.Text =
+                    "KIỂM TRA SÓT VAN / THIẾT BỊ";
+
+                form.StartPosition =
+                    System.Windows.Forms.FormStartPosition.CenterScreen;
+
+                form.Width =
+                    1120;
+
+                form.Height =
+                    720;
+
+                form.BackColor =
+                    System.Drawing.Color.White;
+
+                summary.Left =
+                    16;
+
+                summary.Top =
+                    12;
+
+                summary.Width =
+                    1070;
+
+                summary.Height =
+                    74;
+
+                summary.Font =
+                    new System.Drawing.Font(
+                        "Segoe UI",
+                        10.0f,
+                        System.Drawing.FontStyle.Bold);
+
+                summary.Text =
+                    "TỔNG ỨNG VIÊN: " +
+                    total +
+                    "    |    ĐÃ NHẬN DIỆN: " +
+                    recognized +
+                    "    |    CHẮC CHẮN: " +
+                    certain +
+                    "    |    CẦN KIỂM TRA: " +
+                    needCheck +
+                    "    |    NGHI BỊ SÓT: " +
+                    missing +
+                    "\r\nĐỘ PHỦ NHẬN DIỆN: " +
+                    coverage.ToString(
+                        "0.0",
+                        CultureInfo.InvariantCulture) +
+                    "%    |    LEGEND CÓ NHƯNG MẶT BẰNG CHƯA THẤY: " +
+                    legendZero.Count +
+                    "\r\nXANH = OK    CAM = DN chưa chắc    ĐỎ = ứng viên chưa nhận diện.";
+
+                grid.Left =
+                    16;
+
+                grid.Top =
+                    94;
+
+                grid.Width =
+                    1070;
+
+                grid.Height =
+                    530;
+
+                grid.AllowUserToAddRows =
+                    false;
+
+                grid.AllowUserToDeleteRows =
+                    false;
+
+                grid.ReadOnly =
+                    true;
+
+                grid.RowHeadersVisible =
+                    false;
+
+                grid.SelectionMode =
+                    System.Windows.Forms.DataGridViewSelectionMode.FullRowSelect;
+
+                grid.AutoSizeRowsMode =
+                    System.Windows.Forms.DataGridViewAutoSizeRowsMode.AllCells;
+
+                grid.BackgroundColor =
+                    System.Drawing.Color.White;
+
+                grid.EnableHeadersVisualStyles =
+                    false;
+
+                grid.ColumnHeadersDefaultCellStyle.BackColor =
+                    System.Drawing.Color.FromArgb(
+                        236,
+                        242,
+                        248);
+
+                grid.ColumnHeadersDefaultCellStyle.Font =
+                    new System.Drawing.Font(
+                        "Segoe UI",
+                        9.5f,
+                        System.Drawing.FontStyle.Bold);
+
+                grid.Font =
+                    new System.Drawing.Font(
+                        "Segoe UI",
+                        9.5f);
+
+                grid.Columns.Add(
+                    "STT",
+                    "STT");
+
+                grid.Columns["STT"].Width =
+                    55;
+
+                grid.Columns["STT"].DefaultCellStyle.Alignment =
+                    System.Windows.Forms.DataGridViewContentAlignment.MiddleCenter;
+
+                grid.Columns.Add(
+                    "STATUS",
+                    "TRẠNG THÁI");
+
+                grid.Columns["STATUS"].Width =
+                    145;
+
+                grid.Columns.Add(
+                    "NAME",
+                    "NHẬN DIỆN");
+
+                grid.Columns["NAME"].Width =
+                    290;
+
+                grid.Columns.Add(
+                    "SIZE",
+                    "SIZE");
+
+                grid.Columns["SIZE"].Width =
+                    130;
+
+                grid.Columns["SIZE"].DefaultCellStyle.Alignment =
+                    System.Windows.Forms.DataGridViewContentAlignment.MiddleCenter;
+
+                grid.Columns.Add(
+                    "SOURCE",
+                    "NGUỒN");
+
+                grid.Columns["SOURCE"].Width =
+                    150;
+
+                grid.Columns.Add(
+                    "NOTE",
+                    "GHI CHÚ");
+
+                grid.Columns["NOTE"].AutoSizeMode =
+                    System.Windows.Forms.DataGridViewAutoSizeColumnMode.Fill;
+
+                int stt =
+                    1;
+
+                foreach (SmartAuditRow row
+                    in rows
+                        .OrderBy(
+                            r =>
+                                GetSmartAuditStatusOrder(
+                                    r.Status))
+                        .ThenBy(
+                            r =>
+                                r.Name))
+                {
+                    string statusText =
+                        GetSmartAuditStatusText(
+                            row.Status);
+
+                    int index =
+                        grid.Rows.Add(
+                            stt++,
+                            statusText,
+                            row.Name,
+                            row.Size,
+                            row.Source,
+                            row.Note);
+
+                    if (string.Equals(
+                            row.Status,
+                            "MISSING",
+                            StringComparison.OrdinalIgnoreCase))
+                    {
+                        grid.Rows[index].DefaultCellStyle.BackColor =
+                            System.Drawing.Color.MistyRose;
+                    }
+                    else if (!string.Equals(
+                                 row.Status,
+                                 "OK",
+                                 StringComparison.OrdinalIgnoreCase))
+                    {
+                        grid.Rows[index].DefaultCellStyle.BackColor =
+                            System.Drawing.Color.LemonChiffon;
+                    }
+                    else
+                    {
+                        grid.Rows[index].DefaultCellStyle.BackColor =
+                            System.Drawing.Color.Honeydew;
+                    }
+                }
+
+                foreach (string zeroName
+                    in legendZero)
+                {
+                    int index =
+                        grid.Rows.Add(
+                            stt++,
+                            "LEGEND 0",
+                            zeroName,
+                            "-",
+                            "LEGEND",
+                            "Có trong Legend nhưng vùng mặt bằng vừa quét chưa thấy lần nào.");
+
+                    grid.Rows[index].DefaultCellStyle.BackColor =
+                        System.Drawing.Color.LavenderBlush;
+                }
+
+                closeButton.Text =
+                    "ĐÓNG";
+
+                closeButton.Width =
+                    120;
+
+                closeButton.Height =
+                    38;
+
+                closeButton.Left =
+                    966;
+
+                closeButton.Top =
+                    640;
+
+                closeButton.DialogResult =
+                    System.Windows.Forms.DialogResult.OK;
+
+                closeButton.Font =
+                    new System.Drawing.Font(
+                        "Segoe UI",
+                        9.5f,
+                        System.Drawing.FontStyle.Bold);
+
+                form.Controls.Add(
+                    summary);
+
+                form.Controls.Add(
+                    grid);
+
+                form.Controls.Add(
+                    closeButton);
+
+                form.AcceptButton =
+                    closeButton;
+
+                form.ShowDialog();
+            }
+        }
+
+        private static int GetSmartAuditStatusOrder(
+            string status)
+        {
+            if (string.Equals(
+                    status,
+                    "MISSING",
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                return 0;
+            }
+
+            if (string.Equals(
+                    status,
+                    "DN_CHECK",
+                    StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(
+                    status,
+                    "NO_DN",
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                return 1;
+            }
+
+            return 2;
+        }
+
+        private static string GetSmartAuditStatusText(
+            string status)
+        {
+            if (string.Equals(
+                    status,
+                    "MISSING",
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                return "⚠ CHƯA NHẬN DIỆN";
+            }
+
+            if (string.Equals(
+                    status,
+                    "DN_CHECK",
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                return "⚠ DN CHƯA CHẮC";
+            }
+
+            if (string.Equals(
+                    status,
+                    "NO_DN",
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                return "⚠ KHÔNG RÕ DN";
+            }
+
+            return "✓ OK";
         }
 
         private bool TryInferSmartBlockPipeSize(
