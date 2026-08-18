@@ -345,7 +345,7 @@
                                             <Button.ToolTip>
                                                 <ToolTip>
                                                     <TextBlock MaxWidth="300" TextWrapping="Wrap"
-                                                               Text="KIỂM TRA 3D: Bấm nút rồi chọn chế độ Nhanh hoặc Đẹp. Chế độ Nhanh dựng line 3D nhẹ máy; chế độ Đẹp dựng mô hình BIM mini với ống tròn / ống gió hộp / trục đứng 3D, tự chuyển Conceptual và đánh dấu HỞ / TRỤC CHƯA NỐI."/>
+                                                               Text="KIỂM TRA 3D: Nhập cao độ ống ngang, chọn vùng hoặc toàn bộ. Tool dựng đường tâm 3D tạm, dựng trục đứng đúng chiều cao và đánh dấu các đầu ống hở / trục đứng chưa nối. Bấm lại nút để làm mới hoặc xóa mô hình 3D."/>
                                                 </ToolTip>
                                             </Button.ToolTip>
                                         </Button>
@@ -979,7 +979,7 @@
                                             <Button.ToolTip>
                                                 <ToolTip>
                                                     <TextBlock MaxWidth="300" TextWrapping="Wrap"
-                                                               Text="KIỂM TRA 3D ACMV: Chọn Nhanh hoặc Đẹp. Bản Đẹp hỗ trợ cả ống tròn và ống gió có size WxH trong layer, dựng thành mô hình BIM mini để rà tuyến và phát hiện vị trí nghi hở."/>
+                                                               Text="KIỂM TRA 3D ACMV: Dùng cho nhóm ỐNG. Nhập cao độ ống ngang, chọn vùng/toàn bộ; tool dựng ống + trục đứng 3D và đánh dấu vị trí nghi hở. Không dùng cho ỐNG GIÓ ở bản này."/>
                                                 </ToolTip>
                                             </Button.ToolTip>
                                         </Button>
@@ -1486,7 +1486,7 @@
                                             <Button.ToolTip>
                                                 <ToolTip>
                                                     <TextBlock MaxWidth="300" TextWrapping="Wrap"
-                                                               Text="KIỂM TRA 3D CTN: Chọn Nhanh hoặc Đẹp. Chế độ Đẹp dựng ống thành khối tròn 3D, dựng trục đứng đúng chiều cao và đánh dấu các vị trí nghi hở / trục chưa nối."/>
+                                                               Text="KIỂM TRA 3D CTN: Nhập cao độ ống ngang, chọn vùng hoặc toàn bộ. Tool dựng đường tâm 3D, trục đứng đúng chiều cao và đánh dấu đầu hở / trục đứng chưa nối."/>
                                                 </ToolTip>
                                             </Button.ToolTip>
                                         </Button>
@@ -1736,13 +1736,26 @@
                                 </Button.ToolTip>
                             </Button>
 
+                            <!-- NÚT CŨ: giữ nguyên thống kê thiết bị + van -->
                             <Button Content="THỐNG KÊ THIẾT BỊ + VAN" Height="42" FontSize="14" FontWeight="Bold"
-                                    Background="#FF00875A" Foreground="White" Margin="0,0,0,10" Cursor="Hand"
+                                    Background="#FF00875A" Foreground="White" Margin="0,0,0,8" Cursor="Hand"
                                     Click="BtnThongKeThietBiVan_Click">
                                 <Button.ToolTip>
                                     <ToolTip>
                                         <TextBlock MaxWidth="280" TextWrapping="Wrap"
-                                                   Text="THỐNG KÊ THIẾT BỊ + VAN: Quét chọn vùng. Đếm số lượng text thiết bị/van theo Layer (bỏ chữ size ống). Sắp xếp theo Hệ thống. Đơn vị: cái."/>
+                                                   Text="THỐNG KÊ THIẾT BỊ + VAN: Giữ nguyên chức năng cũ. Quét chọn vùng và thống kê thiết bị/van theo dữ liệu Layer hiện có."/>
+                                    </ToolTip>
+                                </Button.ToolTip>
+                            </Button>
+
+                            <!-- NÚT MỚI RIÊNG: nhận diện ký hiệu + tự suy DN -->
+                            <Button Content="NHẬN DIỆN VAN / THIẾT BỊ" Height="42" FontSize="13" FontWeight="Bold"
+                                    Background="#FF6A1B9A" Foreground="White" Margin="0,0,0,10" Cursor="Hand"
+                                    Click="BtnNhanDienVanThietBi_Click">
+                                <Button.ToolTip>
+                                    <ToolTip>
+                                        <TextBlock MaxWidth="310" TextWrapping="Wrap"
+                                                   Text="NHẬN DIỆN THÔNG MINH: Học ký hiệu từ bảng LEGEND, lưu thư viện, quét mặt bằng và tự suy DN theo tuyến ống đi qua/gần tâm ký hiệu. Hoàn toàn tách riêng khỏi nút THỐNG KÊ THIẾT BỊ + VAN."/>
                                     </ToolTip>
                                 </Button.ToolTip>
                             </Button>
