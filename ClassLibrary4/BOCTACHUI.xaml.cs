@@ -2241,6 +2241,28 @@ namespace ClassLibrary4
             public double BestScore { get; set; } = double.MaxValue;
             public Curve OriginalParent { get; set; }
             public bool HasExplicitSize { get; set; }
+
+            // STEP 18D: nguồn suy luận để confidence minh bạch.
+            public string AiInferenceSource { get; set; } = "";
+            public double AiInferenceConfidence { get; set; } = 0.0;
+        }
+
+        private class AiPipeContextAnchor
+        {
+            public Point3d Point { get; set; } = Point3d.Origin;
+            public string BlockKey { get; set; } = "";
+            public double MaxSpan { get; set; }
+        }
+
+        private class AiRepeatedBranchProposal
+        {
+            public SegmentData Source { get; set; }
+            public SegmentData Target { get; set; }
+            public double Dx { get; set; }
+            public double Dy { get; set; }
+            public double PairScore { get; set; }
+            public int AnchorMatches { get; set; }
+            public string TranslationKey { get; set; } = "";
         }
 
         private class AutomaticPipeNetworkEnd
@@ -2662,6 +2684,86 @@ namespace ClassLibrary4
             return nodes;
         }
 
+        private int PropagateAiPipeSizesWithinSameParentOnly(
+            List<SegmentData> segments)
+        {
+            if (segments == null ||
+                segments.Count == 0)
+            {
+                return 0;
+            }
+
+            int inherited =
+                0;
+
+            foreach (IGrouping<Curve, SegmentData> parentGroup
+                in segments
+                    .Where(
+                        s =>
+                            s?.OriginalParent != null)
+                    .GroupBy(
+                        s =>
+                            s.OriginalParent))
+            {
+                List<SegmentData> explicitSegments =
+                    parentGroup
+                        .Where(
+                            s =>
+                                s.HasExplicitSize &&
+                                !string.IsNullOrWhiteSpace(
+                                    s.Layer))
+                        .ToList();
+
+                List<string> sizes =
+                    explicitSegments
+                        .Select(
+                            s =>
+                                s.Layer)
+                        .Distinct(
+                            StringComparer.OrdinalIgnoreCase)
+                        .ToList();
+
+                if (sizes.Count != 1)
+                    continue;
+
+                SegmentData source =
+                    explicitSegments
+                        .OrderBy(
+                            s =>
+                                s.BestScore)
+                        .FirstOrDefault();
+
+                if (source == null)
+                    continue;
+
+                foreach (SegmentData target
+                    in parentGroup.Where(
+                        s =>
+                            string.IsNullOrWhiteSpace(
+                                s.Layer)))
+                {
+                    target.Layer =
+                        source.Layer;
+
+                    target.Width =
+                        FixedDnPipeDisplayWidth;
+
+                    target.LabelText =
+                        source.LabelText;
+
+                    target.AiInferenceSource =
+                        "SAME_PARENT_TOPOLOGY";
+
+                    target.AiInferenceConfidence =
+                        0.96;
+
+                    inherited++;
+                }
+            }
+
+            return inherited;
+        }
+
         private int PropagateFirePipeSizesByTopology(
             List<SegmentData> segments)
         {
@@ -2704,6 +2806,17 @@ namespace ClassLibrary4
                     target.Layer = source.Layer;
                     target.Width = FixedDnPipeDisplayWidth;
                     target.LabelText = source.LabelText;
+
+                    if (string.IsNullOrWhiteSpace(
+                            target.AiInferenceSource))
+                    {
+                        target.AiInferenceSource =
+                            "SAME_PARENT_TOPOLOGY";
+
+                        target.AiInferenceConfidence =
+                            0.94;
+                    }
+
                     inheritedCount++;
                 }
             }
@@ -2890,6 +3003,17 @@ namespace ClassLibrary4
                     pair.Key.Layer = pair.Value.Layer;
                     pair.Key.Width = FixedDnPipeDisplayWidth;
                     pair.Key.LabelText = pair.Value.LabelText;
+
+                    if (string.IsNullOrWhiteSpace(
+                            pair.Key.AiInferenceSource))
+                    {
+                        pair.Key.AiInferenceSource =
+                            "NETWORK_TOPOLOGY";
+
+                        pair.Key.AiInferenceConfidence =
+                            0.84;
+                    }
+
                     inheritedCount++;
                     changed = true;
                 }
@@ -17101,6 +17225,7 @@ namespace ClassLibrary4
                     new TypedValue((int)DxfCode.Start, "POLYLINE"),
                     new TypedValue((int)DxfCode.Start, "TEXT"),
                     new TypedValue((int)DxfCode.Start, "MTEXT"),
+                    new TypedValue((int)DxfCode.Start, "INSERT"),
                     new TypedValue((int)DxfCode.Operator, "OR>")
                 };
 
@@ -40951,6 +41076,22 @@ namespace ClassLibrary4
             public string GeometryFingerprint { get; set; } = "";
         }
 
+        private class AiLearningMemoryEntry
+        {
+            public string Signature { get; set; } = "";
+            public string MatchMode { get; set; } = "BLOCK";
+            public string BlockKey { get; set; } = "";
+            public string GeometryFingerprint { get; set; } = "";
+            public string Label { get; set; } = "";
+            public string Decision { get; set; } = "POSITIVE";
+            public bool FollowDn { get; set; } = false;
+            public int Confirmations { get; set; } = 0;
+            public int Rejections { get; set; } = 0;
+            public string Scope { get; set; } = "GLOBAL";
+            public string UpdatedUtc { get; set; } = "";
+            public string LastSource { get; set; } = "";
+        }
+
         private class SmartGeometryPrimitive
         {
             public ObjectId Id { get; set; }
@@ -40992,6 +41133,14 @@ namespace ClassLibrary4
             public System.Drawing.Bitmap Preview { get; set; }
         }
 
+        private class SmartPreviewDrawItem
+        {
+            public Entity Entity { get; set; }
+            public BlockReference ParentBlock { get; set; }
+            public System.Drawing.Color Color { get; set; } =
+                System.Drawing.Color.White;
+        }
+
         private class SmartLegendTextCandidate
         {
             public ObjectId Id { get; set; }
@@ -41005,6 +41154,40 @@ namespace ClassLibrary4
             public ObjectId Id { get; set; }
             public string Size { get; set; } = "";
             public string Layer { get; set; } = "";
+
+            // STEP 17 - PIPE / DEVICE FUSION
+            // AI overlay là nguồn đã được engine đường ống xác nhận nên được ưu tiên cao hơn.
+            public bool IsAiGenerated { get; set; } = false;
+            public double Confidence { get; set; } = 0.85;
+        }
+
+        private class SmartPipeSizeVote
+        {
+            public string Size { get; set; } = "";
+            public double BestScore { get; set; } = double.MaxValue;
+            public int SupportCount { get; set; }
+            public int AiSupportCount { get; set; }
+            public bool CrossesDeviceBox { get; set; }
+
+            public double EffectiveScore
+            {
+                get
+                {
+                    double bonus =
+                        Math.Min(
+                            220.0,
+                            Math.Max(
+                                0,
+                                SupportCount - 1) * 65.0 +
+                            AiSupportCount * 55.0 +
+                            (CrossesDeviceBox ? 90.0 : 0.0));
+
+                    return
+                        Math.Max(
+                            0.0,
+                            BestScore - bonus);
+                }
+            }
         }
 
         private class SmartValveStatRow
@@ -41022,6 +41205,23 @@ namespace ClassLibrary4
             public string Source { get; set; } = "";
             public string Note { get; set; } = "";
             public Point3d Point { get; set; } = Point3d.Origin;
+            public System.Drawing.Bitmap Preview { get; set; } = null;
+
+            // STEP 13:
+            // Cho phép sửa ngay trong bảng KIỂM TRA SÓT,
+            // rồi học ngược lại ký hiệu để lần sau tự nhận.
+            public bool FollowDn { get; set; } = false;
+            public string MatchMode { get; set; } = "";
+            public string BlockKey { get; set; } = "";
+            public string GeometryFingerprint { get; set; } = "";
+            public ObjectId SourceId { get; set; } = ObjectId.Null;
+
+            // STEP 18 - theo dõi chỉnh sửa thật sự của người dùng.
+            public string OriginalName { get; set; } = "";
+            public bool OriginalFollowDn { get; set; } = false;
+            public bool ReviewBaselineInitialized { get; set; } = false;
+            public bool UserEdited { get; set; } = false;
+            public bool NegativeLearned { get; set; } = false;
         }
 
         private class SmartAuditGeometryCluster
@@ -41046,6 +41246,23 @@ namespace ClassLibrary4
         // Ghi đúng bước đang chạy để nếu có lỗi tiếp thì biết chính xác
         // lỗi ở MENU / HỌC BLOCK / CHỌN TEXT / QUÉT / SUY DN / XUẤT BẢNG.
         private string _smartValveStage = "IDLE";
+
+        // STEP 14 - lưu phiên làm việc gần nhất trong AutoCAD hiện tại.
+        // Nhờ vậy sau khi đã xuất bảng thống kê vẫn mở lại bảng kiểm tra để rà soát tiếp.
+        private List<SmartAuditRow> _lastSmartAuditRows =
+            new List<SmartAuditRow>();
+
+        private List<string> _lastSmartLegendZero =
+            new List<string>();
+
+        private List<SmartSymbolRule> _lastSmartRules =
+            new List<SmartSymbolRule>();
+
+        private List<SmartLegendAutoRow> _lastSmartLegendRows =
+            new List<SmartLegendAutoRow>();
+
+        private ObjectId _lastSmartStatsTableId =
+            ObjectId.Null;
 
         private string SmartSymbolLibraryPath
         {
@@ -41092,6 +41309,1120 @@ namespace ClassLibrary4
         }
 
 
+        // ============================================================
+        // STEP 18 - AI LEARNING CORE (LOCAL)
+        // ------------------------------------------------------------
+        // Positive memory:
+        //   - Legend đã review
+        //   - Người dùng sửa tên / THEO DN
+        //   - Ký hiệu CHƯA HỌC được xác nhận
+        //
+        // Negative memory:
+        //   - Ứng viên đỏ bị người dùng BỎ QUA
+        //
+        // Memory chỉ lưu fingerprint / block key / nhãn / rule.
+        // Không lưu DWG, tên dự án hay toàn bộ bản vẽ.
+        // ============================================================
+
+        private string AiLearningMemoryPath
+        {
+            get
+            {
+                try
+                {
+                    string baseFolder =
+                        Environment.GetFolderPath(
+                            Environment.SpecialFolder.ApplicationData);
+
+                    if (string.IsNullOrWhiteSpace(
+                            baseFolder))
+                    {
+                        baseFolder =
+                            Path.GetTempPath();
+                    }
+
+                    string folder =
+                        Path.Combine(
+                            baseFolder,
+                            "TDL_MEP");
+
+                    if (!Directory.Exists(
+                            folder))
+                    {
+                        Directory.CreateDirectory(
+                            folder);
+                    }
+
+                    return
+                        Path.Combine(
+                            folder,
+                            "ai_learning_memory_v1.tsv");
+                }
+                catch
+                {
+                    return
+                        Path.Combine(
+                            Path.GetTempPath(),
+                            "ai_learning_memory_v1.tsv");
+                }
+            }
+        }
+
+        private List<AiLearningMemoryEntry> LoadAiLearningMemory()
+        {
+            List<AiLearningMemoryEntry> result =
+                new List<AiLearningMemoryEntry>();
+
+            try
+            {
+                string path =
+                    AiLearningMemoryPath;
+
+                if (!File.Exists(
+                        path))
+                {
+                    return result;
+                }
+
+                foreach (string line
+                    in File.ReadAllLines(
+                        path,
+                        Encoding.UTF8))
+                {
+                    if (string.IsNullOrWhiteSpace(
+                            line))
+                    {
+                        continue;
+                    }
+
+                    string[] p =
+                        line.Split('\t');
+
+                    if (p.Length < 12)
+                        continue;
+
+                    AiLearningMemoryEntry entry =
+                        new AiLearningMemoryEntry
+                        {
+                            Signature =
+                                DecodeSmartField(
+                                    p[0]),
+                            MatchMode =
+                                DecodeSmartField(
+                                    p[1]),
+                            BlockKey =
+                                DecodeSmartField(
+                                    p[2]),
+                            GeometryFingerprint =
+                                DecodeSmartField(
+                                    p[3]),
+                            Label =
+                                NormalizeSmartDisplayName(
+                                    DecodeSmartField(
+                                        p[4])),
+                            Decision =
+                                DecodeSmartField(
+                                    p[5]),
+                            FollowDn =
+                                p[6] == "1",
+                            Scope =
+                                DecodeSmartField(
+                                    p[9]),
+                            UpdatedUtc =
+                                DecodeSmartField(
+                                    p[10]),
+                            LastSource =
+                                DecodeSmartField(
+                                    p[11])
+                        };
+
+                    int.TryParse(
+                        p[7],
+                        out int confirmations);
+
+                    int.TryParse(
+                        p[8],
+                        out int rejections);
+
+                    entry.Confirmations =
+                        confirmations;
+
+                    entry.Rejections =
+                        rejections;
+
+                    if (string.IsNullOrWhiteSpace(
+                            entry.Signature))
+                    {
+                        continue;
+                    }
+
+                    result.Add(
+                        entry);
+                }
+            }
+            catch
+            {
+            }
+
+            return
+                result
+                    .GroupBy(
+                        e =>
+                            e.Signature,
+                        StringComparer.OrdinalIgnoreCase)
+                    .Select(
+                        g =>
+                            g.OrderByDescending(
+                                x =>
+                                    x.UpdatedUtc)
+                             .First())
+                    .ToList();
+        }
+
+        private void SaveAiLearningMemory(
+            List<AiLearningMemoryEntry> entries)
+        {
+            try
+            {
+                string path =
+                    AiLearningMemoryPath;
+
+                List<string> lines =
+                    (entries ??
+                     new List<AiLearningMemoryEntry>())
+                        .Where(
+                            e =>
+                                e != null &&
+                                !string.IsNullOrWhiteSpace(
+                                    e.Signature))
+                        .OrderBy(
+                            e =>
+                                e.MatchMode)
+                        .ThenBy(
+                            e =>
+                                e.Label)
+                        .Select(
+                            e =>
+                                string.Join(
+                                    "\t",
+                                    EncodeSmartField(
+                                        e.Signature),
+                                    EncodeSmartField(
+                                        e.MatchMode),
+                                    EncodeSmartField(
+                                        e.BlockKey),
+                                    EncodeSmartField(
+                                        e.GeometryFingerprint),
+                                    EncodeSmartField(
+                                        e.Label),
+                                    EncodeSmartField(
+                                        e.Decision),
+                                    e.FollowDn
+                                        ? "1"
+                                        : "0",
+                                    e.Confirmations.ToString(
+                                        CultureInfo.InvariantCulture),
+                                    e.Rejections.ToString(
+                                        CultureInfo.InvariantCulture),
+                                    EncodeSmartField(
+                                        e.Scope),
+                                    EncodeSmartField(
+                                        e.UpdatedUtc),
+                                    EncodeSmartField(
+                                        e.LastSource)))
+                        .ToList();
+
+                File.WriteAllLines(
+                    path,
+                    lines,
+                    Encoding.UTF8);
+            }
+            catch (System.Exception ex)
+            {
+                try
+                {
+                    MessageBox.Show(
+                        "Không lưu được bộ nhớ AI Local:\n" +
+                        ex.Message,
+                        "AI LEARNING");
+                }
+                catch
+                {
+                }
+            }
+        }
+
+        private static string GetAiLearningSignature(
+            string matchMode,
+            string blockKey,
+            string geometryFingerprint)
+        {
+            if (string.Equals(
+                    matchMode,
+                    "GEOMETRY",
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                return
+                    string.IsNullOrWhiteSpace(
+                        geometryFingerprint)
+                        ? ""
+                        : "GEO|" +
+                          geometryFingerprint;
+            }
+
+            string key =
+                NormalizeSmartSymbolKey(
+                    blockKey);
+
+            if (string.IsNullOrWhiteSpace(
+                    key))
+            {
+                return "";
+            }
+
+            if (string.Equals(
+                    matchMode,
+                    "POINT",
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                return
+                    "POINT|" +
+                    key;
+            }
+
+            return
+                "BLOCK|" +
+                key;
+        }
+
+        private void UpsertAiLearningMemory(
+            string matchMode,
+            string blockKey,
+            string geometryFingerprint,
+            string label,
+            bool followDn,
+            string decision,
+            string source,
+            bool reinforce)
+        {
+            string signature =
+                GetAiLearningSignature(
+                    matchMode,
+                    blockKey,
+                    geometryFingerprint);
+
+            if (string.IsNullOrWhiteSpace(
+                    signature))
+            {
+                return;
+            }
+
+            List<AiLearningMemoryEntry> memory =
+                LoadAiLearningMemory();
+
+            AiLearningMemoryEntry existing =
+                memory.FirstOrDefault(
+                    e =>
+                        string.Equals(
+                            e.Signature,
+                            signature,
+                            StringComparison.OrdinalIgnoreCase));
+
+            string normalizedDecision =
+                string.Equals(
+                    decision,
+                    "NEGATIVE",
+                    StringComparison.OrdinalIgnoreCase)
+                    ? "NEGATIVE"
+                    : "POSITIVE";
+
+            string normalizedLabel =
+                NormalizeSmartDisplayName(
+                    label);
+
+            if (existing == null)
+            {
+                existing =
+                    new AiLearningMemoryEntry
+                    {
+                        Signature =
+                            signature,
+                        MatchMode =
+                            string.Equals(
+                                matchMode,
+                                "GEOMETRY",
+                                StringComparison.OrdinalIgnoreCase)
+                                ? "GEOMETRY"
+                                : "BLOCK",
+                        BlockKey =
+                            blockKey ?? "",
+                        GeometryFingerprint =
+                            geometryFingerprint ?? "",
+                        Label =
+                            normalizedDecision == "POSITIVE"
+                                ? normalizedLabel
+                                : "",
+                        Decision =
+                            normalizedDecision,
+                        FollowDn =
+                            followDn,
+                        Confirmations =
+                            normalizedDecision == "POSITIVE"
+                                ? 1
+                                : 0,
+                        Rejections =
+                            normalizedDecision == "NEGATIVE"
+                                ? 1
+                                : 0,
+                        Scope =
+                            "GLOBAL",
+                        UpdatedUtc =
+                            DateTime.UtcNow.ToString(
+                                "O",
+                                CultureInfo.InvariantCulture),
+                        LastSource =
+                            source ?? ""
+                    };
+
+                memory.Add(
+                    existing);
+            }
+            else
+            {
+                bool changed =
+                    !string.Equals(
+                        existing.Decision,
+                        normalizedDecision,
+                        StringComparison.OrdinalIgnoreCase) ||
+                    (normalizedDecision == "POSITIVE" &&
+                     (!string.Equals(
+                          existing.Label,
+                          normalizedLabel,
+                          StringComparison.OrdinalIgnoreCase) ||
+                      existing.FollowDn !=
+                          followDn));
+
+                existing.MatchMode =
+                    string.Equals(
+                        matchMode,
+                        "GEOMETRY",
+                        StringComparison.OrdinalIgnoreCase)
+                        ? "GEOMETRY"
+                        : "BLOCK";
+
+                existing.BlockKey =
+                    blockKey ?? "";
+
+                existing.GeometryFingerprint =
+                    geometryFingerprint ?? "";
+
+                existing.Decision =
+                    normalizedDecision;
+
+                existing.Label =
+                    normalizedDecision == "POSITIVE"
+                        ? normalizedLabel
+                        : "";
+
+                existing.FollowDn =
+                    followDn;
+
+                if (reinforce ||
+                    changed)
+                {
+                    if (normalizedDecision ==
+                        "POSITIVE")
+                    {
+                        existing.Confirmations++;
+                    }
+                    else
+                    {
+                        existing.Rejections++;
+                    }
+                }
+
+                existing.UpdatedUtc =
+                    DateTime.UtcNow.ToString(
+                        "O",
+                        CultureInfo.InvariantCulture);
+
+                existing.LastSource =
+                    source ?? "";
+            }
+
+            SaveAiLearningMemory(
+                memory);
+
+            UpdateAiLearningStatusUi();
+        }
+
+        private void LearnAiFromLegendRows(
+            List<SmartLegendAutoRow> rows)
+        {
+            if (rows == null)
+                return;
+
+            foreach (SmartLegendAutoRow row
+                in rows)
+            {
+                if (row == null ||
+                    string.IsNullOrWhiteSpace(
+                        row.DisplayName))
+                {
+                    continue;
+                }
+
+                UpsertAiLearningMemory(
+                    row.MatchMode,
+                    row.BlockKey,
+                    row.GeometryFingerprint,
+                    row.DisplayName,
+                    row.FollowDn,
+                    "POSITIVE",
+                    "LEGEND_REVIEW",
+                    false);
+            }
+        }
+
+        private void LearnAiFromSymbolRules(
+            List<SmartSymbolRule> rules,
+            string source)
+        {
+            if (rules == null)
+                return;
+
+            foreach (SmartSymbolRule rule
+                in rules)
+            {
+                if (rule == null ||
+                    string.IsNullOrWhiteSpace(
+                        rule.DisplayName))
+                {
+                    continue;
+                }
+
+                UpsertAiLearningMemory(
+                    rule.MatchMode,
+                    rule.BlockKey,
+                    rule.GeometryFingerprint,
+                    rule.DisplayName,
+                    string.Equals(
+                        rule.SizeRule,
+                        "THEO_ONG",
+                        StringComparison.OrdinalIgnoreCase),
+                    "POSITIVE",
+                    source,
+                    false);
+            }
+        }
+
+        private void LearnAiNegativeFromAuditRow(
+            SmartAuditRow row)
+        {
+            if (row == null ||
+                row.NegativeLearned)
+            {
+                return;
+            }
+
+            bool isUnrecognizedCandidate =
+                string.Equals(
+                    row.Status,
+                    "MISSING",
+                    StringComparison.OrdinalIgnoreCase) ||
+                (row.Source ?? "")
+                    .IndexOf(
+                        "CHƯA HỌC",
+                        StringComparison.OrdinalIgnoreCase) >=
+                    0;
+
+            // BỎ QUA một dòng đã nhận diện OK chỉ loại instance khỏi thống kê hiện tại.
+            // Không biến cả signature thành NEGATIVE để tránh học quá tay.
+            if (!isUnrecognizedCandidate)
+                return;
+
+            UpsertAiLearningMemory(
+                row.MatchMode,
+                row.BlockKey,
+                row.GeometryFingerprint,
+                "",
+                false,
+                "NEGATIVE",
+                "AUDIT_IGNORE",
+                true);
+
+            row.NegativeLearned =
+                true;
+        }
+
+        private void LearnAiFromAuditCorrections(
+            List<SmartAuditRow> rows)
+        {
+            if (rows == null)
+                return;
+
+            foreach (SmartAuditRow row
+                in rows)
+            {
+                if (row == null ||
+                    string.Equals(
+                        row.Status,
+                        "MISSING",
+                        StringComparison.OrdinalIgnoreCase) ||
+                    string.IsNullOrWhiteSpace(
+                        row.Name) ||
+                    string.Equals(
+                        row.Name,
+                        "CHƯA NHẬN DIỆN",
+                        StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                bool wasNewlyConfirmed =
+                    (row.Source ?? "")
+                        .IndexOf(
+                            "BỔ SUNG",
+                            StringComparison.OrdinalIgnoreCase) >=
+                    0;
+
+                if (!row.UserEdited &&
+                    !wasNewlyConfirmed)
+                {
+                    continue;
+                }
+
+                UpsertAiLearningMemory(
+                    row.MatchMode,
+                    row.BlockKey,
+                    row.GeometryFingerprint,
+                    row.Name,
+                    row.FollowDn,
+                    "POSITIVE",
+                    row.UserEdited
+                        ? "AUDIT_USER_EDIT"
+                        : "AUDIT_CONFIRM_NEW",
+                    true);
+
+                row.UserEdited =
+                    false;
+
+                row.OriginalName =
+                    row.Name;
+
+                row.OriginalFollowDn =
+                    row.FollowDn;
+
+                row.ReviewBaselineInitialized =
+                    true;
+            }
+        }
+
+        private List<SmartSymbolRule> EnrichSmartRulesWithAiLearning(
+            List<SmartSymbolRule> currentRules)
+        {
+            List<SmartSymbolRule> result =
+                CloneSmartRulesForSession(
+                    currentRules ??
+                    new List<SmartSymbolRule>());
+
+            List<AiLearningMemoryEntry> memory =
+                LoadAiLearningMemory();
+
+            foreach (AiLearningMemoryEntry entry
+                in memory)
+            {
+                if (entry == null ||
+                    !string.Equals(
+                        entry.Decision,
+                        "POSITIVE",
+                        StringComparison.OrdinalIgnoreCase) ||
+                    string.IsNullOrWhiteSpace(
+                        entry.Label))
+                {
+                    continue;
+                }
+
+                bool exists;
+
+                if (string.Equals(
+                        entry.MatchMode,
+                        "GEOMETRY",
+                        StringComparison.OrdinalIgnoreCase))
+                {
+                    exists =
+                        result.Any(
+                            r =>
+                                r != null &&
+                                string.Equals(
+                                    r.MatchMode,
+                                    "GEOMETRY",
+                                    StringComparison.OrdinalIgnoreCase) &&
+                                string.Equals(
+                                    r.GeometryFingerprint,
+                                    entry.GeometryFingerprint,
+                                    StringComparison.Ordinal));
+                }
+                else
+                {
+                    exists =
+                        result.Any(
+                            r =>
+                                r != null &&
+                                !string.Equals(
+                                    r.MatchMode,
+                                    "GEOMETRY",
+                                    StringComparison.OrdinalIgnoreCase) &&
+                                string.Equals(
+                                    r.BlockKey,
+                                    entry.BlockKey,
+                                    StringComparison.OrdinalIgnoreCase));
+                }
+
+                // Legend hiện tại luôn ưu tiên hơn memory cũ.
+                if (exists)
+                    continue;
+
+                result.Add(
+                    new SmartSymbolRule
+                    {
+                        BlockKey =
+                            entry.BlockKey,
+                        DisplayName =
+                            entry.Label,
+                        SizeRule =
+                            entry.FollowDn
+                                ? "THEO_ONG"
+                                : "KHONG_SIZE",
+                        MatchMode =
+                            entry.MatchMode,
+                        GeometryFingerprint =
+                            entry.GeometryFingerprint
+                    });
+            }
+
+            return result;
+        }
+
+        private bool IsAiLearningNegativeBlock(
+            string blockKey)
+        {
+            string signature =
+                GetAiLearningSignature(
+                    "BLOCK",
+                    blockKey,
+                    "");
+
+            if (string.IsNullOrWhiteSpace(
+                    signature))
+            {
+                return false;
+            }
+
+            return
+                LoadAiLearningMemory()
+                    .Any(
+                        e =>
+                            e != null &&
+                            string.Equals(
+                                e.Decision,
+                                "NEGATIVE",
+                                StringComparison.OrdinalIgnoreCase) &&
+                            string.Equals(
+                                e.Signature,
+                                signature,
+                                StringComparison.OrdinalIgnoreCase));
+        }
+
+        private bool IsAiLearningNegativeGeometry(
+            string fingerprint)
+        {
+            if (string.IsNullOrWhiteSpace(
+                    fingerprint))
+            {
+                return false;
+            }
+
+            List<AiLearningMemoryEntry> negatives =
+                LoadAiLearningMemory()
+                    .Where(
+                        e =>
+                            e != null &&
+                            string.Equals(
+                                e.Decision,
+                                "NEGATIVE",
+                                StringComparison.OrdinalIgnoreCase) &&
+                            string.Equals(
+                                e.MatchMode,
+                                "GEOMETRY",
+                                StringComparison.OrdinalIgnoreCase) &&
+                            !string.IsNullOrWhiteSpace(
+                                e.GeometryFingerprint))
+                    .ToList();
+
+            foreach (AiLearningMemoryEntry entry
+                in negatives)
+            {
+                if (string.Equals(
+                        entry.GeometryFingerprint,
+                        fingerprint,
+                        StringComparison.Ordinal))
+                {
+                    return true;
+                }
+
+                double score =
+                    CompareSmartGeometryFingerprints(
+                        entry.GeometryFingerprint,
+                        fingerprint);
+
+                // Negative memory dùng ngưỡng chặt hơn positive match
+                // để tránh loại nhầm ký hiệu gần giống.
+                if (score <= 0.045)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private void UpdateAiLearningStatusUi()
+        {
+            try
+            {
+                if (TxtAiLearningStatus == null)
+                    return;
+
+                List<AiLearningMemoryEntry> memory =
+                    LoadAiLearningMemory();
+
+                int positive =
+                    memory.Count(
+                        e =>
+                            string.Equals(
+                                e.Decision,
+                                "POSITIVE",
+                                StringComparison.OrdinalIgnoreCase));
+
+                int negative =
+                    memory.Count(
+                        e =>
+                            string.Equals(
+                                e.Decision,
+                                "NEGATIVE",
+                                StringComparison.OrdinalIgnoreCase));
+
+                TxtAiLearningStatus.Text =
+                    "AI Learning: LOCAL  •  " +
+                    positive +
+                    " mẫu đã học  •  " +
+                    negative +
+                    " mẫu loại trừ";
+            }
+            catch
+            {
+            }
+        }
+
+        private void BtnAiLearningMemory_Click(
+            object sender,
+            RoutedEventArgs e)
+        {
+            List<AiLearningMemoryEntry> memory =
+                LoadAiLearningMemory();
+
+            using (System.Windows.Forms.Form form =
+                new System.Windows.Forms.Form())
+            using (System.Windows.Forms.DataGridView grid =
+                new System.Windows.Forms.DataGridView())
+            using (System.Windows.Forms.Label title =
+                new System.Windows.Forms.Label())
+            using (System.Windows.Forms.Button deleteButton =
+                new System.Windows.Forms.Button())
+            using (System.Windows.Forms.Button closeButton =
+                new System.Windows.Forms.Button())
+            {
+                form.Text =
+                    "BỘ NHỚ AI LOCAL";
+
+                form.StartPosition =
+                    System.Windows.Forms.FormStartPosition.CenterScreen;
+
+                form.Width =
+                    1100;
+
+                form.Height =
+                    650;
+
+                form.BackColor =
+                    System.Drawing.Color.White;
+
+                title.Left =
+                    14;
+
+                title.Top =
+                    12;
+
+                title.Width =
+                    1040;
+
+                title.Height =
+                    42;
+
+                title.Font =
+                    new System.Drawing.Font(
+                        "Segoe UI",
+                        10.0f,
+                        System.Drawing.FontStyle.Bold);
+
+                title.Text =
+                    "Bộ nhớ này chỉ lưu signature ký hiệu + tên + THEO DN + Positive/Negative. " +
+                    "Không lưu DWG. Có thể xóa một mẫu nếu AI đã học sai.";
+
+                grid.Left =
+                    14;
+
+                grid.Top =
+                    58;
+
+                grid.Width =
+                    1050;
+
+                grid.Height =
+                    500;
+
+                grid.AllowUserToAddRows =
+                    false;
+
+                grid.AllowUserToDeleteRows =
+                    false;
+
+                grid.ReadOnly =
+                    true;
+
+                grid.RowHeadersVisible =
+                    false;
+
+                grid.SelectionMode =
+                    System.Windows.Forms.DataGridViewSelectionMode.FullRowSelect;
+
+                grid.MultiSelect =
+                    false;
+
+                grid.BackgroundColor =
+                    System.Drawing.Color.White;
+
+                grid.EnableHeadersVisualStyles =
+                    false;
+
+                grid.ColumnHeadersDefaultCellStyle.BackColor =
+                    System.Drawing.Color.FromArgb(
+                        236,
+                        242,
+                        248);
+
+                grid.Columns.Add(
+                    "DECISION",
+                    "LOẠI HỌC");
+
+                grid.Columns["DECISION"].Width =
+                    105;
+
+                grid.Columns.Add(
+                    "LABEL",
+                    "TÊN / NHÃN");
+
+                grid.Columns["LABEL"].Width =
+                    340;
+
+                grid.Columns.Add(
+                    "MODE",
+                    "DẠNG");
+
+                grid.Columns["MODE"].Width =
+                    100;
+
+                grid.Columns.Add(
+                    "DN",
+                    "THEO DN");
+
+                grid.Columns["DN"].Width =
+                    85;
+
+                grid.Columns.Add(
+                    "CONFIRM",
+                    "XÁC NHẬN");
+
+                grid.Columns["CONFIRM"].Width =
+                    90;
+
+                grid.Columns.Add(
+                    "REJECT",
+                    "LOẠI");
+
+                grid.Columns["REJECT"].Width =
+                    70;
+
+                grid.Columns.Add(
+                    "SOURCE",
+                    "NGUỒN HỌC");
+
+                grid.Columns["SOURCE"].Width =
+                    145;
+
+                grid.Columns.Add(
+                    "UPDATED",
+                    "CẬP NHẬT");
+
+                grid.Columns["UPDATED"].AutoSizeMode =
+                    System.Windows.Forms.DataGridViewAutoSizeColumnMode.Fill;
+
+                foreach (AiLearningMemoryEntry entry
+                    in memory
+                        .OrderBy(
+                            e =>
+                                e.Decision)
+                        .ThenBy(
+                            e =>
+                                e.Label))
+                {
+                    int index =
+                        grid.Rows.Add(
+                            entry.Decision,
+                            string.Equals(
+                                entry.Decision,
+                                "NEGATIVE",
+                                StringComparison.OrdinalIgnoreCase)
+                                ? "(KHÔNG PHẢI THIẾT BỊ)"
+                                : entry.Label,
+                            entry.MatchMode,
+                            entry.FollowDn
+                                ? "Có"
+                                : "Không",
+                            entry.Confirmations,
+                            entry.Rejections,
+                            entry.LastSource,
+                            entry.UpdatedUtc);
+
+                    grid.Rows[index].Tag =
+                        entry;
+
+                    if (string.Equals(
+                            entry.Decision,
+                            "NEGATIVE",
+                            StringComparison.OrdinalIgnoreCase))
+                    {
+                        grid.Rows[index].DefaultCellStyle.BackColor =
+                            System.Drawing.Color.MistyRose;
+                    }
+                    else
+                    {
+                        grid.Rows[index].DefaultCellStyle.BackColor =
+                            System.Drawing.Color.Honeydew;
+                    }
+                }
+
+                deleteButton.Text =
+                    "XÓA MẪU ĐÃ CHỌN";
+
+                deleteButton.Width =
+                    180;
+
+                deleteButton.Height =
+                    38;
+
+                deleteButton.Left =
+                    700;
+
+                deleteButton.Top =
+                    575;
+
+                deleteButton.Click +=
+                    (s, args) =>
+                    {
+                        if (grid.SelectedRows.Count <= 0)
+                            return;
+
+                        AiLearningMemoryEntry selected =
+                            grid.SelectedRows[0].Tag as
+                                AiLearningMemoryEntry;
+
+                        if (selected == null)
+                            return;
+
+                        System.Windows.Forms.DialogResult confirm =
+                            System.Windows.Forms.MessageBox.Show(
+                                "Xóa mẫu AI đã chọn?\n\n" +
+                                (string.Equals(
+                                     selected.Decision,
+                                     "NEGATIVE",
+                                     StringComparison.OrdinalIgnoreCase)
+                                    ? "NEGATIVE"
+                                    : selected.Label),
+                                "BỘ NHỚ AI",
+                                System.Windows.Forms.MessageBoxButtons.YesNo,
+                                System.Windows.Forms.MessageBoxIcon.Question);
+
+                        if (confirm !=
+                            System.Windows.Forms.DialogResult.Yes)
+                        {
+                            return;
+                        }
+
+                        memory.RemoveAll(
+                            e =>
+                                string.Equals(
+                                    e.Signature,
+                                    selected.Signature,
+                                    StringComparison.OrdinalIgnoreCase));
+
+                        SaveAiLearningMemory(
+                            memory);
+
+                        grid.Rows.Remove(
+                            grid.SelectedRows[0]);
+
+                        UpdateAiLearningStatusUi();
+                    };
+
+                closeButton.Text =
+                    "ĐÓNG";
+
+                closeButton.Width =
+                    120;
+
+                closeButton.Height =
+                    38;
+
+                closeButton.Left =
+                    895;
+
+                closeButton.Top =
+                    575;
+
+                closeButton.DialogResult =
+                    System.Windows.Forms.DialogResult.OK;
+
+                form.Controls.Add(
+                    title);
+
+                form.Controls.Add(
+                    grid);
+
+                form.Controls.Add(
+                    deleteButton);
+
+                form.Controls.Add(
+                    closeButton);
+
+                form.AcceptButton =
+                    closeButton;
+
+                form.ShowDialog();
+            }
+        }
+
         private void BtnThongKeThietBiVan_Click(
             object sender,
             RoutedEventArgs e)
@@ -41131,6 +42462,8 @@ namespace ClassLibrary4
             object sender,
             RoutedEventArgs e)
         {
+            UpdateAiLearningStatusUi();
+
             // NÚT MỚI RIÊNG:
             // Chỉ chạy workflow học ký hiệu + quét bản vẽ + suy DN theo tuyến ống.
             try
@@ -41300,6 +42633,69 @@ namespace ClassLibrary4
             Editor ed =
                 doc.Editor;
 
+            if (_lastSmartAuditRows != null &&
+                _lastSmartAuditRows.Count > 0)
+            {
+                _smartValveStage =
+                    "SESSION_MENU";
+
+                int sessionAction =
+                    GetSmartMenuChoice(
+                        ed,
+                        "\n[NHẬN DIỆN VAN/TB] Phiên gần nhất vẫn còn. " +
+                        "1=QUÉT MỚI, " +
+                        "2=MỞ LẠI BẢNG KIỂM TRA, " +
+                        "3=SỬA LẠI BẢNG KÝ HIỆU",
+                        1,
+                        3,
+                        2);
+
+                if (sessionAction <= 0)
+                {
+                    _smartValveStage =
+                        "IDLE";
+                    return;
+                }
+
+                if (sessionAction == 2)
+                {
+                    ReopenLastSmartAuditSession(
+                        doc);
+
+                    _smartValveStage =
+                        "IDLE";
+                    return;
+                }
+
+                if (sessionAction == 3)
+                {
+                    ReopenLastSmartLegendSession(
+                        doc);
+
+                    _smartValveStage =
+                        "IDLE";
+                    return;
+                }
+
+                // 1 = QUÉT MỚI:
+                // xóa preview legend của phiên cũ để giải phóng RAM,
+                // nhưng bảng CAD cũ vẫn giữ cho đến khi xuất bảng mới.
+                DisposeSmartLegendPreviews(
+                    _lastSmartLegendRows);
+
+                _lastSmartLegendRows =
+                    new List<SmartLegendAutoRow>();
+
+                _lastSmartAuditRows =
+                    new List<SmartAuditRow>();
+
+                _lastSmartLegendZero =
+                    new List<string>();
+
+                _lastSmartRules =
+                    new List<SmartSymbolRule>();
+            }
+
             _smartValveStage =
                 "AUTO_LEGEND_SELECT";
 
@@ -41349,6 +42745,7 @@ namespace ClassLibrary4
 
             bool accepted =
                 ShowSmartLegendReviewDialog(
+                    doc,
                     rows);
 
             if (!accepted)
@@ -41394,6 +42791,17 @@ namespace ClassLibrary4
             List<SmartSymbolRule> rules =
                 MergeSmartLegendRowsIntoLibrary(
                     rows);
+
+            DisposeSmartLegendPreviews(
+                _lastSmartLegendRows);
+
+            _lastSmartLegendRows =
+                CloneSmartLegendRowsForSession(
+                    rows);
+
+            _lastSmartRules =
+                CloneSmartRulesForSession(
+                    rules);
 
             DisposeSmartLegendPreviews(
                 rows);
@@ -41561,15 +42969,13 @@ namespace ClassLibrary4
                         continue;
                     }
 
-                    if (ent is BlockReference ||
-                        ent is Line ||
-                        ent is Arc ||
-                        ent is Circle ||
-                        ent is Polyline)
-                    {
-                        symbolObjectIds.Add(
-                            id);
-                    }
+                    // STEP18H:
+                    // Không whitelist Block/Line/Arc/Circle... nữa.
+                    // Ký hiệu thực tế có thể là POINT, SOLID, HATCH, ELLIPSE,
+                    // SPLINE, WIPEOUT hoặc custom entity. Cứ giữ Entity,
+                    // sau đó row-level geometry + table-grid filter sẽ quyết định.
+                    symbolObjectIds.Add(
+                        id);
                 }
 
                 tr.Commit();
@@ -41726,13 +43132,17 @@ namespace ClassLibrary4
                             c.X <
                             splitX;
 
-                        // Loại các đường kẻ khung bảng:
-                        // thường dài gần bằng bề rộng/bề cao toàn bảng.
+                        // STEP 18F:
+                        // Không được lấy "độ cao > 18% bảng" để loại symbol:
+                        // với bảng chỉ 3 dòng thì CIRCLE/BLOCK thật dễ cao 25-30% bảng.
+                        // Chỉ loại entity thật sự giống GRID LINE / BORDER.
                         bool looksLikeTableGrid =
-                            dx >
-                                tableWidth * 0.42 ||
-                            dy >
-                                tableHeight * 0.18;
+                            IsSmartLegendTableGridEntity(
+                                ent,
+                                dx,
+                                dy,
+                                tableWidth,
+                                tableHeight);
 
                         if (yInside &&
                             leftOfDescription &&
@@ -41750,6 +43160,13 @@ namespace ClassLibrary4
                     ObjectId blockId =
                         ObjectId.Null;
 
+                    // STEP18G:
+                    // AutoCAD POINT nhìn trên màn hình có thể là vòng tròn/chấm giữa,
+                    // nhưng entity thực tế là DBPoint. Nếu không bắt DBPoint,
+                    // dòng Legend sẽ biến mất hoàn toàn.
+                    ObjectId pointId =
+                        ObjectId.Null;
+
                     foreach (ObjectId id
                         in rowSymbols)
                     {
@@ -41764,6 +43181,13 @@ namespace ClassLibrary4
                             blockId =
                                 id;
                             break;
+                        }
+
+                        if (ent is DBPoint &&
+                            pointId.IsNull)
+                        {
+                            pointId =
+                                id;
                         }
                     }
 
@@ -41805,8 +43229,17 @@ namespace ClassLibrary4
                             NormalizeSmartSymbolKey(
                                 blockName);
 
+                        // STEP18F:
+                        // Một ký hiệu BLOCK được học theo 2 khóa:
+                        // 1) BlockKey - nhanh/chuẩn khi tên block giống nhau.
+                        // 2) Geometry fingerprint - fallback khi copy/explode/
+                        //    đổi tên block nhưng hình vẫn giống Legend.
                         row.GeometryFingerprint =
-                            "";
+                            br != null
+                                ? BuildSmartBlockGeometryFingerprint(
+                                    tr,
+                                    br)
+                                : "";
 
                         row.SymbolSummary =
                             string.IsNullOrWhiteSpace(
@@ -41829,6 +43262,45 @@ namespace ClassLibrary4
                                 blockId
                             };
                     }
+                    else if (!pointId.IsNull)
+                    {
+                        DBPoint point =
+                            tr.GetObject(
+                                pointId,
+                                OpenMode.ForRead,
+                                false) as DBPoint;
+
+                        if (point == null)
+                        {
+                            continue;
+                        }
+
+                        row.MatchMode =
+                            "POINT";
+
+                        row.BlockKey =
+                            GetSmartPointSignature(
+                                point);
+
+                        row.GeometryFingerprint =
+                            "";
+
+                        row.SymbolSummary =
+                            GetSmartPointSummary(
+                                point);
+
+                        row.SymbolCenter =
+                            new Point3d(
+                                point.Position.X,
+                                point.Position.Y,
+                                0.0);
+
+                        previewIds =
+                            new List<ObjectId>
+                            {
+                                pointId
+                            };
+                    }
                     else
                     {
                         string fingerprint =
@@ -41839,24 +43311,51 @@ namespace ClassLibrary4
                         if (string.IsNullOrWhiteSpace(
                                 fingerprint))
                         {
-                            continue;
-                        }
+                            fingerprint =
+                                BuildSmartGenericLegendFingerprint(
+                                    tr,
+                                    rowSymbols);
 
-                        row.MatchMode =
-                            "GEOMETRY";
+                            if (string.IsNullOrWhiteSpace(
+                                    fingerprint))
+                            {
+                                continue;
+                            }
+
+                            row.MatchMode =
+                                "GENERIC";
+                        }
+                        else
+                        {
+                            row.MatchMode =
+                                "GEOMETRY";
+                        }
 
                         row.GeometryFingerprint =
                             fingerprint;
 
                         row.BlockKey =
-                            "GEO_" +
+                            (string.Equals(
+                                 row.MatchMode,
+                                 "GENERIC",
+                                 StringComparison.OrdinalIgnoreCase)
+                                ? "GEN_"
+                                : "GEO_") +
                             Convert.ToBase64String(
                                 Encoding.UTF8.GetBytes(
                                     fingerprint));
 
                         row.SymbolSummary =
-                            GetSmartGeometryFingerprintSummary(
-                                fingerprint);
+                            string.Equals(
+                                row.MatchMode,
+                                "GENERIC",
+                                StringComparison.OrdinalIgnoreCase)
+                                ? "GENERIC / " +
+                                  GetSmartGenericLegendSummary(
+                                      tr,
+                                      rowSymbols)
+                                : GetSmartGeometryFingerprintSummary(
+                                      fingerprint);
 
                         List<Point3d> centers =
                             new List<Point3d>();
@@ -41925,6 +43424,83 @@ namespace ClassLibrary4
                         r =>
                             r.STT)
                     .ToList();
+        }
+
+        private bool IsSmartLegendTableGridEntity(
+            Entity ent,
+            double dx,
+            double dy,
+            double tableWidth,
+            double tableHeight)
+        {
+            if (ent == null)
+                return false;
+
+            // Block/Circle/Arc gần như chắc chắn là symbol, không phải grid.
+            if (ent is BlockReference ||
+                ent is Circle ||
+                ent is Arc ||
+                ent is DBPoint)
+            {
+                return false;
+            }
+
+            double widthRatio =
+                dx /
+                Math.Max(
+                    tableWidth,
+                    1.0);
+
+            double heightRatio =
+                dy /
+                Math.Max(
+                    tableHeight,
+                    1.0);
+
+            double maxSpan =
+                Math.Max(
+                    dx,
+                    dy);
+
+            double minSpan =
+                Math.Min(
+                    dx,
+                    dy);
+
+            double aspect =
+                maxSpan /
+                Math.Max(
+                    minSpan,
+                    1.0);
+
+            if (ent is Line)
+            {
+                return
+                    (widthRatio >= 0.34 ||
+                     heightRatio >= 0.55) &&
+                    aspect >= 8.0;
+            }
+
+            if (ent is Polyline pl)
+            {
+                // Border/khung bảng thường rất dài hoặc bao gần toàn row/table.
+                if (widthRatio >= 0.55 ||
+                    heightRatio >= 0.70)
+                {
+                    return true;
+                }
+
+                // Polyline symbol có thể lớn nhưng thường không phải một nét siêu dài/mảnh.
+                if (!pl.Closed &&
+                    aspect >= 10.0 &&
+                    (widthRatio >= 0.30 ||
+                     heightRatio >= 0.45))
+                {
+                    return true;
+                }
+            }
+
+            return false;
         }
 
         private List<SmartLegendTextCandidate> MergeSmartLegendTextLines(
@@ -42014,6 +43590,95 @@ namespace ClassLibrary4
                     .ToList();
         }
 
+        private string GetSmartPointSignature(
+            DBPoint point)
+        {
+            if (point == null)
+                return "";
+
+            string layer =
+                NormalizeSmartSymbolKey(
+                    point.Layer ??
+                    "");
+
+            int colorIndex =
+                256;
+
+            try
+            {
+                colorIndex =
+                    point.ColorIndex;
+            }
+            catch
+            {
+            }
+
+            int pdMode =
+                0;
+
+            try
+            {
+                object raw =
+                    Autodesk.AutoCAD.ApplicationServices.Core.Application
+                        .GetSystemVariable(
+                            "PDMODE");
+
+                if (raw != null)
+                {
+                    int.TryParse(
+                        Convert.ToString(
+                            raw,
+                            CultureInfo.InvariantCulture),
+                        out pdMode);
+                }
+            }
+            catch
+            {
+            }
+
+            return
+                "POINT|L=" +
+                layer +
+                "|C=" +
+                colorIndex.ToString(
+                    CultureInfo.InvariantCulture) +
+                "|M=" +
+                pdMode.ToString(
+                    CultureInfo.InvariantCulture);
+        }
+
+        private string GetSmartPointSummary(
+            DBPoint point)
+        {
+            int pdMode =
+                0;
+
+            try
+            {
+                object raw =
+                    Autodesk.AutoCAD.ApplicationServices.Core.Application
+                        .GetSystemVariable(
+                            "PDMODE");
+
+                if (raw != null)
+                {
+                    int.TryParse(
+                        Convert.ToString(
+                            raw,
+                            CultureInfo.InvariantCulture),
+                        out pdMode);
+                }
+            }
+            catch
+            {
+            }
+
+            return
+                "POINT / DBPoint / PDMODE=" +
+                pdMode.ToString(
+                    CultureInfo.InvariantCulture);
+        }
+
         private static bool GuessSmartLegendFollowDn(
             string displayName)
         {
@@ -42046,621 +43711,1133 @@ namespace ClassLibrary4
         }
 
         private bool ShowSmartLegendReviewDialog(
+            Document doc,
             List<SmartLegendAutoRow> rows)
         {
-            if (rows == null ||
+            if (doc == null ||
+                rows == null ||
                 rows.Count == 0)
             {
                 return false;
             }
 
-            using (System.Windows.Forms.Form form =
-                new System.Windows.Forms.Form())
-            using (System.Windows.Forms.DataGridView grid =
-                new System.Windows.Forms.DataGridView())
-            using (System.Windows.Forms.Button okButton =
-                new System.Windows.Forms.Button())
-            using (System.Windows.Forms.Button cancelButton =
-                new System.Windows.Forms.Button())
-            using (System.Windows.Forms.Label title =
-                new System.Windows.Forms.Label())
-            using (System.Windows.Forms.Label subTitle =
-                new System.Windows.Forms.Label())
+            while (true)
             {
-                form.Text =
-                    "KIỂM TRA BẢNG KÝ HIỆU - VAN / THIẾT BỊ";
-
-                form.StartPosition =
-                    System.Windows.Forms.FormStartPosition.CenterScreen;
-
-                form.Width =
-                    1140;
-
-                form.Height =
-                    720;
-
-                form.MinimizeBox =
-                    false;
-
-                form.MaximizeBox =
-                    true;
-
-                form.BackColor =
-                    System.Drawing.Color.White;
-
-                title.Text =
-                    "KIỂM TRA BẢNG KÝ HIỆU - VAN / THIẾT BỊ";
-
-                title.Left =
-                    18;
-
-                title.Top =
-                    12;
-
-                title.Width =
-                    1060;
-
-                title.Height =
-                    28;
-
-                title.Font =
-                    new System.Drawing.Font(
-                        "Segoe UI",
-                        12.0f,
-                        System.Drawing.FontStyle.Bold);
-
-                title.ForeColor =
-                    System.Drawing.Color.FromArgb(
-                        40,
-                        60,
-                        95);
-
-                subTitle.Text =
-                    "Tool đã tự tách KÝ HIỆU + TÊN. Có thể sửa tên, tick THEO DN cho thiết bị lấy size theo tuyến ống, rồi bấm OK - QUÉT BẢN VẼ.";
-
-                subTitle.Left =
-                    18;
-
-                subTitle.Top =
-                    42;
-
-                subTitle.Width =
-                    1060;
-
-                subTitle.Height =
-                    36;
-
-                subTitle.Font =
-                    new System.Drawing.Font(
-                        "Segoe UI",
-                        9.5f,
-                        System.Drawing.FontStyle.Regular);
-
-                subTitle.ForeColor =
-                    System.Drawing.Color.FromArgb(
-                        70,
-                        70,
-                        70);
-
-                grid.Left =
-                    18;
-
-                grid.Top =
-                    84;
-
-                grid.Width =
-                    1085;
-
-                grid.Height =
-                    560;
-
-                grid.AllowUserToAddRows =
-                    false;
-
-                grid.AllowUserToDeleteRows =
-                    true;
-
-                grid.AllowUserToResizeRows =
-                    false;
-
-                grid.RowHeadersVisible =
-                    false;
-
-                grid.AutoSizeRowsMode =
-                    System.Windows.Forms.DataGridViewAutoSizeRowsMode.None;
-
-                grid.RowTemplate.Height =
-                    72;
-
-                grid.SelectionMode =
-                    System.Windows.Forms.DataGridViewSelectionMode.FullRowSelect;
-
-                grid.MultiSelect =
-                    false;
-
-                grid.BackgroundColor =
-                    System.Drawing.Color.White;
-
-                grid.BorderStyle =
-                    System.Windows.Forms.BorderStyle.FixedSingle;
-
-                grid.GridColor =
-                    System.Drawing.Color.FromArgb(
-                        210,
-                        210,
-                        210);
-
-                grid.EnableHeadersVisualStyles =
-                    false;
-
-                grid.ColumnHeadersHeight =
-                    42;
-
-                grid.ColumnHeadersBorderStyle =
-                    System.Windows.Forms.DataGridViewHeaderBorderStyle.Single;
-
-                grid.Font =
-                    new System.Drawing.Font(
-                        "Segoe UI",
-                        10.0f);
-
-                grid.DefaultCellStyle.SelectionBackColor =
-                    System.Drawing.Color.FromArgb(
-                        230,
-                        240,
-                        255);
-
-                grid.DefaultCellStyle.SelectionForeColor =
-                    System.Drawing.Color.Black;
-
-                grid.AlternatingRowsDefaultCellStyle.BackColor =
-                    System.Drawing.Color.FromArgb(
-                        248,
-                        250,
-                        252);
-
-                grid.ColumnHeadersDefaultCellStyle.BackColor =
-                    System.Drawing.Color.FromArgb(
-                        236,
-                        242,
-                        248);
-
-                grid.ColumnHeadersDefaultCellStyle.ForeColor =
-                    System.Drawing.Color.FromArgb(
-                        35,
-                        50,
-                        70);
-
-                grid.ColumnHeadersDefaultCellStyle.Font =
-                    new System.Drawing.Font(
-                        "Segoe UI",
-                        10.0f,
-                        System.Drawing.FontStyle.Bold);
-
-                grid.ColumnHeadersDefaultCellStyle.Alignment =
-                    System.Windows.Forms.DataGridViewContentAlignment.MiddleCenter;
-
-                grid.DefaultCellStyle.Alignment =
-                    System.Windows.Forms.DataGridViewContentAlignment.MiddleLeft;
-
-                System.Windows.Forms.DataGridViewTextBoxColumn sttColumn =
-                    new System.Windows.Forms.DataGridViewTextBoxColumn();
-
-                sttColumn.Name =
-                    "STT";
-
-                sttColumn.HeaderText =
-                    "STT";
-
-                sttColumn.Width =
-                    62;
-
-                sttColumn.ReadOnly =
-                    true;
-
-                sttColumn.DefaultCellStyle.Alignment =
-                    System.Windows.Forms.DataGridViewContentAlignment.MiddleCenter;
-
-                grid.Columns.Add(
-                    sttColumn);
-
-                System.Windows.Forms.DataGridViewImageColumn symbolColumn =
-                    new System.Windows.Forms.DataGridViewImageColumn();
-
-                symbolColumn.Name =
-                    "SYMBOL";
-
-                symbolColumn.HeaderText =
-                    "KÝ HIỆU";
-
-                symbolColumn.Width =
-                    180;
-
-                symbolColumn.ImageLayout =
-                    System.Windows.Forms.DataGridViewImageCellLayout.Zoom;
-
-                symbolColumn.ReadOnly =
-                    true;
-
-                symbolColumn.DefaultCellStyle.Alignment =
-                    System.Windows.Forms.DataGridViewContentAlignment.MiddleCenter;
-
-                grid.Columns.Add(
-                    symbolColumn);
-
-                System.Windows.Forms.DataGridViewTextBoxColumn nameColumn =
-                    new System.Windows.Forms.DataGridViewTextBoxColumn();
-
-                nameColumn.Name =
-                    "NAME";
-
-                nameColumn.HeaderText =
-                    "TÊN THIẾT BỊ / VẬT TƯ";
-
-                nameColumn.AutoSizeMode =
-                    System.Windows.Forms.DataGridViewAutoSizeColumnMode.Fill;
-
-                nameColumn.DefaultCellStyle.Alignment =
-                    System.Windows.Forms.DataGridViewContentAlignment.MiddleLeft;
-
-                grid.Columns.Add(
-                    nameColumn);
-
-                System.Windows.Forms.DataGridViewCheckBoxColumn dnColumn =
-                    new System.Windows.Forms.DataGridViewCheckBoxColumn();
-
-                dnColumn.Name =
-                    "FOLLOW_DN";
-
-                dnColumn.HeaderText =
-                    "THEO DN";
-
-                dnColumn.Width =
-                    110;
-
-                dnColumn.TrueValue =
-                    true;
-
-                dnColumn.FalseValue =
-                    false;
-
-                dnColumn.DefaultCellStyle.Alignment =
-                    System.Windows.Forms.DataGridViewContentAlignment.MiddleCenter;
-
-                grid.Columns.Add(
-                    dnColumn);
-
-                System.Windows.Forms.DataGridViewTextBoxColumn modeColumn =
-                    new System.Windows.Forms.DataGridViewTextBoxColumn();
-
-                modeColumn.Name =
-                    "MODE";
-
-                modeColumn.HeaderText =
-                    "NHẬN DẠNG";
-
-                modeColumn.Width =
-                    120;
-
-                modeColumn.ReadOnly =
-                    true;
-
-                modeColumn.DefaultCellStyle.Alignment =
-                    System.Windows.Forms.DataGridViewContentAlignment.MiddleCenter;
-
-                grid.Columns.Add(
-                    modeColumn);
-
-                int stt =
-                    1;
-
-                foreach (SmartLegendAutoRow row
-                    in rows)
+                SmartLegendAutoRow reselectRow =
+                    null;
+
+                using (System.Windows.Forms.Form form =
+                    new System.Windows.Forms.Form())
+                using (System.Windows.Forms.DataGridView grid =
+                    new System.Windows.Forms.DataGridView())
+                using (System.Windows.Forms.Button okButton =
+                    new System.Windows.Forms.Button())
+                using (System.Windows.Forms.Button cancelButton =
+                    new System.Windows.Forms.Button())
+                using (System.Windows.Forms.Label title =
+                    new System.Windows.Forms.Label())
+                using (System.Windows.Forms.Label subTitle =
+                    new System.Windows.Forms.Label())
                 {
-                    int index =
-                        grid.Rows.Add(
-                            stt++,
-                            row.Preview,
-                            row.DisplayName,
-                            row.FollowDn,
-                            row.MatchMode == "GEOMETRY"
-                                ? "HÌNH EXPLODE"
-                                : "BLOCK");
+                    form.Text =
+                        "KIỂM TRA BẢNG KÝ HIỆU - VAN / THIẾT BỊ";
 
-                    grid.Rows[index].Tag =
-                        row;
-                }
+                    form.StartPosition =
+                        System.Windows.Forms.FormStartPosition.CenterScreen;
 
-                grid.CellPainting +=
-                    (s, e) =>
-                    {
-                        if (e.RowIndex < 0 ||
-                            e.ColumnIndex < 0)
-                        {
-                            return;
-                        }
+                    form.Width =
+                        1240;
 
-                        if (grid.Columns[e.ColumnIndex].Name !=
-                            "FOLLOW_DN")
-                        {
-                            return;
-                        }
+                    form.Height =
+                        720;
 
-                        e.PaintBackground(
-                            e.CellBounds,
-                            true);
-
-                        System.Windows.Forms.VisualStyles.CheckBoxState state =
-                            System.Windows.Forms.VisualStyles.CheckBoxState.UncheckedNormal;
-
-                        object raw =
-                            grid.Rows[e.RowIndex]
-                                .Cells[e.ColumnIndex]
-                                .Value;
-
-                        bool isChecked =
-                            false;
-
-                        if (raw != null)
-                        {
-                            bool.TryParse(
-                                Convert.ToString(
-                                    raw),
-                                out isChecked);
-                        }
-
-                        if (isChecked)
-                        {
-                            state =
-                                System.Windows.Forms.VisualStyles.CheckBoxState.CheckedNormal;
-                        }
-
-                        System.Drawing.Size size =
-                            System.Windows.Forms.CheckBoxRenderer.GetGlyphSize(
-                                e.Graphics,
-                                state);
-
-                        System.Drawing.Point pt =
-                            new System.Drawing.Point(
-                                e.CellBounds.X +
-                                (e.CellBounds.Width - size.Width) / 2,
-                                e.CellBounds.Y +
-                                (e.CellBounds.Height - size.Height) / 2);
-
-                        System.Windows.Forms.CheckBoxRenderer.DrawCheckBox(
-                            e.Graphics,
-                            pt,
-                            state);
-
-                        e.Handled =
-                            true;
-                    };
-
-                grid.CellContentClick +=
-                    (s, e) =>
-                    {
-                        if (e.RowIndex < 0 ||
-                            e.ColumnIndex < 0)
-                        {
-                            return;
-                        }
-
-                        if (grid.Columns[e.ColumnIndex].Name !=
-                            "FOLLOW_DN")
-                        {
-                            return;
-                        }
-
-                        object raw =
-                            grid.Rows[e.RowIndex]
-                                .Cells[e.ColumnIndex]
-                                .Value;
-
-                        bool current =
-                            false;
-
-                        if (raw != null)
-                        {
-                            bool.TryParse(
-                                Convert.ToString(
-                                    raw),
-                                out current);
-                        }
-
-                        grid.Rows[e.RowIndex]
-                            .Cells[e.ColumnIndex]
-                            .Value =
-                            !current;
-
-                        grid.InvalidateCell(
-                            e.ColumnIndex,
-                            e.RowIndex);
-                    };
-
-                grid.RowsRemoved +=
-                    (s, e) =>
-                    {
-                        for (int i = 0;
-                            i < grid.Rows.Count;
-                            i++)
-                        {
-                            if (!grid.Rows[i].IsNewRow)
-                            {
-                                grid.Rows[i].Cells["STT"].Value =
-                                    i + 1;
-                            }
-                        }
-                    };
-
-                okButton.Text =
-                    "OK - QUÉT BẢN VẼ";
-
-                okButton.Width =
-                    190;
-
-                okButton.Height =
-                    40;
-
-                okButton.Left =
-                    700;
-
-                okButton.Top =
-                    654;
-
-                okButton.DialogResult =
-                    System.Windows.Forms.DialogResult.OK;
-
-                okButton.Font =
-                    new System.Drawing.Font(
-                        "Segoe UI",
-                        10.0f,
-                        System.Drawing.FontStyle.Bold);
-
-                okButton.BackColor =
-                    System.Drawing.Color.FromArgb(
-                        37,
-                        99,
-                        235);
-
-                okButton.ForeColor =
-                    System.Drawing.Color.White;
-
-                okButton.FlatStyle =
-                    System.Windows.Forms.FlatStyle.Flat;
-
-                cancelButton.Text =
-                    "HỦY";
-
-                cancelButton.Width =
-                    120;
-
-                cancelButton.Height =
-                    40;
-
-                cancelButton.Left =
-                    905;
-
-                cancelButton.Top =
-                    654;
-
-                cancelButton.DialogResult =
-                    System.Windows.Forms.DialogResult.Cancel;
-
-                cancelButton.Font =
-                    new System.Drawing.Font(
-                        "Segoe UI",
-                        10.0f,
-                        System.Drawing.FontStyle.Bold);
-
-                cancelButton.BackColor =
-                    System.Drawing.Color.FromArgb(
-                        245,
-                        245,
-                        245);
-
-                cancelButton.FlatStyle =
-                    System.Windows.Forms.FlatStyle.Flat;
-
-                form.Controls.Add(
-                    title);
-
-                form.Controls.Add(
-                    subTitle);
-
-                form.Controls.Add(
-                    grid);
-
-                form.Controls.Add(
-                    okButton);
-
-                form.Controls.Add(
-                    cancelButton);
-
-                form.AcceptButton =
-                    okButton;
-
-                form.CancelButton =
-                    cancelButton;
-
-                System.Windows.Forms.DialogResult result =
-                    form.ShowDialog();
-
-                if (result !=
-                    System.Windows.Forms.DialogResult.OK)
-                {
-                    return false;
-                }
-
-                List<SmartLegendAutoRow> acceptedRows =
-                    new List<SmartLegendAutoRow>();
-
-                stt =
-                    1;
-
-                foreach (System.Windows.Forms.DataGridViewRow gridRow
-                    in grid.Rows)
-                {
-                    if (gridRow.IsNewRow)
-                        continue;
-
-                    SmartLegendAutoRow row =
-                        gridRow.Tag as SmartLegendAutoRow;
-
-                    if (row == null)
-                        continue;
-
-                    string name =
-                        Convert.ToString(
-                            gridRow.Cells[
-                                "NAME"].Value);
-
-                    name =
-                        NormalizeSmartDisplayName(
-                            name);
-
-                    if (string.IsNullOrWhiteSpace(
-                            name))
-                    {
-                        continue;
-                    }
-
-                    bool followDn =
+                    form.MinimizeBox =
                         false;
 
-                    object dnValue =
-                        gridRow.Cells[
-                            "FOLLOW_DN"].Value;
+                    form.MaximizeBox =
+                        true;
 
-                    if (dnValue != null)
+                    form.BackColor =
+                        System.Drawing.Color.White;
+
+                    title.Text =
+                        "KIỂM TRA BẢNG KÝ HIỆU - VAN / THIẾT BỊ";
+
+                    title.Left =
+                        18;
+
+                    title.Top =
+                        12;
+
+                    title.Width =
+                        1160;
+
+                    title.Height =
+                        28;
+
+                    title.Font =
+                        new System.Drawing.Font(
+                            "Segoe UI",
+                            12.0f,
+                            System.Drawing.FontStyle.Bold);
+
+                    title.ForeColor =
+                        System.Drawing.Color.FromArgb(
+                            40,
+                            60,
+                            95);
+
+                    subTitle.Text =
+                        "Nếu tool ghép sai KÝ HIỆU ↔ TÊN: bấm CHỌN LẠI ở đúng dòng rồi quét lại chính ký hiệu đó trên CAD. " +
+                        "Tên có thể sửa trực tiếp; THEO DN có thể tick/bỏ tick.";
+
+                    subTitle.Left =
+                        18;
+
+                    subTitle.Top =
+                        42;
+
+                    subTitle.Width =
+                        1160;
+
+                    subTitle.Height =
+                        36;
+
+                    subTitle.Font =
+                        new System.Drawing.Font(
+                            "Segoe UI",
+                            9.5f,
+                            System.Drawing.FontStyle.Regular);
+
+                    subTitle.ForeColor =
+                        System.Drawing.Color.FromArgb(
+                            70,
+                            70,
+                            70);
+
+                    grid.Left =
+                        18;
+
+                    grid.Top =
+                        84;
+
+                    grid.Width =
+                        1185;
+
+                    grid.Height =
+                        560;
+
+                    grid.AllowUserToAddRows =
+                        false;
+
+                    grid.AllowUserToDeleteRows =
+                        true;
+
+                    grid.AllowUserToResizeRows =
+                        false;
+
+                    grid.RowHeadersVisible =
+                        false;
+
+                    grid.AutoSizeRowsMode =
+                        System.Windows.Forms.DataGridViewAutoSizeRowsMode.None;
+
+                    grid.RowTemplate.Height =
+                        72;
+
+                    grid.SelectionMode =
+                        System.Windows.Forms.DataGridViewSelectionMode.FullRowSelect;
+
+                    grid.MultiSelect =
+                        false;
+
+                    grid.BackgroundColor =
+                        System.Drawing.Color.White;
+
+                    grid.BorderStyle =
+                        System.Windows.Forms.BorderStyle.FixedSingle;
+
+                    grid.GridColor =
+                        System.Drawing.Color.FromArgb(
+                            210,
+                            210,
+                            210);
+
+                    grid.EnableHeadersVisualStyles =
+                        false;
+
+                    grid.ColumnHeadersHeight =
+                        42;
+
+                    grid.ColumnHeadersBorderStyle =
+                        System.Windows.Forms.DataGridViewHeaderBorderStyle.Single;
+
+                    grid.Font =
+                        new System.Drawing.Font(
+                            "Segoe UI",
+                            10.0f);
+
+                    grid.DefaultCellStyle.SelectionBackColor =
+                        System.Drawing.Color.FromArgb(
+                            230,
+                            240,
+                            255);
+
+                    grid.DefaultCellStyle.SelectionForeColor =
+                        System.Drawing.Color.Black;
+
+                    grid.AlternatingRowsDefaultCellStyle.BackColor =
+                        System.Drawing.Color.FromArgb(
+                            248,
+                            250,
+                            252);
+
+                    grid.ColumnHeadersDefaultCellStyle.BackColor =
+                        System.Drawing.Color.FromArgb(
+                            236,
+                            242,
+                            248);
+
+                    grid.ColumnHeadersDefaultCellStyle.ForeColor =
+                        System.Drawing.Color.FromArgb(
+                            35,
+                            50,
+                            70);
+
+                    grid.ColumnHeadersDefaultCellStyle.Font =
+                        new System.Drawing.Font(
+                            "Segoe UI",
+                            10.0f,
+                            System.Drawing.FontStyle.Bold);
+
+                    grid.ColumnHeadersDefaultCellStyle.Alignment =
+                        System.Windows.Forms.DataGridViewContentAlignment.MiddleCenter;
+
+                    System.Windows.Forms.DataGridViewTextBoxColumn sttColumn =
+                        new System.Windows.Forms.DataGridViewTextBoxColumn();
+
+                    sttColumn.Name =
+                        "STT";
+
+                    sttColumn.HeaderText =
+                        "STT";
+
+                    sttColumn.Width =
+                        55;
+
+                    sttColumn.ReadOnly =
+                        true;
+
+                    sttColumn.DefaultCellStyle.Alignment =
+                        System.Windows.Forms.DataGridViewContentAlignment.MiddleCenter;
+
+                    grid.Columns.Add(
+                        sttColumn);
+
+                    System.Windows.Forms.DataGridViewImageColumn symbolColumn =
+                        new System.Windows.Forms.DataGridViewImageColumn();
+
+                    symbolColumn.Name =
+                        "SYMBOL";
+
+                    symbolColumn.HeaderText =
+                        "KÝ HIỆU";
+
+                    symbolColumn.Width =
+                        175;
+
+                    symbolColumn.ImageLayout =
+                        System.Windows.Forms.DataGridViewImageCellLayout.Zoom;
+
+                    symbolColumn.ReadOnly =
+                        true;
+
+                    symbolColumn.DefaultCellStyle.Alignment =
+                        System.Windows.Forms.DataGridViewContentAlignment.MiddleCenter;
+
+                    grid.Columns.Add(
+                        symbolColumn);
+
+                    System.Windows.Forms.DataGridViewButtonColumn reselectColumn =
+                        new System.Windows.Forms.DataGridViewButtonColumn();
+
+                    reselectColumn.Name =
+                        "RESELECT";
+
+                    reselectColumn.HeaderText =
+                        "SỬA KÝ HIỆU";
+
+                    reselectColumn.Text =
+                        "CHỌN LẠI";
+
+                    reselectColumn.UseColumnTextForButtonValue =
+                        true;
+
+                    reselectColumn.Width =
+                        95;
+
+                    grid.Columns.Add(
+                        reselectColumn);
+
+                    System.Windows.Forms.DataGridViewTextBoxColumn nameColumn =
+                        new System.Windows.Forms.DataGridViewTextBoxColumn();
+
+                    nameColumn.Name =
+                        "NAME";
+
+                    nameColumn.HeaderText =
+                        "TÊN THIẾT BỊ / VẬT TƯ";
+
+                    nameColumn.AutoSizeMode =
+                        System.Windows.Forms.DataGridViewAutoSizeColumnMode.Fill;
+
+                    nameColumn.DefaultCellStyle.Alignment =
+                        System.Windows.Forms.DataGridViewContentAlignment.MiddleLeft;
+
+                    grid.Columns.Add(
+                        nameColumn);
+
+                    System.Windows.Forms.DataGridViewCheckBoxColumn dnColumn =
+                        new System.Windows.Forms.DataGridViewCheckBoxColumn();
+
+                    dnColumn.Name =
+                        "FOLLOW_DN";
+
+                    dnColumn.HeaderText =
+                        "THEO DN";
+
+                    dnColumn.Width =
+                        95;
+
+                    dnColumn.TrueValue =
+                        true;
+
+                    dnColumn.FalseValue =
+                        false;
+
+                    dnColumn.DefaultCellStyle.Alignment =
+                        System.Windows.Forms.DataGridViewContentAlignment.MiddleCenter;
+
+                    grid.Columns.Add(
+                        dnColumn);
+
+                    System.Windows.Forms.DataGridViewTextBoxColumn modeColumn =
+                        new System.Windows.Forms.DataGridViewTextBoxColumn();
+
+                    modeColumn.Name =
+                        "MODE";
+
+                    modeColumn.HeaderText =
+                        "NHẬN DẠNG";
+
+                    modeColumn.Width =
+                        115;
+
+                    modeColumn.ReadOnly =
+                        true;
+
+                    modeColumn.DefaultCellStyle.Alignment =
+                        System.Windows.Forms.DataGridViewContentAlignment.MiddleCenter;
+
+                    grid.Columns.Add(
+                        modeColumn);
+
+                    int stt =
+                        1;
+
+                    foreach (SmartLegendAutoRow row
+                        in rows)
                     {
-                        bool.TryParse(
-                            Convert.ToString(
-                                dnValue),
-                            out followDn);
+                        int index =
+                            grid.Rows.Add(
+                                stt++,
+                                row.Preview,
+                                "CHỌN LẠI",
+                                row.DisplayName,
+                                row.FollowDn,
+                                row.MatchMode == "GEOMETRY"
+                                    ? "HÌNH EXPLODE"
+                                    : "BLOCK");
+
+                        grid.Rows[index].Tag =
+                            row;
                     }
 
-                    row.STT =
-                        stt++;
+                    System.Action syncGridToRows =
+                        () =>
+                        {
+                            foreach (System.Windows.Forms.DataGridViewRow gridRow
+                                in grid.Rows)
+                            {
+                                SmartLegendAutoRow row =
+                                    gridRow.Tag as SmartLegendAutoRow;
 
-                    row.DisplayName =
-                        name;
+                                if (row == null)
+                                    continue;
 
-                    row.FollowDn =
-                        followDn;
+                                row.DisplayName =
+                                    NormalizeSmartDisplayName(
+                                        Convert.ToString(
+                                            gridRow.Cells["NAME"].Value));
 
-                    acceptedRows.Add(
-                        row);
+                                bool followDn =
+                                    false;
+
+                                object raw =
+                                    gridRow.Cells["FOLLOW_DN"].Value;
+
+                                if (raw != null)
+                                {
+                                    bool.TryParse(
+                                        Convert.ToString(
+                                            raw),
+                                        out followDn);
+                                }
+
+                                row.FollowDn =
+                                    followDn;
+                            }
+                        };
+
+                    grid.CellContentClick +=
+                        (s, e) =>
+                        {
+                            if (e.RowIndex < 0 ||
+                                e.ColumnIndex < 0)
+                            {
+                                return;
+                            }
+
+                            string columnName =
+                                grid.Columns[e.ColumnIndex].Name;
+
+                            if (string.Equals(
+                                    columnName,
+                                    "FOLLOW_DN",
+                                    StringComparison.OrdinalIgnoreCase))
+                            {
+                                object raw =
+                                    grid.Rows[e.RowIndex]
+                                        .Cells[e.ColumnIndex]
+                                        .Value;
+
+                                bool current =
+                                    false;
+
+                                if (raw != null)
+                                {
+                                    bool.TryParse(
+                                        Convert.ToString(
+                                            raw),
+                                        out current);
+                                }
+
+                                grid.Rows[e.RowIndex]
+                                    .Cells[e.ColumnIndex]
+                                    .Value =
+                                    !current;
+
+                                return;
+                            }
+
+                            if (!string.Equals(
+                                    columnName,
+                                    "RESELECT",
+                                    StringComparison.OrdinalIgnoreCase))
+                            {
+                                return;
+                            }
+
+                            SmartLegendAutoRow row =
+                                grid.Rows[e.RowIndex].Tag as SmartLegendAutoRow;
+
+                            if (row == null)
+                                return;
+
+                            syncGridToRows();
+
+                            reselectRow =
+                                row;
+
+                            form.DialogResult =
+                                System.Windows.Forms.DialogResult.Retry;
+
+                            form.Close();
+                        };
+
+                    grid.RowsRemoved +=
+                        (s, e) =>
+                        {
+                            for (int i = 0;
+                                i < grid.Rows.Count;
+                                i++)
+                            {
+                                if (!grid.Rows[i].IsNewRow)
+                                {
+                                    grid.Rows[i].Cells["STT"].Value =
+                                        i + 1;
+                                }
+                            }
+                        };
+
+                    okButton.Text =
+                        "OK - QUÉT BẢN VẼ";
+
+                    okButton.Width =
+                        190;
+
+                    okButton.Height =
+                        40;
+
+                    okButton.Left =
+                        800;
+
+                    okButton.Top =
+                        654;
+
+                    okButton.DialogResult =
+                        System.Windows.Forms.DialogResult.OK;
+
+                    okButton.Font =
+                        new System.Drawing.Font(
+                            "Segoe UI",
+                            10.0f,
+                            System.Drawing.FontStyle.Bold);
+
+                    okButton.BackColor =
+                        System.Drawing.Color.FromArgb(
+                            37,
+                            99,
+                            235);
+
+                    okButton.ForeColor =
+                        System.Drawing.Color.White;
+
+                    okButton.FlatStyle =
+                        System.Windows.Forms.FlatStyle.Flat;
+
+                    cancelButton.Text =
+                        "HỦY";
+
+                    cancelButton.Width =
+                        120;
+
+                    cancelButton.Height =
+                        40;
+
+                    cancelButton.Left =
+                        1005;
+
+                    cancelButton.Top =
+                        654;
+
+                    cancelButton.DialogResult =
+                        System.Windows.Forms.DialogResult.Cancel;
+
+                    cancelButton.Font =
+                        new System.Drawing.Font(
+                            "Segoe UI",
+                            10.0f,
+                            System.Drawing.FontStyle.Bold);
+
+                    form.Controls.Add(
+                        title);
+
+                    form.Controls.Add(
+                        subTitle);
+
+                    form.Controls.Add(
+                        grid);
+
+                    form.Controls.Add(
+                        okButton);
+
+                    form.Controls.Add(
+                        cancelButton);
+
+                    form.AcceptButton =
+                        okButton;
+
+                    form.CancelButton =
+                        cancelButton;
+
+                    System.Windows.Forms.DialogResult result =
+                        form.ShowDialog();
+
+                    syncGridToRows();
+
+                    // Đồng bộ việc người dùng xóa row trên DataGridView về List gốc.
+                    HashSet<SmartLegendAutoRow> remaining =
+                        new HashSet<SmartLegendAutoRow>(
+                            grid.Rows
+                                .Cast<System.Windows.Forms.DataGridViewRow>()
+                                .Where(
+                                    r =>
+                                        !r.IsNewRow &&
+                                        r.Tag is SmartLegendAutoRow)
+                                .Select(
+                                    r =>
+                                        (SmartLegendAutoRow)r.Tag));
+
+                    rows.RemoveAll(
+                        r =>
+                            !remaining.Contains(
+                                r));
+
+                    if (result ==
+                            System.Windows.Forms.DialogResult.Retry &&
+                        reselectRow != null)
+                    {
+                        _smartValveStage =
+                            "LEGEND_RESELECT_SYMBOL";
+
+                        ReselectSmartLegendSymbol(
+                            doc,
+                            reselectRow);
+
+                        continue;
+                    }
+
+                    if (result !=
+                        System.Windows.Forms.DialogResult.OK)
+                    {
+                        return false;
+                    }
+
+                    int number =
+                        1;
+
+                    foreach (SmartLegendAutoRow row
+                        in rows)
+                    {
+                        row.STT =
+                            number++;
+                    }
+
+                    return true;
                 }
-
-                rows.Clear();
-
-                rows.AddRange(
-                    acceptedRows);
-
-                return true;
             }
         }
 
+        private bool ReselectSmartLegendSymbol(
+            Document doc,
+            SmartLegendAutoRow row)
+        {
+            if (doc == null ||
+                row == null)
+            {
+                return false;
+            }
+
+            Editor ed =
+                doc.Editor;
+
+            Database db =
+                doc.Database;
+
+            try
+            {
+                Autodesk.AutoCAD.ApplicationServices.Core.Application
+                    .MainWindow
+                    .Focus();
+            }
+            catch
+            {
+            }
+
+            PromptSelectionOptions pso =
+                new PromptSelectionOptions();
+
+            pso.MessageForAdding =
+                "\nQuét lại ĐÚNG KÝ HIỆU cho \"" +
+                row.DisplayName +
+                "\". Có thể chọn 1 BLOCK hoặc quét các nét EXPLODE của ký hiệu: ";
+
+            PromptSelectionResult psr =
+                ed.GetSelection(
+                    pso);
+
+            if (psr.Status !=
+                    PromptStatus.OK ||
+                psr.Value == null ||
+                psr.Value.Count == 0)
+            {
+                return false;
+            }
+
+            List<ObjectId> selectedIds =
+                psr.Value
+                    .GetObjectIds()
+                    .ToList();
+
+            using (Transaction tr =
+                db.TransactionManager.StartTransaction())
+            {
+                ObjectId blockId =
+                    ObjectId.Null;
+
+                List<ObjectId> geometryIds =
+                    new List<ObjectId>();
+
+                foreach (ObjectId id
+                    in selectedIds)
+                {
+                    Entity ent =
+                        tr.GetObject(
+                            id,
+                            OpenMode.ForRead,
+                            false) as Entity;
+
+                    if (ent == null ||
+                        ent.IsErased)
+                    {
+                        continue;
+                    }
+
+                    if (ent is BlockReference &&
+                        blockId.IsNull)
+                    {
+                        blockId =
+                            id;
+
+                        continue;
+                    }
+
+                    if (ent is Line ||
+                        ent is Arc ||
+                        ent is Circle ||
+                        ent is Polyline)
+                    {
+                        geometryIds.Add(
+                            id);
+                    }
+                }
+
+                List<ObjectId> previewIds =
+                    new List<ObjectId>();
+
+                if (!blockId.IsNull)
+                {
+                    BlockReference br =
+                        tr.GetObject(
+                            blockId,
+                            OpenMode.ForRead,
+                            false) as BlockReference;
+
+                    string blockName =
+                        br != null
+                            ? GetShopStatBlockName(
+                                tr,
+                                br)
+                            : "";
+
+                    string blockKey =
+                        NormalizeSmartSymbolKey(
+                            blockName);
+
+                    if (string.IsNullOrWhiteSpace(
+                            blockKey))
+                    {
+                        tr.Commit();
+                        return false;
+                    }
+
+                    row.MatchMode =
+                        "BLOCK";
+
+                    row.BlockKey =
+                        blockKey;
+
+                    row.GeometryFingerprint =
+                        "";
+
+                    row.SymbolSummary =
+                        blockName;
+
+                    if (br != null)
+                    {
+                        row.SymbolCenter =
+                            new Point3d(
+                                br.Position.X,
+                                br.Position.Y,
+                                0.0);
+                    }
+
+                    previewIds.Add(
+                        blockId);
+                }
+                else
+                {
+                    if (geometryIds.Count == 0)
+                    {
+                        tr.Commit();
+
+                        MessageBox.Show(
+                            "Không thấy BLOCK hoặc nét LINE/ARC/CIRCLE/POLYLINE hợp lệ trong vùng vừa chọn.",
+                            "CHỌN LẠI KÝ HIỆU");
+
+                        return false;
+                    }
+
+                    string fingerprint =
+                        BuildSmartGeometryFingerprint(
+                            tr,
+                            geometryIds);
+
+                    if (string.IsNullOrWhiteSpace(
+                            fingerprint))
+                    {
+                        tr.Commit();
+
+                        MessageBox.Show(
+                            "Không tạo được dấu vân tay hình học. Hãy quét đúng các nét của ký hiệu, không quét text/khung bảng.",
+                            "CHỌN LẠI KÝ HIỆU");
+
+                        return false;
+                    }
+
+                    row.MatchMode =
+                        "GEOMETRY";
+
+                    row.GeometryFingerprint =
+                        fingerprint;
+
+                    row.BlockKey =
+                        "GEO_" +
+                        Convert.ToBase64String(
+                            Encoding.UTF8.GetBytes(
+                                fingerprint));
+
+                    row.SymbolSummary =
+                        GetSmartGeometryFingerprintSummary(
+                            fingerprint);
+
+                    List<Point3d> centers =
+                        new List<Point3d>();
+
+                    foreach (ObjectId id
+                        in geometryIds)
+                    {
+                        Entity ent =
+                            tr.GetObject(
+                                id,
+                                OpenMode.ForRead,
+                                false) as Entity;
+
+                        if (ent == null)
+                            continue;
+
+                        try
+                        {
+                            Extents3d ex =
+                                ent.GeometricExtents;
+
+                            centers.Add(
+                                new Point3d(
+                                    (ex.MinPoint.X +
+                                     ex.MaxPoint.X) * 0.5,
+                                    (ex.MinPoint.Y +
+                                     ex.MaxPoint.Y) * 0.5,
+                                    0.0));
+                        }
+                        catch
+                        {
+                        }
+                    }
+
+                    if (centers.Count > 0)
+                    {
+                        row.SymbolCenter =
+                            new Point3d(
+                                centers.Average(
+                                    p =>
+                                        p.X),
+                                centers.Average(
+                                    p =>
+                                        p.Y),
+                                0.0);
+                    }
+
+                    previewIds =
+                        geometryIds;
+                }
+
+                if (row.Preview != null)
+                {
+                    try
+                    {
+                        row.Preview.Dispose();
+                    }
+                    catch
+                    {
+                    }
+                }
+
+                row.Preview =
+                    CreateSmartLegendPreviewBitmap(
+                        tr,
+                        previewIds,
+                        130,
+                        60);
+
+                tr.Commit();
+            }
+
+            return true;
+        }
+
+
+        private List<SmartLegendAutoRow> CloneSmartLegendRowsForSession(
+            List<SmartLegendAutoRow> rows)
+        {
+            List<SmartLegendAutoRow> result =
+                new List<SmartLegendAutoRow>();
+
+            if (rows == null)
+                return result;
+
+            foreach (SmartLegendAutoRow row
+                in rows)
+            {
+                if (row == null)
+                    continue;
+
+                System.Drawing.Bitmap preview =
+                    null;
+
+                if (row.Preview != null)
+                {
+                    try
+                    {
+                        preview =
+                            new System.Drawing.Bitmap(
+                                row.Preview);
+                    }
+                    catch
+                    {
+                    }
+                }
+
+                result.Add(
+                    new SmartLegendAutoRow
+                    {
+                        STT =
+                            row.STT,
+                        DisplayName =
+                            row.DisplayName,
+                        FollowDn =
+                            row.FollowDn,
+                        MatchMode =
+                            row.MatchMode,
+                        BlockKey =
+                            row.BlockKey,
+                        GeometryFingerprint =
+                            row.GeometryFingerprint,
+                        SymbolSummary =
+                            row.SymbolSummary,
+                        SymbolCenter =
+                            row.SymbolCenter,
+                        Preview =
+                            preview
+                    });
+            }
+
+            return result;
+        }
+
+        private static List<SmartSymbolRule> CloneSmartRulesForSession(
+            List<SmartSymbolRule> rules)
+        {
+            List<SmartSymbolRule> result =
+                new List<SmartSymbolRule>();
+
+            if (rules == null)
+                return result;
+
+            foreach (SmartSymbolRule rule
+                in rules)
+            {
+                if (rule == null)
+                    continue;
+
+                result.Add(
+                    new SmartSymbolRule
+                    {
+                        BlockKey =
+                            rule.BlockKey,
+                        DisplayName =
+                            rule.DisplayName,
+                        SizeRule =
+                            rule.SizeRule,
+                        MatchMode =
+                            rule.MatchMode,
+                        GeometryFingerprint =
+                            rule.GeometryFingerprint
+                    });
+            }
+
+            return result;
+        }
+
+        private void SaveLastSmartAuditSession(
+            List<SmartAuditRow> auditRows,
+            List<string> legendZero,
+            List<SmartSymbolRule> rules)
+        {
+            _lastSmartAuditRows =
+                auditRows != null
+                    ? new List<SmartAuditRow>(
+                        auditRows)
+                    : new List<SmartAuditRow>();
+
+            _lastSmartLegendZero =
+                legendZero != null
+                    ? new List<string>(
+                        legendZero)
+                    : new List<string>();
+
+            _lastSmartRules =
+                CloneSmartRulesForSession(
+                    rules);
+        }
+
+        private void ReopenLastSmartAuditSession(
+            Document doc)
+        {
+            if (doc == null ||
+                _lastSmartAuditRows == null ||
+                _lastSmartAuditRows.Count == 0)
+            {
+                MessageBox.Show(
+                    "Chưa có phiên kiểm tra gần nhất để mở lại.",
+                    "NHẬN DIỆN VAN / THIẾT BỊ");
+                return;
+            }
+
+            AttachPreviewToAuditRows(
+                doc,
+                _lastSmartAuditRows,
+                _lastSmartLegendRows);
+
+            bool accepted =
+                ShowSmartAuditReportDialog(
+                    doc,
+                    _lastSmartAuditRows,
+                    _lastSmartLegendZero);
+
+            if (!accepted)
+                return;
+
+            ApplySmartAuditCorrections(
+                _lastSmartAuditRows);
+
+            UpdateSmartRulesFromAuditRows(
+                _lastSmartRules,
+                _lastSmartAuditRows);
+
+
+            LearnAiFromAuditCorrections(
+                _lastSmartAuditRows);
+            HashSet<string> detected =
+                new HashSet<string>(
+                    _lastSmartAuditRows
+                        .Where(
+                            r =>
+                                r != null &&
+                                !string.Equals(
+                                    r.Status,
+                                    "MISSING",
+                                    StringComparison.OrdinalIgnoreCase) &&
+                                !string.IsNullOrWhiteSpace(
+                                    r.Name))
+                        .Select(
+                            r =>
+                                r.Name),
+                    StringComparer.OrdinalIgnoreCase);
+
+            _lastSmartLegendZero =
+                _lastSmartRules
+                    .Select(
+                        r =>
+                            r.DisplayName)
+                    .Where(
+                        n =>
+                            !detected.Contains(
+                                n))
+                    .Distinct(
+                        StringComparer.OrdinalIgnoreCase)
+                    .OrderBy(
+                        n =>
+                            n)
+                    .ToList();
+
+            _lastSmartAuditRows =
+                DeduplicateSmartAuditRows(
+                    _lastSmartAuditRows);
+
+            DrawSmartAuditMarkers(
+                doc,
+                _lastSmartAuditRows);
+
+            List<SmartValveStatRow> stats =
+                BuildSmartStatsFromAuditRows(
+                    _lastSmartAuditRows);
+
+            if (stats.Count > 0)
+            {
+                // Nếu bảng thống kê cũ vẫn còn,
+                // hàm xuất bảng sẽ thay nó tại đúng vị trí thay vì tạo thêm bảng mới.
+                XuatBangThongKeVanThongMinh(
+                    stats);
+            }
+
+            MessageBox.Show(
+                "Đã cập nhật lại phiên kiểm tra và bảng thống kê gần nhất.",
+                "NHẬN DIỆN VAN / THIẾT BỊ");
+        }
+
+        private void ReopenLastSmartLegendSession(
+            Document doc)
+        {
+            if (doc == null ||
+                _lastSmartLegendRows == null ||
+                _lastSmartLegendRows.Count == 0)
+            {
+                MessageBox.Show(
+                    "Chưa có bảng ký hiệu gần nhất để sửa.",
+                    "NHẬN DIỆN VAN / THIẾT BỊ");
+                return;
+            }
+
+            bool accepted =
+                ShowSmartLegendReviewDialog(
+                    doc,
+                    _lastSmartLegendRows);
+
+            if (!accepted)
+                return;
+
+            _lastSmartRules =
+                MergeSmartLegendRowsIntoLibrary(
+                    _lastSmartLegendRows);
+
+            int action =
+                GetSmartMenuChoice(
+                    doc.Editor,
+                    "\nĐã sửa lại bảng KÝ HIỆU. " +
+                    "1=QUÉT LẠI MẶT BẰNG, " +
+                    "2=CHỈ LƯU THƯ VIỆN",
+                    1,
+                    2,
+                    1);
+
+            if (action == 1)
+            {
+                ScanSmartValveDeviceStatistics(
+                    doc,
+                    _lastSmartRules);
+            }
+        }
 
         private List<SmartSymbolRule> MergeSmartLegendRowsIntoLibrary(
             List<SmartLegendAutoRow> rows)
@@ -42706,6 +44883,41 @@ namespace ClassLibrary4
 
                 currentProjectRules.Add(
                     currentRule);
+
+                // STEP18F:
+                // BLOCK rule có thêm fallback GEOMETRY.
+                // Nhờ vậy cùng ký hiệu nhưng block name khác vẫn nhận được.
+                SmartSymbolRule geometryFallbackRule =
+                    null;
+
+                if (string.Equals(
+                        row.MatchMode,
+                        "BLOCK",
+                        StringComparison.OrdinalIgnoreCase) &&
+                    !string.IsNullOrWhiteSpace(
+                        row.GeometryFingerprint))
+                {
+                    geometryFallbackRule =
+                        new SmartSymbolRule
+                        {
+                            BlockKey =
+                                "GEO_BLOCK_" +
+                                Convert.ToBase64String(
+                                    Encoding.UTF8.GetBytes(
+                                        row.GeometryFingerprint)),
+                            DisplayName =
+                                row.DisplayName,
+                            SizeRule =
+                                sizeRule,
+                            MatchMode =
+                                "GEOMETRY",
+                            GeometryFingerprint =
+                                row.GeometryFingerprint
+                        };
+
+                    currentProjectRules.Add(
+                        geometryFallbackRule);
+                }
 
                 SmartSymbolRule existing =
                     null;
@@ -42775,10 +44987,26 @@ namespace ClassLibrary4
                     existing.GeometryFingerprint =
                         currentRule.GeometryFingerprint;
                 }
+
+                if (geometryFallbackRule != null)
+                {
+                    UpsertSmartRuleList(
+                        library,
+                        geometryFallbackRule);
+                }
             }
 
             SaveSmartSymbolRules(
                 library);
+
+            // STEP 18:
+            // Legend đã được người dùng review là nguồn học Positive đáng tin cậy.
+            LearnAiFromLegendRows(
+                rows);
+
+            LearnAiFromSymbolRules(
+                currentProjectRules,
+                "LEGEND_DUAL_FINGERPRINT");
 
             // Quan trọng:
             // lần quét hiện tại chỉ dùng đúng Legend của dự án vừa quét,
@@ -42832,8 +45060,12 @@ namespace ClassLibrary4
                 System.Drawing.Graphics.FromImage(
                     bitmap))
             {
+                // STEP18F: nền gần giống AutoCAD để Yellow/Cyan/Green/Red đều nhìn đúng.
                 g.Clear(
-                    System.Drawing.Color.White);
+                    System.Drawing.Color.FromArgb(
+                        31,
+                        42,
+                        52));
 
                 g.SmoothingMode =
                     System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
@@ -42841,8 +45073,8 @@ namespace ClassLibrary4
                 List<DBObject> explodedObjects =
                     new List<DBObject>();
 
-                List<Entity> drawEntities =
-                    new List<Entity>();
+                List<SmartPreviewDrawItem> drawItems =
+                    new List<SmartPreviewDrawItem>();
 
                 Extents3d overall =
                     default(Extents3d);
@@ -42851,7 +45083,8 @@ namespace ClassLibrary4
                     false;
 
                 foreach (ObjectId id
-                    in ids ?? new List<ObjectId>())
+                    in ids ??
+                    new List<ObjectId>())
                 {
                     Entity ent =
                         tr.GetObject(
@@ -42881,29 +45114,68 @@ namespace ClassLibrary4
                                 explodedObjects.Add(
                                     obj);
 
-                                if (obj is Entity e)
+                                if (obj is Entity child)
                                 {
-                                    drawEntities.Add(
-                                        e);
+                                    drawItems.Add(
+                                        new SmartPreviewDrawItem
+                                        {
+                                            Entity =
+                                                child,
+                                            ParentBlock =
+                                                br,
+                                            Color =
+                                                ResolveSmartPreviewEntityColor(
+                                                    tr,
+                                                    child,
+                                                    br)
+                                        });
                                 }
                             }
                         }
                         catch
                         {
-                            drawEntities.Add(
-                                ent);
+                            drawItems.Add(
+                                new SmartPreviewDrawItem
+                                {
+                                    Entity =
+                                        ent,
+                                    ParentBlock =
+                                        br,
+                                    Color =
+                                        ResolveSmartPreviewEntityColor(
+                                            tr,
+                                            ent,
+                                            br)
+                                });
                         }
                     }
                     else
                     {
-                        drawEntities.Add(
-                            ent);
+                        drawItems.Add(
+                            new SmartPreviewDrawItem
+                            {
+                                Entity =
+                                    ent,
+                                ParentBlock =
+                                    null,
+                                Color =
+                                    ResolveSmartPreviewEntityColor(
+                                        tr,
+                                        ent,
+                                        null)
+                            });
                     }
                 }
 
-                foreach (Entity ent
-                    in drawEntities)
+                foreach (SmartPreviewDrawItem item
+                    in drawItems)
                 {
+                    Entity ent =
+                        item?.Entity;
+
+                    if (ent == null)
+                        continue;
+
                     try
                     {
                         Extents3d ex =
@@ -42938,7 +45210,7 @@ namespace ClassLibrary4
                         g.DrawString(
                             "KÝ HIỆU",
                             font,
-                            System.Drawing.Brushes.Black,
+                            System.Drawing.Brushes.White,
                             8.0f,
                             18.0f);
                     }
@@ -42958,7 +45230,7 @@ namespace ClassLibrary4
                             1.0);
 
                     double margin =
-                        7.0;
+                        6.0;
 
                     double sx =
                         (bitmap.Width -
@@ -42981,7 +45253,8 @@ namespace ClassLibrary4
                             scale) ||
                         scale <= 0.0)
                     {
-                        scale = 1.0;
+                        scale =
+                            1.0;
                     }
 
                     Func<Point3d, System.Drawing.PointF> map =
@@ -43008,13 +45281,31 @@ namespace ClassLibrary4
                                     y);
                         };
 
-                    using (System.Drawing.Pen pen =
-                        new System.Drawing.Pen(
-                            System.Drawing.Color.DarkSlateBlue,
-                            1.7f))
+                    foreach (SmartPreviewDrawItem item
+                        in drawItems)
                     {
-                        foreach (Entity ent
-                            in drawEntities)
+                        Entity ent =
+                            item?.Entity;
+
+                        if (ent == null)
+                            continue;
+
+                        System.Drawing.Color color =
+                            item.Color;
+
+                        if (color.A == 0)
+                        {
+                            color =
+                                System.Drawing.Color.White;
+                        }
+
+                        using (System.Drawing.Pen pen =
+                            new System.Drawing.Pen(
+                                color,
+                                1.8f))
+                        using (System.Drawing.Brush brush =
+                            new System.Drawing.SolidBrush(
+                                color))
                         {
                             try
                             {
@@ -43053,42 +45344,39 @@ namespace ClassLibrary4
                                         map(
                                             max);
 
-                                    float left =
-                                        Math.Min(
-                                            p1.X,
-                                            p2.X);
-
-                                    float top =
-                                        Math.Min(
-                                            p1.Y,
-                                            p2.Y);
-
-                                    float w =
-                                        Math.Abs(
-                                            p2.X -
-                                            p1.X);
-
-                                    float h =
-                                        Math.Abs(
-                                            p2.Y -
-                                            p1.Y);
-
                                     g.DrawEllipse(
                                         pen,
-                                        left,
-                                        top,
-                                        w,
-                                        h);
+                                        Math.Min(
+                                            p1.X,
+                                            p2.X),
+                                        Math.Min(
+                                            p1.Y,
+                                            p2.Y),
+                                        Math.Abs(
+                                            p2.X -
+                                            p1.X),
+                                        Math.Abs(
+                                            p2.Y -
+                                            p1.Y));
                                 }
                                 else if (ent is Arc arc)
                                 {
-                                    // Preview không cần chính xác ACIS;
-                                    // sample cung thành polyline để nhìn đúng ký hiệu.
                                     List<System.Drawing.PointF> pts =
                                         new List<System.Drawing.PointF>();
 
                                     int n =
-                                        24;
+                                        32;
+
+                                    double sweep =
+                                        arc.EndAngle -
+                                        arc.StartAngle;
+
+                                    if (sweep < 0.0)
+                                    {
+                                        sweep +=
+                                            Math.PI *
+                                            2.0;
+                                    }
 
                                     for (int i = 0;
                                         i <= n;
@@ -43096,8 +45384,7 @@ namespace ClassLibrary4
                                     {
                                         double t =
                                             arc.StartAngle +
-                                            (arc.EndAngle -
-                                             arc.StartAngle) *
+                                            sweep *
                                             i /
                                             n;
 
@@ -43127,24 +45414,45 @@ namespace ClassLibrary4
                                 }
                                 else if (ent is Polyline pl)
                                 {
+                                    // Sample theo chiều dài để giữ đúng bulge/curve,
+                                    // không nối thẳng vertex như preview cũ.
                                     List<System.Drawing.PointF> pts =
                                         new List<System.Drawing.PointF>();
 
-                                    for (int i = 0;
-                                        i < pl.NumberOfVertices;
-                                        i++)
-                                    {
-                                        pts.Add(
-                                            map(
-                                                pl.GetPoint3dAt(
-                                                    i)));
-                                    }
+                                    double length =
+                                        GetAiPipeCurveLength(
+                                            pl);
 
-                                    if (pl.Closed &&
-                                        pts.Count > 1)
+                                    int n =
+                                        Math.Max(
+                                            12,
+                                            Math.Min(
+                                                64,
+                                                pl.NumberOfVertices *
+                                                12));
+
+                                    if (length > 1e-6)
                                     {
-                                        pts.Add(
-                                            pts[0]);
+                                        for (int i = 0;
+                                            i <= n;
+                                            i++)
+                                        {
+                                            try
+                                            {
+                                                Point3d p =
+                                                    pl.GetPointAtDist(
+                                                        length *
+                                                        i /
+                                                        n);
+
+                                                pts.Add(
+                                                    map(
+                                                        p));
+                                            }
+                                            catch
+                                            {
+                                            }
+                                        }
                                     }
 
                                     if (pts.Count >= 2)
@@ -43152,6 +45460,75 @@ namespace ClassLibrary4
                                         g.DrawLines(
                                             pen,
                                             pts.ToArray());
+                                    }
+                                }
+                                else if (ent is Solid solid)
+                                {
+                                    System.Drawing.PointF[] pts =
+                                        new System.Drawing.PointF[]
+                                        {
+                                            map(
+                                                solid.GetPointAt(
+                                                    0)),
+                                            map(
+                                                solid.GetPointAt(
+                                                    1)),
+                                            map(
+                                                solid.GetPointAt(
+                                                    3)),
+                                            map(
+                                                solid.GetPointAt(
+                                                    2))
+                                        };
+
+                                    g.FillPolygon(
+                                        brush,
+                                        pts);
+                                }
+                                else if (ent is DBPoint point)
+                                {
+                                    System.Drawing.PointF p =
+                                        map(
+                                            point.Position);
+
+                                    DrawSmartPreviewDbPoint(
+                                        g,
+                                        pen,
+                                        brush,
+                                        p);
+                                }
+                                else if (ent is DBText dbText)
+                                {
+                                    using (System.Drawing.Font font =
+                                        new System.Drawing.Font(
+                                            "Segoe UI",
+                                            7.5f,
+                                            System.Drawing.FontStyle.Regular))
+                                    {
+                                        g.DrawString(
+                                            dbText.TextString ??
+                                            "",
+                                            font,
+                                            brush,
+                                            map(
+                                                dbText.Position));
+                                    }
+                                }
+                                else if (ent is MText mText)
+                                {
+                                    using (System.Drawing.Font font =
+                                        new System.Drawing.Font(
+                                            "Segoe UI",
+                                            7.5f,
+                                            System.Drawing.FontStyle.Regular))
+                                    {
+                                        g.DrawString(
+                                            mText.Text ??
+                                            "",
+                                            font,
+                                            brush,
+                                            map(
+                                                mText.Location));
                                     }
                                 }
                                 else
@@ -43203,8 +45580,218 @@ namespace ClassLibrary4
                 }
             }
 
-            return bitmap;
+            return
+                bitmap;
         }
+
+        private void DrawSmartPreviewDbPoint(
+            System.Drawing.Graphics g,
+            System.Drawing.Pen pen,
+            System.Drawing.Brush brush,
+            System.Drawing.PointF p)
+        {
+            if (g == null ||
+                pen == null ||
+                brush == null)
+            {
+                return;
+            }
+
+            int pdMode =
+                0;
+
+            try
+            {
+                object raw =
+                    Autodesk.AutoCAD.ApplicationServices.Core.Application
+                        .GetSystemVariable(
+                            "PDMODE");
+
+                if (raw != null)
+                {
+                    int.TryParse(
+                        Convert.ToString(
+                            raw,
+                            CultureInfo.InvariantCulture),
+                        out pdMode);
+                }
+            }
+            catch
+            {
+            }
+
+            // Dot ở tâm.
+            g.FillEllipse(
+                brush,
+                p.X - 2.6f,
+                p.Y - 2.6f,
+                5.2f,
+                5.2f);
+
+            // PDMODE >= 32 thường có vòng ngoài/square component.
+            // Preview ưu tiên trực quan giống symbol trên CAD hơn là mô phỏng 100% bitmask.
+            if (pdMode >= 32)
+            {
+                g.DrawEllipse(
+                    pen,
+                    p.X - 15.0f,
+                    p.Y - 15.0f,
+                    30.0f,
+                    30.0f);
+            }
+
+            // Một số point-style có cross/X. Chỉ thêm khi mode khác kiểu dot thuần.
+            if (pdMode != 0 &&
+                pdMode != 32)
+            {
+                g.DrawLine(
+                    pen,
+                    p.X - 10.0f,
+                    p.Y,
+                    p.X + 10.0f,
+                    p.Y);
+
+                g.DrawLine(
+                    pen,
+                    p.X,
+                    p.Y - 10.0f,
+                    p.X,
+                    p.Y + 10.0f);
+            }
+        }
+
+        private System.Drawing.Color ResolveSmartPreviewEntityColor(
+            Transaction tr,
+            Entity ent,
+            BlockReference parentBlock)
+        {
+            if (ent == null)
+            {
+                return
+                    System.Drawing.Color.White;
+            }
+
+            try
+            {
+                // BYBLOCK
+                if (ent.ColorIndex == 0)
+                {
+                    if (parentBlock != null)
+                    {
+                        if (parentBlock.ColorIndex != 0 &&
+                            parentBlock.ColorIndex != 256)
+                        {
+                            return
+                                parentBlock.Color.ColorValue;
+                        }
+
+                        return
+                            ResolveSmartPreviewLayerColor(
+                                tr,
+                                parentBlock.Layer);
+                    }
+
+                    return
+                        System.Drawing.Color.White;
+                }
+
+                // BYLAYER
+                if (ent.ColorIndex == 256)
+                {
+                    string layerName =
+                        ent.Layer;
+
+                    // Entity bên trong block ở Layer 0 hiển thị theo layer insertion.
+                    if (parentBlock != null &&
+                        string.Equals(
+                            layerName,
+                            "0",
+                            StringComparison.OrdinalIgnoreCase))
+                    {
+                        layerName =
+                            parentBlock.Layer;
+                    }
+
+                    return
+                        ResolveSmartPreviewLayerColor(
+                            tr,
+                            layerName);
+                }
+
+                return
+                    ent.Color.ColorValue;
+            }
+            catch
+            {
+                return
+                    System.Drawing.Color.White;
+            }
+        }
+
+        private System.Drawing.Color ResolveSmartPreviewLayerColor(
+            Transaction tr,
+            string layerName)
+        {
+            if (tr == null ||
+                string.IsNullOrWhiteSpace(
+                    layerName))
+            {
+                return
+                    System.Drawing.Color.White;
+            }
+
+            try
+            {
+                Document doc =
+                    Autodesk.AutoCAD.ApplicationServices.Core.Application
+                        .DocumentManager
+                        .MdiActiveDocument;
+
+                Database db =
+                    doc?.Database;
+
+                if (db == null)
+                {
+                    return
+                        System.Drawing.Color.White;
+                }
+
+                LayerTable lt =
+                    tr.GetObject(
+                        db.LayerTableId,
+                        OpenMode.ForRead,
+                        false) as LayerTable;
+
+                if (lt == null ||
+                    !lt.Has(
+                        layerName))
+                {
+                    return
+                        System.Drawing.Color.White;
+                }
+
+                LayerTableRecord ltr =
+                    tr.GetObject(
+                        lt[layerName],
+                        OpenMode.ForRead,
+                        false) as LayerTableRecord;
+
+                if (ltr == null)
+                {
+                    return
+                        System.Drawing.Color.White;
+                }
+
+                return
+                    ltr.Color.ColorValue;
+            }
+            catch
+            {
+                return
+                    System.Drawing.Color.White;
+            }
+        }
+
 
         private int GetSmartMenuChoice(
             Editor ed,
@@ -43495,6 +46082,10 @@ namespace ClassLibrary4
             SaveSmartSymbolRules(
                 rules);
 
+            LearnAiFromSymbolRules(
+                rules,
+                "MANUAL_BLOCK_LEARN");
+
             MessageBox.Show(
                 "Đã lưu " +
                 learned +
@@ -43720,6 +46311,10 @@ namespace ClassLibrary4
             SaveSmartSymbolRules(
                 rules);
 
+            LearnAiFromSymbolRules(
+                rules,
+                "MANUAL_GEOMETRY_LEARN");
+
             MessageBox.Show(
                 "Đã lưu " +
                 learned +
@@ -43727,6 +46322,241 @@ namespace ClassLibrary4
                 "Tool so sánh theo số lượng loại nét + tỷ lệ chiều dài + " +
                 "khoảng cách tương đối giữa các nét, nên có thể nhận khi ký hiệu xoay hoặc scale nhẹ.",
                 "HỌC HÌNH EXPLODE");
+        }
+
+        private string BuildSmartGenericLegendFingerprint(
+            Transaction tr,
+            List<ObjectId> ids)
+        {
+            if (tr == null ||
+                ids == null ||
+                ids.Count == 0)
+            {
+                return "";
+            }
+
+            List<Tuple<string, double, double, Point3d>> items =
+                new List<Tuple<string, double, double, Point3d>>();
+
+            foreach (ObjectId id
+                in ids)
+            {
+                if (id.IsNull ||
+                    !id.IsValid)
+                {
+                    continue;
+                }
+
+                Entity ent =
+                    tr.GetObject(
+                        id,
+                        OpenMode.ForRead,
+                        false) as Entity;
+
+                if (ent == null ||
+                    ent.IsErased)
+                {
+                    continue;
+                }
+
+                try
+                {
+                    Extents3d ex =
+                        ent.GeometricExtents;
+
+                    double dx =
+                        Math.Abs(
+                            ex.MaxPoint.X -
+                            ex.MinPoint.X);
+
+                    double dy =
+                        Math.Abs(
+                            ex.MaxPoint.Y -
+                            ex.MinPoint.Y);
+
+                    double maxSpan =
+                        Math.Max(
+                            Math.Max(
+                                dx,
+                                dy),
+                            1e-6);
+
+                    double minSpan =
+                        Math.Min(
+                            dx,
+                            dy);
+
+                    double aspect =
+                        minSpan /
+                        maxSpan;
+
+                    string dxf =
+                        ent.GetRXClass()?.DxfName ??
+                        ent.GetType().Name;
+
+                    Point3d center =
+                        new Point3d(
+                            (ex.MinPoint.X +
+                             ex.MaxPoint.X) * 0.5,
+                            (ex.MinPoint.Y +
+                             ex.MaxPoint.Y) * 0.5,
+                            0.0);
+
+                    items.Add(
+                        Tuple.Create(
+                            dxf.ToUpperInvariant(),
+                            maxSpan,
+                            aspect,
+                            center));
+                }
+                catch
+                {
+                }
+            }
+
+            if (items.Count == 0)
+                return "";
+
+            double globalSpan =
+                items.Max(
+                    x =>
+                        x.Item2);
+
+            if (globalSpan <= 1e-9)
+                globalSpan = 1.0;
+
+            List<string> entityTokens =
+                items
+                    .Select(
+                        x =>
+                            x.Item1 +
+                            ":" +
+                            Math.Round(
+                                x.Item2 /
+                                globalSpan,
+                                2)
+                                .ToString(
+                                    "0.00",
+                                    CultureInfo.InvariantCulture) +
+                            ":" +
+                            Math.Round(
+                                x.Item3,
+                                2)
+                                .ToString(
+                                    "0.00",
+                                    CultureInfo.InvariantCulture))
+                    .OrderBy(
+                        x =>
+                            x)
+                    .ToList();
+
+            List<double> pairDistances =
+                new List<double>();
+
+            for (int i = 0;
+                i < items.Count;
+                i++)
+            {
+                for (int j = i + 1;
+                    j < items.Count;
+                    j++)
+                {
+                    pairDistances.Add(
+                        PlanDistance(
+                            items[i].Item4,
+                            items[j].Item4));
+                }
+            }
+
+            string distanceToken =
+                "";
+
+            if (pairDistances.Count > 0)
+            {
+                double maxPair =
+                    pairDistances.Max();
+
+                if (maxPair <= 1e-9)
+                    maxPair = 1.0;
+
+                distanceToken =
+                    string.Join(
+                        ",",
+                        pairDistances
+                            .Select(
+                                d =>
+                                    Math.Round(
+                                        d /
+                                        maxPair,
+                                        2)
+                                        .ToString(
+                                            "0.00",
+                                            CultureInfo.InvariantCulture))
+                            .OrderBy(
+                                x =>
+                                    x));
+            }
+
+            return
+                "GENERIC|N=" +
+                items.Count.ToString(
+                    CultureInfo.InvariantCulture) +
+                "|E=" +
+                string.Join(
+                    ",",
+                    entityTokens) +
+                "|D=" +
+                distanceToken;
+        }
+
+        private string GetSmartGenericLegendSummary(
+            Transaction tr,
+            List<ObjectId> ids)
+        {
+            if (tr == null ||
+                ids == null)
+            {
+                return "";
+            }
+
+            List<string> types =
+                new List<string>();
+
+            foreach (ObjectId id
+                in ids)
+            {
+                try
+                {
+                    Entity ent =
+                        tr.GetObject(
+                            id,
+                            OpenMode.ForRead,
+                            false) as Entity;
+
+                    if (ent == null)
+                        continue;
+
+                    string dxf =
+                        ent.GetRXClass()?.DxfName ??
+                        ent.GetType().Name;
+
+                    types.Add(
+                        dxf);
+                }
+                catch
+                {
+                }
+            }
+
+            return
+                string.Join(
+                    " + ",
+                    types
+                        .Distinct(
+                            StringComparer.OrdinalIgnoreCase)
+                        .OrderBy(
+                            x =>
+                                x));
         }
 
         private string BuildSmartGeometryFingerprint(
@@ -43844,6 +46674,223 @@ namespace ClassLibrary4
 
             if (entityCount <= 0 ||
                 lengths.Count != entityCount)
+            {
+                return "";
+            }
+
+            double maxLength =
+                lengths.Max();
+
+            if (maxLength <= 1e-9)
+                maxLength = 1.0;
+
+            data.LengthRatios =
+                lengths
+                    .Select(
+                        x =>
+                            Math.Round(
+                                x / maxLength,
+                                3))
+                    .OrderBy(
+                        x =>
+                            x)
+                    .ToList();
+
+            List<double> pairDistances =
+                new List<double>();
+
+            for (int i = 0;
+                i < centers.Count;
+                i++)
+            {
+                for (int j = i + 1;
+                    j < centers.Count;
+                    j++)
+                {
+                    pairDistances.Add(
+                        PlanDistance(
+                            centers[i],
+                            centers[j]));
+                }
+            }
+
+            if (pairDistances.Count > 0)
+            {
+                double maxPair =
+                    pairDistances.Max();
+
+                if (maxPair <= 1e-9)
+                    maxPair = 1.0;
+
+                data.PairDistanceRatios =
+                    pairDistances
+                        .Select(
+                            x =>
+                                Math.Round(
+                                    x / maxPair,
+                                    3))
+                        .OrderBy(
+                            x =>
+                                x)
+                        .ToList();
+            }
+
+            return
+                SerializeSmartGeometryFingerprint(
+                    data);
+        }
+
+        private string BuildSmartBlockGeometryFingerprint(
+            Transaction tr,
+            BlockReference br)
+        {
+            if (tr == null ||
+                br == null)
+            {
+                return "";
+            }
+
+            DBObjectCollection exploded =
+                new DBObjectCollection();
+
+            List<Entity> entities =
+                new List<Entity>();
+
+            try
+            {
+                br.Explode(
+                    exploded);
+
+                foreach (DBObject obj
+                    in exploded)
+                {
+                    if (obj is Entity ent)
+                    {
+                        entities.Add(
+                            ent);
+                    }
+                }
+
+                return
+                    BuildSmartGeometryFingerprintFromEntities(
+                        entities);
+            }
+            catch
+            {
+                return "";
+            }
+            finally
+            {
+                foreach (DBObject obj
+                    in exploded)
+                {
+                    try
+                    {
+                        obj.Dispose();
+                    }
+                    catch
+                    {
+                    }
+                }
+            }
+        }
+
+        private string BuildSmartGeometryFingerprintFromEntities(
+            IEnumerable<Entity> entities)
+        {
+            SmartGeometryFingerprintData data =
+                new SmartGeometryFingerprintData();
+
+            List<double> lengths =
+                new List<double>();
+
+            List<Point3d> centers =
+                new List<Point3d>();
+
+            foreach (Entity ent
+                in entities ??
+                Enumerable.Empty<Entity>())
+            {
+                if (ent == null)
+                    continue;
+
+                if (!(ent is Curve curve))
+                    continue;
+
+                if (ent is Line)
+                    data.LineCount++;
+                else if (ent is Arc)
+                    data.ArcCount++;
+                else if (ent is Circle)
+                    data.CircleCount++;
+                else if (ent is Polyline)
+                    data.PolylineCount++;
+                else
+                    continue;
+
+                double length =
+                    0.0;
+
+                try
+                {
+                    length =
+                        LayChieuDaiCurveThongKe(
+                            curve);
+                }
+                catch
+                {
+                }
+
+                if (length <= 1e-6)
+                {
+                    try
+                    {
+                        Extents3d ex =
+                            ent.GeometricExtents;
+
+                        length =
+                            ex.MinPoint.DistanceTo(
+                                ex.MaxPoint);
+                    }
+                    catch
+                    {
+                        length =
+                            1.0;
+                    }
+                }
+
+                lengths.Add(
+                    Math.Max(
+                        length,
+                        1e-6));
+
+                try
+                {
+                    Extents3d ex =
+                        ent.GeometricExtents;
+
+                    centers.Add(
+                        new Point3d(
+                            (ex.MinPoint.X +
+                             ex.MaxPoint.X) * 0.5,
+                            (ex.MinPoint.Y +
+                             ex.MaxPoint.Y) * 0.5,
+                            0.0));
+                }
+                catch
+                {
+                }
+            }
+
+            int entityCount =
+                data.LineCount +
+                data.ArcCount +
+                data.CircleCount +
+                data.PolylineCount;
+
+            if (entityCount <= 0 ||
+                lengths.Count !=
+                    entityCount)
             {
                 return "";
             }
@@ -44157,6 +47204,72 @@ namespace ClassLibrary4
                 data.CircleCount +
                 ", Polyline=" +
                 data.PolylineCount;
+        }
+
+        private bool TryMatchSmartBlockByGeometry(
+            Transaction tr,
+            BlockReference br,
+            List<SmartSymbolRule> geometryRules,
+            out SmartSymbolRule bestRule,
+            out double bestScore)
+        {
+            bestRule =
+                null;
+
+            bestScore =
+                double.MaxValue;
+
+            if (tr == null ||
+                br == null ||
+                geometryRules == null ||
+                geometryRules.Count == 0)
+            {
+                return false;
+            }
+
+            string candidateFingerprint =
+                BuildSmartBlockGeometryFingerprint(
+                    tr,
+                    br);
+
+            if (string.IsNullOrWhiteSpace(
+                    candidateFingerprint))
+            {
+                return false;
+            }
+
+            foreach (SmartSymbolRule rule
+                in geometryRules)
+            {
+                if (rule == null ||
+                    string.IsNullOrWhiteSpace(
+                        rule.GeometryFingerprint))
+                {
+                    continue;
+                }
+
+                double score =
+                    CompareSmartGeometryFingerprints(
+                        rule.GeometryFingerprint,
+                        candidateFingerprint);
+
+                if (score <
+                    bestScore)
+                {
+                    bestScore =
+                        score;
+
+                    bestRule =
+                        rule;
+                }
+            }
+
+            // Block fingerprint sạch hơn exploded-cluster ngoài mặt bằng,
+            // nên có thể dùng threshold chặt.
+            return
+                bestRule != null &&
+                bestScore <=
+                    0.075;
         }
 
         private List<SmartGeometryMatch> FindSmartGeometryMatches(
@@ -44495,6 +47608,26 @@ namespace ClassLibrary4
                 return;
             }
 
+            // Chỉ các tên có thật trong Legend hiện tại mới dùng cho cảnh báo LEGEND 0.
+            // Memory Local được phép hỗ trợ nhận diện nhưng không tạo cảnh báo giả.
+            List<string> currentLegendNames =
+                rules
+                    .Select(
+                        r =>
+                            r.DisplayName)
+                    .Where(
+                        n =>
+                            !string.IsNullOrWhiteSpace(
+                                n))
+                    .Distinct(
+                        StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+
+            // STEP 18: Legend hiện tại thắng trước; sau đó bổ sung Positive Memory.
+            rules =
+                EnrichSmartRulesWithAiLearning(
+                    rules);
+
             List<SmartSymbolRule> blockRules =
                 rules
                     .Where(
@@ -44502,7 +47635,23 @@ namespace ClassLibrary4
                             !string.Equals(
                                 r.MatchMode,
                                 "GEOMETRY",
+                                StringComparison.OrdinalIgnoreCase) &&
+                            !string.Equals(
+                                r.MatchMode,
+                                "POINT",
                                 StringComparison.OrdinalIgnoreCase))
+                    .ToList();
+
+            List<SmartSymbolRule> pointRules =
+                rules
+                    .Where(
+                        r =>
+                            string.Equals(
+                                r.MatchMode,
+                                "POINT",
+                                StringComparison.OrdinalIgnoreCase) &&
+                            !string.IsNullOrWhiteSpace(
+                                r.BlockKey))
                     .ToList();
 
             List<SmartSymbolRule> geometryRules =
@@ -44533,13 +47682,40 @@ namespace ClassLibrary4
                             r,
                         StringComparer.OrdinalIgnoreCase);
 
+            Dictionary<string, SmartSymbolRule> pointRuleMap =
+                pointRules
+                    .GroupBy(
+                        r =>
+                            r.BlockKey,
+                        StringComparer.OrdinalIgnoreCase)
+                    .Select(
+                        g =>
+                            g.Last())
+                    .ToDictionary(
+                        r =>
+                            r.BlockKey,
+                        r =>
+                            r,
+                        StringComparer.OrdinalIgnoreCase);
+
             List<SmartPipeCandidate> pipeCandidates =
                 new List<SmartPipeCandidate>();
 
             List<ObjectId> matchedBlocks =
                 new List<ObjectId>();
 
+            // Exact BlockKey match vẫn ưu tiên.
+            // Nếu tên block khác nhưng hình giống Legend, lưu rule override ở đây.
+            Dictionary<ObjectId, SmartSymbolRule> matchedBlockRuleOverrides =
+                new Dictionary<ObjectId, SmartSymbolRule>();
+
             List<ObjectId> unknownBlocks =
+                new List<ObjectId>();
+
+            List<ObjectId> matchedPoints =
+                new List<ObjectId>();
+
+            List<ObjectId> unknownPoints =
                 new List<ObjectId>();
 
             List<ObjectId> geometryPrimitiveIds =
@@ -44595,7 +47771,19 @@ namespace ClassLibrary4
                             continue;
                         }
 
+                        // STEP 17:
+                        // Nếu BƯỚC 1 AI đã dựng TDL_AI_PIPE_DN150..., coi chính lớp đó
+                        // là "mô hình ống" có độ tin cậy cao cho VAN / THIẾT BỊ.
+                        string aiPipeSize =
+                            ExtractAiPipeSizeFromLayer(
+                                layer);
+
+                        bool isAiPipe =
+                            !string.IsNullOrWhiteSpace(
+                                aiPipeSize);
+
                         bool pipeLayer =
+                            isAiPipe ||
                             LaLayerOng(
                                 layer) ||
                             LaLayerTamOngShop(
@@ -44603,9 +47791,19 @@ namespace ClassLibrary4
 
                         if (pipeLayer)
                         {
-                            if (TryExtractSmartPipeSize(
+                            string size =
+                                aiPipeSize;
+
+                            if (string.IsNullOrWhiteSpace(
+                                    size))
+                            {
+                                TryExtractSmartPipeSize(
                                     layer,
-                                    out string size))
+                                    out size);
+                            }
+
+                            if (!string.IsNullOrWhiteSpace(
+                                    size))
                             {
                                 pipeCandidates.Add(
                                     new SmartPipeCandidate
@@ -44615,7 +47813,13 @@ namespace ClassLibrary4
                                         Size =
                                             size,
                                         Layer =
-                                            layer
+                                            layer,
+                                        IsAiGenerated =
+                                            isAiPipe,
+                                        Confidence =
+                                            isAiPipe
+                                                ? 0.99
+                                                : 0.88
                                     });
                             }
 
@@ -44632,6 +47836,29 @@ namespace ClassLibrary4
                         {
                             geometryPrimitiveIds.Add(
                                 curve.ObjectId);
+                        }
+
+                        continue;
+                    }
+
+                    if (ent is DBPoint dbPoint)
+                    {
+                        string pointKey =
+                            GetSmartPointSignature(
+                                dbPoint);
+
+                        if (!string.IsNullOrWhiteSpace(
+                                pointKey) &&
+                            pointRuleMap.ContainsKey(
+                                pointKey))
+                        {
+                            matchedPoints.Add(
+                                dbPoint.ObjectId);
+                        }
+                        else
+                        {
+                            unknownPoints.Add(
+                                dbPoint.ObjectId);
                         }
 
                         continue;
@@ -44660,6 +47887,35 @@ namespace ClassLibrary4
                         }
                         else
                         {
+                            // STEP18F:
+                            // Tên block có thể khác giữa Legend và mặt bằng.
+                            // So thêm geometry fingerprint của chính BLOCK.
+                            if (TryMatchSmartBlockByGeometry(
+                                    tr,
+                                    br,
+                                    geometryRules,
+                                    out SmartSymbolRule geometryRule,
+                                    out double geometryScore))
+                            {
+                                matchedBlocks.Add(
+                                    br.ObjectId);
+
+                                matchedBlockRuleOverrides[
+                                    br.ObjectId] =
+                                    geometryRule;
+
+                                continue;
+                            }
+
+                            // STEP 18:
+                            // Nếu người dùng từng BỎ QUA signature này,
+                            // loại ngay trước Candidate Detector.
+                            if (IsAiLearningNegativeBlock(
+                                    key))
+                            {
+                                continue;
+                            }
+
                             unknownBlocks.Add(
                                 br.ObjectId);
                         }
@@ -44669,17 +47925,15 @@ namespace ClassLibrary4
                 tr.Commit();
             }
 
-            _smartValveStage =
-                "SCAN_MATCH_EXPLODED_GEOMETRY";
+            // STEP 17:
+            // Không phụ thuộc việc người dùng có quét trúng nét overlay AI hay không.
+            // Lấy toàn bộ TDL_AI_PIPE_DN... trong CurrentSpace làm mô hình tham chiếu.
+            AppendGlobalAiPipeCandidates(
+                db,
+                pipeCandidates);
 
-            List<SmartGeometryMatch> geometryMatches =
-                geometryRules.Count > 0
-                    ? FindSmartGeometryMatches(
-                        db,
-                        geometryPrimitiveIds,
-                        geometryRules)
-                    : new List<SmartGeometryMatch>();
-
+            // Shared scan result containers/counters.
+            // Must be declared BEFORE POINT / BLOCK / GEOMETRY matching.
             Dictionary<string, int> counts =
                 new Dictionary<string, int>(
                     StringComparer.OrdinalIgnoreCase);
@@ -44699,6 +47953,165 @@ namespace ClassLibrary4
 
             int noPipeNearby =
                 0;
+
+            _smartValveStage =
+                "SCAN_MATCH_POINTS";
+
+            using (Transaction tr =
+                db.TransactionManager.StartTransaction())
+            {
+                foreach (ObjectId pointId
+                    in matchedPoints)
+                {
+                    DBPoint point =
+                        tr.GetObject(
+                            pointId,
+                            OpenMode.ForRead,
+                            false) as DBPoint;
+
+                    if (point == null ||
+                        point.IsErased)
+                    {
+                        continue;
+                    }
+
+                    string pointKey =
+                        GetSmartPointSignature(
+                            point);
+
+                    if (!pointRuleMap.TryGetValue(
+                            pointKey,
+                            out SmartSymbolRule rule))
+                    {
+                        continue;
+                    }
+
+                    string size =
+                        "-";
+
+                    string auditStatus =
+                        "OK";
+
+                    string auditNote =
+                        "Đã nhận diện POINT / DBPoint theo Legend.";
+
+                    if (string.Equals(
+                            rule.SizeRule,
+                            "THEO_ONG",
+                            StringComparison.OrdinalIgnoreCase))
+                    {
+                        string inferredSize;
+                        bool uncertain;
+
+                        bool found =
+                            TryInferSmartBlockPipeSize(
+                                tr,
+                                point.Position,
+                                pipeCandidates,
+                                out inferredSize,
+                                out uncertain);
+
+                        if (found &&
+                            !uncertain)
+                        {
+                            size =
+                                inferredSize;
+
+                            sizeMatched++;
+                        }
+                        else if (found &&
+                                 uncertain)
+                        {
+                            size =
+                                "CẦN KIỂM TRA";
+
+                            auditStatus =
+                                "DN_CHECK";
+
+                            auditNote =
+                                "POINT nhận đúng loại nhưng có nhiều DN gần vị trí này.";
+
+                            sizeUncertain++;
+                        }
+                        else
+                        {
+                            size =
+                                "KHÔNG RÕ DN";
+
+                            auditStatus =
+                                "NO_DN";
+
+                            auditNote =
+                                "POINT nhận đúng loại nhưng chưa tìm thấy tuyến ống đủ gần.";
+
+                            noPipeNearby++;
+                        }
+                    }
+
+                    string countKey =
+                        rule.DisplayName +
+                        "\u001F" +
+                        size;
+
+                    if (!counts.ContainsKey(
+                            countKey))
+                    {
+                        counts[countKey] =
+                            0;
+                    }
+
+                    counts[countKey]++;
+
+                    detectedLegendNames.Add(
+                        rule.DisplayName);
+
+                    auditRows.Add(
+                        new SmartAuditRow
+                        {
+                            Status =
+                                auditStatus,
+                            Name =
+                                rule.DisplayName,
+                            Size =
+                                size,
+                            Source =
+                                "POINT",
+                            Note =
+                                auditNote,
+                            Point =
+                                new Point3d(
+                                    point.Position.X,
+                                    point.Position.Y,
+                                    0.0),
+                            FollowDn =
+                                string.Equals(
+                                    rule.SizeRule,
+                                    "THEO_ONG",
+                                    StringComparison.OrdinalIgnoreCase),
+                            MatchMode =
+                                "POINT",
+                            BlockKey =
+                                rule.BlockKey,
+                            GeometryFingerprint =
+                                "",
+                            SourceId =
+                                pointId
+                        });
+                }
+
+                tr.Commit();
+            }
+
+            _smartValveStage =
+                "SCAN_MATCH_EXPLODED_GEOMETRY";
+
+            List<SmartGeometryMatch> geometryMatches =
+                geometryRules.Count > 0
+                    ? FindSmartGeometryMatches(
+                        db,
+                        geometryPrimitiveIds,
+                        geometryRules)
+                    : new List<SmartGeometryMatch>();
 
             _smartValveStage =
                 "SCAN_INFER_DN";
@@ -44727,9 +48140,18 @@ namespace ClassLibrary4
                                 tr,
                                 br));
 
-                    if (!ruleMap.TryGetValue(
+                    SmartSymbolRule rule =
+                        null;
+
+                    bool geometryFallbackMatch =
+                        matchedBlockRuleOverrides.TryGetValue(
+                            blockId,
+                            out rule);
+
+                    if (!geometryFallbackMatch &&
+                        !ruleMap.TryGetValue(
                             blockKey,
-                            out SmartSymbolRule rule))
+                            out rule))
                     {
                         continue;
                     }
@@ -44754,7 +48176,7 @@ namespace ClassLibrary4
                         bool found =
                             TryInferSmartBlockPipeSize(
                                 tr,
-                                br.Position,
+                                br,
                                 pipeCandidates,
                                 out inferredSize,
                                 out uncertain);
@@ -44764,6 +48186,9 @@ namespace ClassLibrary4
                         {
                             size =
                                 inferredSize;
+
+                            auditNote =
+                                "Đã nhận diện BLOCK + suy DN bằng Pipe-Device Fusion (ưu tiên mô hình AI và hình học block).";
 
                             sizeMatched++;
                         }
@@ -44823,14 +48248,38 @@ namespace ClassLibrary4
                             Size =
                                 size,
                             Source =
-                                "BLOCK",
+                                geometryFallbackMatch
+                                    ? "BLOCK - HÌNH HỌC"
+                                    : "BLOCK",
                             Note =
-                                auditNote,
+                                geometryFallbackMatch
+                                    ? "Tên block khác Legend nhưng geometry fingerprint khớp. " +
+                                      auditNote
+                                    : auditNote,
                             Point =
                                 new Point3d(
                                     br.Position.X,
                                     br.Position.Y,
-                                    0.0)
+                                    0.0),
+                            FollowDn =
+                                string.Equals(
+                                    rule.SizeRule,
+                                    "THEO_ONG",
+                                    StringComparison.OrdinalIgnoreCase),
+                            MatchMode =
+                                geometryFallbackMatch
+                                    ? "GEOMETRY"
+                                    : "BLOCK",
+                            BlockKey =
+                                geometryFallbackMatch
+                                    ? blockKey
+                                    : rule.BlockKey,
+                            GeometryFingerprint =
+                                geometryFallbackMatch
+                                    ? (rule.GeometryFingerprint ?? "")
+                                    : "",
+                            SourceId =
+                                blockId
                         });
                 }
 
@@ -44942,7 +48391,18 @@ namespace ClassLibrary4
                                 new Point3d(
                                     match.Center.X,
                                     match.Center.Y,
-                                    0.0)
+                                    0.0),
+                            FollowDn =
+                                string.Equals(
+                                    rule.SizeRule,
+                                    "THEO_ONG",
+                                    StringComparison.OrdinalIgnoreCase),
+                            MatchMode =
+                                "GEOMETRY",
+                            BlockKey =
+                                rule.BlockKey,
+                            GeometryFingerprint =
+                                rule.GeometryFingerprint ?? ""
                         });
                 }
 
@@ -45001,7 +48461,7 @@ namespace ClassLibrary4
                     bool foundPipe =
                         TryInferSmartBlockPipeSize(
                             tr,
-                            center,
+                            br,
                             pipeCandidates,
                             out inferredSize,
                             out uncertain);
@@ -45017,6 +48477,10 @@ namespace ClassLibrary4
                         GetShopStatBlockName(
                             tr,
                             br);
+
+                    string unknownBlockKey =
+                        NormalizeSmartSymbolKey(
+                            blockName);
 
                     auditRows.Add(
                         new SmartAuditRow
@@ -45036,7 +48500,107 @@ namespace ClassLibrary4
                                     ? "(không tên)"
                                     : blockName),
                             Point =
-                                center
+                                center,
+                            FollowDn =
+                                true,
+                            MatchMode =
+                                "BLOCK",
+                            BlockKey =
+                                unknownBlockKey,
+                            GeometryFingerprint =
+                                "",
+                            SourceId =
+                                blockId
+                        });
+                }
+
+                tr.Commit();
+            }
+
+            _smartValveStage =
+                "AUDIT_FIND_UNKNOWN_POINTS";
+
+            using (Transaction tr =
+                db.TransactionManager.StartTransaction())
+            {
+                foreach (ObjectId pointId
+                    in unknownPoints)
+                {
+                    DBPoint point =
+                        tr.GetObject(
+                            pointId,
+                            OpenMode.ForRead,
+                            false) as DBPoint;
+
+                    if (point == null ||
+                        point.IsErased)
+                    {
+                        continue;
+                    }
+
+                    Point3d center =
+                        new Point3d(
+                            point.Position.X,
+                            point.Position.Y,
+                            0.0);
+
+                    if (IsSmartPointNearRecognized(
+                            center,
+                            auditRows,
+                            100.0))
+                    {
+                        continue;
+                    }
+
+                    string inferredSize =
+                        "";
+
+                    bool uncertain =
+                        false;
+
+                    bool foundPipe =
+                        TryInferSmartBlockPipeSize(
+                            tr,
+                            point.Position,
+                            pipeCandidates,
+                            out inferredSize,
+                            out uncertain);
+
+                    // POINT không gần network ống thì không đưa vào bảng sót.
+                    if (!foundPipe)
+                        continue;
+
+                    string pointKey =
+                        GetSmartPointSignature(
+                            point);
+
+                    auditRows.Add(
+                        new SmartAuditRow
+                        {
+                            Status =
+                                "MISSING",
+                            Name =
+                                "CHƯA NHẬN DIỆN",
+                            Size =
+                                uncertain
+                                    ? "CẦN KIỂM TRA"
+                                    : inferredSize,
+                            Source =
+                                "POINT CHƯA HỌC",
+                            Note =
+                                "AutoCAD POINT/DBPoint gần tuyến ống nhưng chưa có trong Legend/AI Memory.",
+                            Point =
+                                center,
+                            FollowDn =
+                                true,
+                            MatchMode =
+                                "POINT",
+                            BlockKey =
+                                pointKey,
+                            GeometryFingerprint =
+                                "",
+                            SourceId =
+                                pointId
                         });
                 }
 
@@ -45092,6 +48656,28 @@ namespace ClassLibrary4
                             ? "CẦN KIỂM TRA"
                             : inferredSize;
 
+                    string unknownFingerprint =
+                        BuildSmartGeometryFingerprint(
+                            tr,
+                            cluster.ObjectIds);
+
+                    string unknownGeometryKey =
+                        string.IsNullOrWhiteSpace(
+                            unknownFingerprint)
+                            ? ""
+                            : "GEO_" +
+                              Convert.ToBase64String(
+                                  Encoding.UTF8.GetBytes(
+                                      unknownFingerprint));
+
+                    // STEP 18:
+                    // Negative geometry memory dùng fingerprint rotation/scale independent.
+                    if (IsAiLearningNegativeGeometry(
+                            unknownFingerprint))
+                    {
+                        continue;
+                    }
+
                     auditRows.Add(
                         new SmartAuditRow
                         {
@@ -45108,7 +48694,15 @@ namespace ClassLibrary4
                                 cluster.EntityCount +
                                 " nét nhỏ nằm trên/gần tuyến ống nhưng không khớp mẫu Legend.",
                             Point =
-                                cluster.Center
+                                cluster.Center,
+                            FollowDn =
+                                true,
+                            MatchMode =
+                                "GEOMETRY",
+                            BlockKey =
+                                unknownGeometryKey,
+                            GeometryFingerprint =
+                                unknownFingerprint ?? ""
                         });
                 }
 
@@ -45121,10 +48715,7 @@ namespace ClassLibrary4
                     auditRows);
 
             List<string> legendZero =
-                rules
-                    .Select(
-                        r =>
-                            r.DisplayName)
+                currentLegendNames
                     .Where(
                         name =>
                             !detectedLegendNames.Contains(
@@ -45136,46 +48727,95 @@ namespace ClassLibrary4
                             name)
                     .ToList();
 
-            List<SmartValveStatRow> rows =
-                counts
-                    .Select(
-                        kv =>
-                        {
-                            string[] parts =
-                                kv.Key.Split(
-                                    '\u001F');
-
-                            return
-                                new SmartValveStatRow
-                                {
-                                    Loai =
-                                        parts.Length > 0
-                                            ? NormalizeSmartDisplayName(
-                                                parts[0])
-                                            : "",
-                                    Size =
-                                        parts.Length > 1
-                                            ? parts[1]
-                                            : "-",
-                                    SoLuong =
-                                        kv.Value
-                                };
-                        })
-                    .OrderBy(
-                        r =>
-                            r.Loai)
-                    .ThenByDescending(
-                        r =>
-                            SmartSizeSortValue(
-                                r.Size))
-                    .ToList();
-
             _smartValveStage =
                 "AUDIT_DRAW_MARKERS";
 
             DrawSmartAuditMarkers(
                 doc,
                 auditRows);
+
+            _smartValveStage =
+                "AUDIT_REVIEW_INTERACTIVE";
+
+            AttachPreviewToAuditRows(
+                doc,
+                auditRows,
+                _lastSmartLegendRows);
+
+            bool auditAccepted =
+                ShowSmartAuditReportDialog(
+                    doc,
+                    auditRows,
+                    legendZero);
+
+            if (!auditAccepted)
+            {
+                return;
+            }
+
+            _smartValveStage =
+                "AUDIT_APPLY_CORRECTIONS";
+
+            ApplySmartAuditCorrections(
+                auditRows);
+
+            UpdateSmartRulesFromAuditRows(
+                rules,
+                auditRows);
+
+            // STEP 18:
+            // Chỉ học mạnh khi người dùng thực sự sửa hoặc xác nhận mẫu mới.
+            LearnAiFromAuditCorrections(
+                auditRows);
+
+            // Sau khi sửa tên / xác nhận các dòng đỏ,
+            // tính lại Legend 0 và thống kê từ chính danh sách đã kiểm tra.
+            detectedLegendNames =
+                new HashSet<string>(
+                    auditRows
+                        .Where(
+                            r =>
+                                r != null &&
+                                !string.Equals(
+                                    r.Status,
+                                    "MISSING",
+                                    StringComparison.OrdinalIgnoreCase) &&
+                                !string.IsNullOrWhiteSpace(
+                                    r.Name))
+                        .Select(
+                            r =>
+                                r.Name),
+                    StringComparer.OrdinalIgnoreCase);
+
+            legendZero =
+                currentLegendNames
+                    .Where(
+                        name =>
+                            !detectedLegendNames.Contains(
+                                name))
+                    .Distinct(
+                        StringComparer.OrdinalIgnoreCase)
+                    .OrderBy(
+                        name =>
+                            name)
+                    .ToList();
+
+            auditRows =
+                DeduplicateSmartAuditRows(
+                    auditRows);
+
+            DrawSmartAuditMarkers(
+                doc,
+                auditRows);
+
+            SaveLastSmartAuditSession(
+                auditRows,
+                legendZero,
+                rules);
+
+            List<SmartValveStatRow> rows =
+                BuildSmartStatsFromAuditRows(
+                    auditRows);
 
             if (rows.Count > 0)
             {
@@ -45186,16 +48826,10 @@ namespace ClassLibrary4
                     rows);
             }
 
-            _smartValveStage =
-                "AUDIT_REVIEW";
-
-            ShowSmartAuditReportDialog(
-                auditRows,
-                legendZero);
-
             int recognizedCount =
                 auditRows.Count(
                     r =>
+                        r != null &&
                         !string.Equals(
                             r.Status,
                             "MISSING",
@@ -45204,6 +48838,7 @@ namespace ClassLibrary4
             int missingCount =
                 auditRows.Count(
                     r =>
+                        r != null &&
                         string.Equals(
                             r.Status,
                             "MISSING",
@@ -45212,6 +48847,7 @@ namespace ClassLibrary4
             int certainCount =
                 auditRows.Count(
                     r =>
+                        r != null &&
                         string.Equals(
                             r.Status,
                             "OK",
@@ -45235,13 +48871,13 @@ namespace ClassLibrary4
 
             MessageBox.Show(
                 "KIỂM TRA CHÉO hoàn tất.\n\n" +
-                "• Tổng ứng viên: " +
+                "• Tổng ứng viên sau khi rà soát: " +
                 candidateCount +
                 "\n• Đã nhận diện: " +
                 recognizedCount +
                 "\n• Nhận diện chắc chắn: " +
                 certainCount +
-                "\n• Có khả năng bị sót: " +
+                "\n• Còn nghi bị sót: " +
                 missingCount +
                 "\n• Legend có nhưng mặt bằng chưa thấy: " +
                 legendZero.Count +
@@ -45256,8 +48892,7 @@ namespace ClassLibrary4
                     "0.0",
                     CultureInfo.InvariantCulture) +
                 "%\n\n" +
-                "Màu trên CAD:\n" +
-                "XANH = OK | CAM = cần kiểm tra DN | ĐỎ = nghi bị sót.",
+                "Các tên bạn sửa trong bảng kiểm tra đã được học lại cho lần quét sau.",
                 "KIỂM TRA SÓT VAN / THIẾT BỊ");
         }
 
@@ -45337,7 +48972,7 @@ namespace ClassLibrary4
             bool nearPipe =
                 TryInferSmartBlockPipeSize(
                     tr,
-                    br.Position,
+                    br,
                     pipes,
                     out size,
                     out uncertain);
@@ -45875,10 +49510,272 @@ namespace ClassLibrary4
             }
         }
 
-        private void ShowSmartAuditReportDialog(
+        private void AttachPreviewToAuditRows(
+            Document doc,
+            List<SmartAuditRow> rows,
+            List<SmartLegendAutoRow> legendRows)
+        {
+            if (doc == null ||
+                rows == null ||
+                rows.Count == 0)
+            {
+                return;
+            }
+
+            Database db =
+                doc.Database;
+
+            using (Transaction tr =
+                db.TransactionManager.StartTransaction())
+            {
+                foreach (SmartAuditRow row
+                    in rows)
+                {
+                    if (row == null ||
+                        row.Preview != null)
+                    {
+                        continue;
+                    }
+
+                    SmartLegendAutoRow legendRow =
+                        FindMatchingLegendRowForAudit(
+                            row,
+                            legendRows);
+
+                    if (legendRow != null &&
+                        legendRow.Preview != null)
+                    {
+                        try
+                        {
+                            row.Preview =
+                                new System.Drawing.Bitmap(
+                                    legendRow.Preview);
+                        }
+                        catch
+                        {
+                        }
+
+                        if (row.Preview != null)
+                            continue;
+                    }
+
+                    try
+                    {
+                        if (!row.SourceId.IsNull)
+                        {
+                            row.Preview =
+                                CreateSmartLegendPreviewBitmap(
+                                    tr,
+                                    new List<ObjectId> { row.SourceId },
+                                    130,
+                                    60);
+
+                            if (row.Preview != null)
+                                continue;
+                        }
+
+                        if (string.Equals(
+                                row.MatchMode,
+                                "GEOMETRY",
+                                StringComparison.OrdinalIgnoreCase) &&
+                            !string.IsNullOrWhiteSpace(
+                                row.GeometryFingerprint))
+                        {
+                            List<ObjectId> ids =
+                                FindGeometryObjectIdsByFingerprintNearPoint(
+                                    tr,
+                                    db,
+                                    row.GeometryFingerprint,
+                                    row.Point);
+
+                            if (ids.Count > 0)
+                            {
+                                row.Preview =
+                                    CreateSmartLegendPreviewBitmap(
+                                        tr,
+                                        ids,
+                                        130,
+                                        60);
+                            }
+                        }
+                    }
+                    catch
+                    {
+                    }
+                }
+
+                tr.Commit();
+            }
+        }
+
+        private SmartLegendAutoRow FindMatchingLegendRowForAudit(
+            SmartAuditRow row,
+            List<SmartLegendAutoRow> legendRows)
+        {
+            if (row == null ||
+                legendRows == null)
+            {
+                return null;
+            }
+
+            if (string.Equals(
+                    row.MatchMode,
+                    "GEOMETRY",
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                return
+                    legendRows.FirstOrDefault(
+                        r =>
+                            r != null &&
+                            string.Equals(
+                                r.MatchMode,
+                                "GEOMETRY",
+                                StringComparison.OrdinalIgnoreCase) &&
+                            string.Equals(
+                                r.GeometryFingerprint,
+                                row.GeometryFingerprint,
+                                StringComparison.Ordinal));
+            }
+
+            return
+                legendRows.FirstOrDefault(
+                    r =>
+                        r != null &&
+                        !string.Equals(
+                            r.MatchMode,
+                            "GEOMETRY",
+                            StringComparison.OrdinalIgnoreCase) &&
+                        string.Equals(
+                            r.BlockKey,
+                            row.BlockKey,
+                            StringComparison.OrdinalIgnoreCase));
+        }
+
+        private List<ObjectId> FindGeometryObjectIdsByFingerprintNearPoint(
+            Transaction tr,
+            Database db,
+            string fingerprint,
+            Point3d targetPoint)
+        {
+            List<ObjectId> result =
+                new List<ObjectId>();
+
+            if (tr == null ||
+                db == null ||
+                string.IsNullOrWhiteSpace(
+                    fingerprint))
+            {
+                return result;
+            }
+
+            BlockTableRecord space =
+                tr.GetObject(
+                    db.CurrentSpaceId,
+                    OpenMode.ForRead) as BlockTableRecord;
+
+            if (space == null)
+                return result;
+
+            List<ObjectId> primitiveIds =
+                new List<ObjectId>();
+
+            foreach (ObjectId id
+                in space)
+            {
+                Entity ent =
+                    tr.GetObject(
+                        id,
+                        OpenMode.ForRead,
+                        false) as Entity;
+
+                if (ent == null ||
+                    ent.IsErased)
+                {
+                    continue;
+                }
+
+                if (ent is Line ||
+                    ent is Arc ||
+                    ent is Circle ||
+                    ent is Polyline)
+                {
+                    try
+                    {
+                        Extents3d ex =
+                            ent.GeometricExtents;
+
+                        Point3d center =
+                            new Point3d(
+                                (ex.MinPoint.X + ex.MaxPoint.X) * 0.5,
+                                (ex.MinPoint.Y + ex.MaxPoint.Y) * 0.5,
+                                0.0);
+
+                        if (PlanDistance(
+                                center,
+                                targetPoint) <=
+                            450.0)
+                        {
+                            primitiveIds.Add(
+                                id);
+                        }
+                    }
+                    catch
+                    {
+                    }
+                }
+            }
+
+            if (primitiveIds.Count == 0)
+                return result;
+
+            List<SmartAuditGeometryCluster> clusters =
+                FindSmartAuditGeometryClusters(
+                    db,
+                    primitiveIds);
+
+            SmartAuditGeometryCluster best =
+                clusters
+                    .Where(
+                        c =>
+                            c != null &&
+                            c.ObjectIds != null &&
+                            c.ObjectIds.Count > 0)
+                    .OrderBy(
+                        c =>
+                            PlanDistance(
+                                c.Center,
+                                targetPoint))
+                    .FirstOrDefault();
+
+            if (best == null)
+                return result;
+
+            string bestFingerprint =
+                BuildSmartGeometryFingerprint(
+                    tr,
+                    best.ObjectIds);
+
+            if (!string.Equals(
+                    bestFingerprint,
+                    fingerprint,
+                    StringComparison.Ordinal))
+            {
+                return result;
+            }
+
+            return
+                best.ObjectIds
+                    .ToList();
+        }
+
+        private bool ShowSmartAuditReportDialog(
+            Document doc,
             List<SmartAuditRow> rows,
             List<string> legendZero)
         {
+            if (doc == null)
+                return false;
+
             rows =
                 rows ??
                 new List<SmartAuditRow>();
@@ -45887,318 +49784,1726 @@ namespace ClassLibrary4
                 legendZero ??
                 new List<string>();
 
-            int recognized =
-                rows.Count(
-                    r =>
-                        !string.Equals(
-                            r.Status,
-                            "MISSING",
-                            StringComparison.OrdinalIgnoreCase));
+            while (true)
+            {
+                SmartAuditRow zoomRow =
+                    null;
 
-            int missing =
-                rows.Count(
-                    r =>
-                        string.Equals(
-                            r.Status,
-                            "MISSING",
-                            StringComparison.OrdinalIgnoreCase));
+                using (System.Windows.Forms.Form form =
+                    new System.Windows.Forms.Form())
+                using (System.Windows.Forms.Label summary =
+                    new System.Windows.Forms.Label())
+                using (System.Windows.Forms.DataGridView grid =
+                    new System.Windows.Forms.DataGridView())
+                using (System.Windows.Forms.Button applyButton =
+                    new System.Windows.Forms.Button())
+                using (System.Windows.Forms.Button cancelButton =
+                    new System.Windows.Forms.Button())
+                {
+                    int recognized =
+                        rows.Count(
+                            r =>
+                                r != null &&
+                                !string.Equals(
+                                    r.Status,
+                                    "MISSING",
+                                    StringComparison.OrdinalIgnoreCase));
 
-            int certain =
-                rows.Count(
-                    r =>
-                        string.Equals(
-                            r.Status,
-                            "OK",
-                            StringComparison.OrdinalIgnoreCase));
+                    int missing =
+                        rows.Count(
+                            r =>
+                                r != null &&
+                                string.Equals(
+                                    r.Status,
+                                    "MISSING",
+                                    StringComparison.OrdinalIgnoreCase));
 
-            int needCheck =
-                rows.Count(
-                    r =>
-                        string.Equals(
-                            r.Status,
-                            "DN_CHECK",
-                            StringComparison.OrdinalIgnoreCase) ||
-                        string.Equals(
-                            r.Status,
-                            "NO_DN",
-                            StringComparison.OrdinalIgnoreCase));
+                    int certain =
+                        rows.Count(
+                            r =>
+                                r != null &&
+                                string.Equals(
+                                    r.Status,
+                                    "OK",
+                                    StringComparison.OrdinalIgnoreCase));
 
-            int total =
-                recognized +
-                missing;
+                    int needCheck =
+                        rows.Count(
+                            r =>
+                                r != null &&
+                                (string.Equals(
+                                     r.Status,
+                                     "DN_CHECK",
+                                     StringComparison.OrdinalIgnoreCase) ||
+                                 string.Equals(
+                                     r.Status,
+                                     "NO_DN",
+                                     StringComparison.OrdinalIgnoreCase)));
 
-            double coverage =
-                total > 0
-                    ? recognized * 100.0 /
-                      total
-                    : 100.0;
+                    int total =
+                        recognized +
+                        missing;
+
+                    double coverage =
+                        total > 0
+                            ? recognized * 100.0 /
+                              total
+                            : 100.0;
+
+                    form.Text =
+                        "KIỂM TRA SÓT VAN / THIẾT BỊ";
+
+                    form.StartPosition =
+                        System.Windows.Forms.FormStartPosition.CenterScreen;
+
+                    form.Width =
+                        1460;
+
+                    form.Height =
+                        760;
+
+                    form.BackColor =
+                        System.Drawing.Color.White;
+
+                    form.MinimizeBox =
+                        false;
+
+                    summary.Left =
+                        16;
+
+                    summary.Top =
+                        10;
+
+                    summary.Width =
+                        1400;
+
+                    summary.Height =
+                        78;
+
+                    summary.Font =
+                        new System.Drawing.Font(
+                            "Segoe UI",
+                            9.5f,
+                            System.Drawing.FontStyle.Bold);
+
+                    summary.Text =
+                        "TỔNG ỨNG VIÊN: " +
+                        total +
+                        "    |    ĐÃ NHẬN DIỆN: " +
+                        recognized +
+                        "    |    CHẮC CHẮN: " +
+                        certain +
+                        "    |    CẦN KIỂM TRA: " +
+                        needCheck +
+                        "    |    NGHI BỊ SÓT: " +
+                        missing +
+                        "\r\nĐỘ PHỦ: " +
+                        coverage.ToString(
+                            "0.0",
+                            CultureInfo.InvariantCulture) +
+                        "%    |    LEGEND 0: " +
+                        legendZero.Count +
+                        "\r\nDòng ĐỎ: bấm ZOOM để xem trên CAD → bấm SỬA để nhập TÊN / THEO DN / SIZE → ÁP DỤNG. " +
+                        "Nếu là báo nhầm, bấm BỎ QUA.";
+
+                    grid.Left =
+                        16;
+
+                    grid.Top =
+                        94;
+
+                    grid.Width =
+                        1410;
+
+                    grid.Height =
+                        565;
+
+                    grid.AllowUserToAddRows =
+                        false;
+
+                    grid.AllowUserToDeleteRows =
+                        false;
+
+                    grid.ReadOnly =
+                        false;
+
+                    grid.EditMode =
+                        System.Windows.Forms.DataGridViewEditMode.EditOnEnter;
+
+                    grid.RowHeadersVisible =
+                        false;
+
+                    grid.SelectionMode =
+                        System.Windows.Forms.DataGridViewSelectionMode.FullRowSelect;
+
+                    grid.MultiSelect =
+                        false;
+
+                    grid.AutoSizeRowsMode =
+                        System.Windows.Forms.DataGridViewAutoSizeRowsMode.AllCells;
+
+                    grid.BackgroundColor =
+                        System.Drawing.Color.White;
+
+                    grid.EnableHeadersVisualStyles =
+                        false;
+
+                    grid.ColumnHeadersHeight =
+                        38;
+
+                    grid.ColumnHeadersDefaultCellStyle.BackColor =
+                        System.Drawing.Color.FromArgb(
+                            236,
+                            242,
+                            248);
+
+                    grid.ColumnHeadersDefaultCellStyle.Font =
+                        new System.Drawing.Font(
+                            "Segoe UI",
+                            9.3f,
+                            System.Drawing.FontStyle.Bold);
+
+                    grid.ColumnHeadersDefaultCellStyle.Alignment =
+                        System.Windows.Forms.DataGridViewContentAlignment.MiddleCenter;
+
+                    grid.Font =
+                        new System.Drawing.Font(
+                            "Segoe UI",
+                            9.3f);
+
+                    grid.Columns.Add(
+                        "STT",
+                        "STT");
+
+                    grid.Columns["STT"].Width =
+                        48;
+
+                    grid.Columns["STT"].ReadOnly =
+                        true;
+
+                    grid.Columns["STT"].DefaultCellStyle.Alignment =
+                        System.Windows.Forms.DataGridViewContentAlignment.MiddleCenter;
+
+                    System.Windows.Forms.DataGridViewImageColumn symbolColumn =
+                        new System.Windows.Forms.DataGridViewImageColumn();
+
+                    symbolColumn.Name =
+                        "SYMBOL";
+
+                    symbolColumn.HeaderText =
+                        "KÝ HIỆU";
+
+                    symbolColumn.Width =
+                        140;
+
+                    symbolColumn.ImageLayout =
+                        System.Windows.Forms.DataGridViewImageCellLayout.Zoom;
+
+                    symbolColumn.ReadOnly =
+                        true;
+
+                    symbolColumn.DefaultCellStyle.Alignment =
+                        System.Windows.Forms.DataGridViewContentAlignment.MiddleCenter;
+
+                    grid.Columns.Add(
+                        symbolColumn);
+
+                    grid.Columns.Add(
+                        "STATUS",
+                        "TRẠNG THÁI");
+
+                    grid.Columns["STATUS"].Width =
+                        142;
+
+                    grid.Columns["STATUS"].ReadOnly =
+                        true;
+
+                    grid.Columns.Add(
+                        "NAME",
+                        "NHẬN DIỆN / SỬA TÊN");
+
+                    grid.Columns["NAME"].Width =
+                        275;
+
+                    grid.Columns["NAME"].ReadOnly =
+                        false;
+
+                    grid.Columns["NAME"].DefaultCellStyle.BackColor =
+                        System.Drawing.Color.FromArgb(
+                            255,
+                            252,
+                            230);
+
+                    System.Windows.Forms.DataGridViewCheckBoxColumn followDnColumn =
+                        new System.Windows.Forms.DataGridViewCheckBoxColumn();
+
+                    followDnColumn.Name =
+                        "FOLLOW_DN";
+
+                    followDnColumn.HeaderText =
+                        "THEO DN";
+
+                    followDnColumn.Width =
+                        78;
+
+                    followDnColumn.TrueValue =
+                        true;
+
+                    followDnColumn.FalseValue =
+                        false;
+
+                    followDnColumn.DefaultCellStyle.Alignment =
+                        System.Windows.Forms.DataGridViewContentAlignment.MiddleCenter;
+
+                    grid.Columns.Add(
+                        followDnColumn);
+
+                    grid.Columns.Add(
+                        "SIZE",
+                        "SIZE");
+
+                    grid.Columns["SIZE"].Width =
+                        115;
+
+                    grid.Columns["SIZE"].ReadOnly =
+                        true;
+
+                    grid.Columns["SIZE"].DefaultCellStyle.Alignment =
+                        System.Windows.Forms.DataGridViewContentAlignment.MiddleCenter;
+
+                    grid.Columns.Add(
+                        "SOURCE",
+                        "NGUỒN");
+
+                    grid.Columns["SOURCE"].Width =
+                        135;
+
+                    grid.Columns["SOURCE"].ReadOnly =
+                        true;
+
+                    System.Windows.Forms.DataGridViewButtonColumn zoomColumn =
+                        new System.Windows.Forms.DataGridViewButtonColumn();
+
+                    zoomColumn.Name =
+                        "ZOOM";
+
+                    zoomColumn.HeaderText =
+                        "VỊ TRÍ";
+
+                    zoomColumn.Text =
+                        "ZOOM";
+
+                    zoomColumn.UseColumnTextForButtonValue =
+                        true;
+
+                    zoomColumn.Width =
+                        72;
+
+                    grid.Columns.Add(
+                        zoomColumn);
+
+                    System.Windows.Forms.DataGridViewButtonColumn editColumn =
+                        new System.Windows.Forms.DataGridViewButtonColumn();
+
+                    editColumn.Name =
+                        "EDIT";
+
+                    editColumn.HeaderText =
+                        "SỬA";
+
+                    editColumn.Text =
+                        "SỬA";
+
+                    editColumn.UseColumnTextForButtonValue =
+                        true;
+
+                    editColumn.Width =
+                        72;
+
+                    grid.Columns.Add(
+                        editColumn);
+
+                    System.Windows.Forms.DataGridViewButtonColumn ignoreColumn =
+                        new System.Windows.Forms.DataGridViewButtonColumn();
+
+                    ignoreColumn.Name =
+                        "IGNORE";
+
+                    ignoreColumn.HeaderText =
+                        "XỬ LÝ";
+
+                    ignoreColumn.Text =
+                        "BỎ QUA";
+
+                    ignoreColumn.UseColumnTextForButtonValue =
+                        true;
+
+                    ignoreColumn.Width =
+                        82;
+
+                    grid.Columns.Add(
+                        ignoreColumn);
+
+                    grid.Columns.Add(
+                        "NOTE",
+                        "GHI CHÚ");
+
+                    grid.Columns["NOTE"].AutoSizeMode =
+                        System.Windows.Forms.DataGridViewAutoSizeColumnMode.Fill;
+
+                    grid.Columns["NOTE"].ReadOnly =
+                        true;
+
+                    int stt =
+                        1;
+
+                    foreach (SmartAuditRow row
+                        in rows
+                            .OrderBy(
+                                r =>
+                                    GetSmartAuditStatusOrder(
+                                        r.Status))
+                            .ThenBy(
+                                r =>
+                                    r.Name))
+                    {
+                        if (!row.ReviewBaselineInitialized)
+                        {
+                            row.OriginalName =
+                                row.Name;
+
+                            row.OriginalFollowDn =
+                                row.FollowDn;
+
+                            row.ReviewBaselineInitialized =
+                                true;
+                        }
+
+                        string statusText =
+                            GetSmartAuditStatusText(
+                                row.Status);
+
+                        int index =
+                            grid.Rows.Add(
+                                stt++,
+                                row.Preview,
+                                statusText,
+                                row.Name,
+                                row.FollowDn,
+                                row.Size,
+                                row.Source,
+                                "ZOOM",
+                                "SỬA",
+                                "BỎ QUA",
+                                row.Note);
+
+                        grid.Rows[index].Tag =
+                            row;
+
+                        if (string.Equals(
+                                row.Status,
+                                "MISSING",
+                                StringComparison.OrdinalIgnoreCase))
+                        {
+                            grid.Rows[index].DefaultCellStyle.BackColor =
+                                System.Drawing.Color.MistyRose;
+                        }
+                        else if (!string.Equals(
+                                     row.Status,
+                                     "OK",
+                                     StringComparison.OrdinalIgnoreCase))
+                        {
+                            grid.Rows[index].DefaultCellStyle.BackColor =
+                                System.Drawing.Color.LemonChiffon;
+                        }
+                        else
+                        {
+                            grid.Rows[index].DefaultCellStyle.BackColor =
+                                System.Drawing.Color.Honeydew;
+                        }
+                    }
+
+                    foreach (string zeroName
+                        in legendZero)
+                    {
+                        int index =
+                            grid.Rows.Add(
+                                stt++,
+                                null,
+                                "LEGEND 0",
+                                zeroName,
+                                false,
+                                "-",
+                                "LEGEND",
+                                "",
+                                "",
+                                "",
+                                "Có trong Legend nhưng vùng mặt bằng vừa quét chưa thấy lần nào.");
+
+                        grid.Rows[index].Tag =
+                            null;
+
+                        grid.Rows[index].DefaultCellStyle.BackColor =
+                            System.Drawing.Color.LavenderBlush;
+
+                        grid.Rows[index].Cells["NAME"].ReadOnly =
+                            true;
+
+                        grid.Rows[index].Cells["FOLLOW_DN"].ReadOnly =
+                            true;
+
+                        grid.Rows[index].Cells["ZOOM"].ReadOnly =
+                            true;
+
+                        grid.Rows[index].Cells["EDIT"].ReadOnly =
+                            true;
+
+                        grid.Rows[index].Cells["IGNORE"].ReadOnly =
+                            true;
+                    }
+
+                    System.Action syncGridToRows =
+                        () =>
+                        {
+                            foreach (System.Windows.Forms.DataGridViewRow gridRow
+                                in grid.Rows)
+                            {
+                                SmartAuditRow row =
+                                    gridRow.Tag as SmartAuditRow;
+
+                                if (row == null)
+                                    continue;
+
+                                string name =
+                                    NormalizeSmartDisplayName(
+                                        Convert.ToString(
+                                            gridRow.Cells["NAME"].Value));
+
+                                if (!string.IsNullOrWhiteSpace(
+                                        name))
+                                {
+                                    if (!string.Equals(
+                                            row.Name,
+                                            name,
+                                            StringComparison.OrdinalIgnoreCase))
+                                    {
+                                        row.UserEdited =
+                                            true;
+                                    }
+
+                                    row.Name =
+                                        name;
+                                }
+
+                                bool followDn =
+                                    false;
+
+                                object rawDn =
+                                    gridRow.Cells["FOLLOW_DN"].Value;
+
+                                if (rawDn != null)
+                                {
+                                    bool.TryParse(
+                                        Convert.ToString(
+                                            rawDn),
+                                        out followDn);
+                                }
+
+                                row.FollowDn =
+                                    followDn;
+                            }
+                        };
+
+                    grid.CellContentClick +=
+                        (s, e) =>
+                        {
+                            if (e.RowIndex < 0 ||
+                                e.ColumnIndex < 0)
+                            {
+                                return;
+                            }
+
+                            SmartAuditRow row =
+                                grid.Rows[e.RowIndex].Tag as SmartAuditRow;
+
+                            if (row == null)
+                                return;
+
+                            string columnName =
+                                grid.Columns[e.ColumnIndex].Name;
+
+                            if (string.Equals(
+                                    columnName,
+                                    "ZOOM",
+                                    StringComparison.OrdinalIgnoreCase))
+                            {
+                                syncGridToRows();
+
+                                zoomRow =
+                                    row;
+
+                                form.DialogResult =
+                                    System.Windows.Forms.DialogResult.Retry;
+
+                                form.Close();
+
+                                return;
+                            }
+
+                            if (string.Equals(
+                                    columnName,
+                                    "EDIT",
+                                    StringComparison.OrdinalIgnoreCase))
+                            {
+                                syncGridToRows();
+
+                                bool changed =
+                                    ShowSmartAuditEditDialog(
+                                        row);
+
+                                if (changed)
+                                {
+                                    row.UserEdited =
+                                        true;
+
+                                    grid.Rows[e.RowIndex]
+                                        .Cells["NAME"].Value =
+                                        row.Name;
+
+                                    grid.Rows[e.RowIndex]
+                                        .Cells["FOLLOW_DN"].Value =
+                                        row.FollowDn;
+
+                                    grid.Rows[e.RowIndex]
+                                        .Cells["SIZE"].Value =
+                                        row.Size;
+
+                                    grid.Rows[e.RowIndex]
+                                        .Cells["STATUS"].Value =
+                                        GetSmartAuditStatusText(
+                                            row.Status);
+
+                                    grid.Rows[e.RowIndex]
+                                        .Cells["NOTE"].Value =
+                                        row.Note;
+
+                                    if (string.Equals(
+                                            row.Status,
+                                            "MISSING",
+                                            StringComparison.OrdinalIgnoreCase))
+                                    {
+                                        grid.Rows[e.RowIndex]
+                                            .DefaultCellStyle.BackColor =
+                                            System.Drawing.Color.MistyRose;
+                                    }
+                                    else if (!string.Equals(
+                                                 row.Status,
+                                                 "OK",
+                                                 StringComparison.OrdinalIgnoreCase))
+                                    {
+                                        grid.Rows[e.RowIndex]
+                                            .DefaultCellStyle.BackColor =
+                                            System.Drawing.Color.LemonChiffon;
+                                    }
+                                    else
+                                    {
+                                        grid.Rows[e.RowIndex]
+                                            .DefaultCellStyle.BackColor =
+                                            System.Drawing.Color.Honeydew;
+                                    }
+                                }
+
+                                return;
+                            }
+
+                            if (string.Equals(
+                                    columnName,
+                                    "IGNORE",
+                                    StringComparison.OrdinalIgnoreCase))
+                            {
+                                syncGridToRows();
+
+                                // STEP 18:
+                                // Dòng đỏ CHƯA HỌC bị BỎ QUA => học NEGATIVE ngay.
+                                LearnAiNegativeFromAuditRow(
+                                    row);
+
+                                rows.Remove(
+                                    row);
+
+                                grid.Rows.RemoveAt(
+                                    e.RowIndex);
+
+                                int number =
+                                    1;
+
+                                foreach (System.Windows.Forms.DataGridViewRow r
+                                    in grid.Rows)
+                                {
+                                    if (r.Tag is SmartAuditRow)
+                                    {
+                                        r.Cells["STT"].Value =
+                                            number++;
+                                    }
+                                }
+
+                                return;
+                            }
+                        };
+
+                    grid.CellDoubleClick +=
+                        (s, e) =>
+                        {
+                            if (e.RowIndex < 0)
+                                return;
+
+                            SmartAuditRow row =
+                                grid.Rows[e.RowIndex].Tag as SmartAuditRow;
+
+                            if (row == null)
+                                return;
+
+                            syncGridToRows();
+
+                            zoomRow =
+                                row;
+
+                            form.DialogResult =
+                                System.Windows.Forms.DialogResult.Retry;
+
+                            form.Close();
+                        };
+
+                    applyButton.Text =
+                        "ÁP DỤNG & XUẤT THỐNG KÊ";
+
+                    applyButton.Width =
+                        220;
+
+                    applyButton.Height =
+                        40;
+
+                    applyButton.Left =
+                        1040;
+
+                    applyButton.Top =
+                        675;
+
+                    applyButton.DialogResult =
+                        System.Windows.Forms.DialogResult.OK;
+
+                    applyButton.Font =
+                        new System.Drawing.Font(
+                            "Segoe UI",
+                            9.5f,
+                            System.Drawing.FontStyle.Bold);
+
+                    applyButton.BackColor =
+                        System.Drawing.Color.FromArgb(
+                            37,
+                            99,
+                            235);
+
+                    applyButton.ForeColor =
+                        System.Drawing.Color.White;
+
+                    applyButton.FlatStyle =
+                        System.Windows.Forms.FlatStyle.Flat;
+
+                    cancelButton.Text =
+                        "HỦY";
+
+                    cancelButton.Width =
+                        120;
+
+                    cancelButton.Height =
+                        40;
+
+                    cancelButton.Left =
+                        1270;
+
+                    cancelButton.Top =
+                        675;
+
+                    cancelButton.DialogResult =
+                        System.Windows.Forms.DialogResult.Cancel;
+
+                    cancelButton.Font =
+                        new System.Drawing.Font(
+                            "Segoe UI",
+                            9.5f,
+                            System.Drawing.FontStyle.Bold);
+
+                    form.Controls.Add(
+                        summary);
+
+                    form.Controls.Add(
+                        grid);
+
+                    form.Controls.Add(
+                        applyButton);
+
+                    form.Controls.Add(
+                        cancelButton);
+
+                    form.AcceptButton =
+                        applyButton;
+
+                    form.CancelButton =
+                        cancelButton;
+
+                    System.Windows.Forms.DialogResult result =
+                        form.ShowDialog();
+
+                    if (result ==
+                            System.Windows.Forms.DialogResult.Retry &&
+                        zoomRow != null)
+                    {
+                        syncGridToRows();
+
+                        ZoomToSmartAuditRow(
+                            doc,
+                            zoomRow);
+
+                        continue;
+                    }
+
+                    if (result !=
+                        System.Windows.Forms.DialogResult.OK)
+                    {
+                        return false;
+                    }
+
+                    syncGridToRows();
+
+                    return true;
+                }
+            }
+        }
+
+        private void ZoomToSmartAuditRow(
+            Document doc,
+            SmartAuditRow row)
+        {
+            if (doc == null ||
+                row == null)
+            {
+                return;
+            }
+
+            try
+            {
+                Autodesk.AutoCAD.ApplicationServices.Core.Application
+                    .MainWindow
+                    .Focus();
+            }
+            catch
+            {
+            }
+
+            try
+            {
+                ZoomToReview2DPoint(
+                    doc.Editor,
+                    new Point3d(
+                        row.Point.X,
+                        row.Point.Y,
+                        0.0));
+
+                doc.Editor.Regen();
+
+                PromptStringOptions waitOptions =
+                    new PromptStringOptions(
+                        "\nĐã ZOOM tới ứng viên. Kiểm tra trên bản vẽ, sau đó nhấn ENTER để quay lại bảng KIỂM TRA SÓT: ");
+
+                waitOptions.AllowSpaces =
+                    true;
+
+                doc.Editor.GetString(
+                    waitOptions);
+            }
+            catch
+            {
+            }
+        }
+
+        private bool ShowSmartAuditEditDialog(
+            SmartAuditRow row)
+        {
+            if (row == null)
+                return false;
 
             using (System.Windows.Forms.Form form =
                 new System.Windows.Forms.Form())
-            using (System.Windows.Forms.Label summary =
+            using (System.Windows.Forms.Label title =
                 new System.Windows.Forms.Label())
-            using (System.Windows.Forms.DataGridView grid =
-                new System.Windows.Forms.DataGridView())
-            using (System.Windows.Forms.Button closeButton =
+            using (System.Windows.Forms.PictureBox preview =
+                new System.Windows.Forms.PictureBox())
+            using (System.Windows.Forms.Label nameLabel =
+                new System.Windows.Forms.Label())
+            using (System.Windows.Forms.TextBox nameBox =
+                new System.Windows.Forms.TextBox())
+            using (System.Windows.Forms.CheckBox followDnBox =
+                new System.Windows.Forms.CheckBox())
+            using (System.Windows.Forms.Label sizeLabel =
+                new System.Windows.Forms.Label())
+            using (System.Windows.Forms.TextBox sizeBox =
+                new System.Windows.Forms.TextBox())
+            using (System.Windows.Forms.Label hint =
+                new System.Windows.Forms.Label())
+            using (System.Windows.Forms.Button okButton =
+                new System.Windows.Forms.Button())
+            using (System.Windows.Forms.Button cancelButton =
                 new System.Windows.Forms.Button())
             {
                 form.Text =
-                    "KIỂM TRA SÓT VAN / THIẾT BỊ";
+                    "SỬA NHẬN DIỆN VAN / THIẾT BỊ";
 
                 form.StartPosition =
                     System.Windows.Forms.FormStartPosition.CenterScreen;
 
                 form.Width =
-                    1120;
+                    720;
 
                 form.Height =
-                    720;
+                    430;
+
+                form.MinimizeBox =
+                    false;
+
+                form.MaximizeBox =
+                    false;
 
                 form.BackColor =
                     System.Drawing.Color.White;
 
-                summary.Left =
-                    16;
+                title.Left =
+                    18;
 
-                summary.Top =
-                    12;
+                title.Top =
+                    14;
 
-                summary.Width =
-                    1070;
+                title.Width =
+                    660;
 
-                summary.Height =
-                    74;
+                title.Height =
+                    28;
 
-                summary.Font =
+                title.Text =
+                    "XÁC NHẬN LẠI THÔNG TIN THIẾT BỊ";
+
+                title.Font =
                     new System.Drawing.Font(
                         "Segoe UI",
-                        10.0f,
+                        12.0f,
                         System.Drawing.FontStyle.Bold);
 
-                summary.Text =
-                    "TỔNG ỨNG VIÊN: " +
-                    total +
-                    "    |    ĐÃ NHẬN DIỆN: " +
-                    recognized +
-                    "    |    CHẮC CHẮN: " +
-                    certain +
-                    "    |    CẦN KIỂM TRA: " +
-                    needCheck +
-                    "    |    NGHI BỊ SÓT: " +
-                    missing +
-                    "\r\nĐỘ PHỦ NHẬN DIỆN: " +
-                    coverage.ToString(
-                        "0.0",
-                        CultureInfo.InvariantCulture) +
-                    "%    |    LEGEND CÓ NHƯNG MẶT BẰNG CHƯA THẤY: " +
-                    legendZero.Count +
-                    "\r\nXANH = OK    CAM = DN chưa chắc    ĐỎ = ứng viên chưa nhận diện.";
+                title.ForeColor =
+                    System.Drawing.Color.FromArgb(
+                        35,
+                        55,
+                        85);
 
-                grid.Left =
-                    16;
+                preview.Left =
+                    18;
 
-                grid.Top =
-                    94;
+                preview.Top =
+                    55;
 
-                grid.Width =
-                    1070;
+                preview.Width =
+                    180;
 
-                grid.Height =
-                    530;
+                preview.Height =
+                    110;
 
-                grid.AllowUserToAddRows =
-                    false;
+                preview.BorderStyle =
+                    System.Windows.Forms.BorderStyle.FixedSingle;
 
-                grid.AllowUserToDeleteRows =
-                    false;
+                preview.SizeMode =
+                    System.Windows.Forms.PictureBoxSizeMode.Zoom;
 
-                grid.ReadOnly =
-                    true;
-
-                grid.RowHeadersVisible =
-                    false;
-
-                grid.SelectionMode =
-                    System.Windows.Forms.DataGridViewSelectionMode.FullRowSelect;
-
-                grid.AutoSizeRowsMode =
-                    System.Windows.Forms.DataGridViewAutoSizeRowsMode.AllCells;
-
-                grid.BackgroundColor =
+                preview.BackColor =
                     System.Drawing.Color.White;
 
-                grid.EnableHeadersVisualStyles =
-                    false;
+                if (row.Preview != null)
+                {
+                    try
+                    {
+                        preview.Image =
+                            new System.Drawing.Bitmap(
+                                row.Preview);
+                    }
+                    catch
+                    {
+                    }
+                }
 
-                grid.ColumnHeadersDefaultCellStyle.BackColor =
-                    System.Drawing.Color.FromArgb(
-                        236,
-                        242,
-                        248);
+                nameLabel.Left =
+                    220;
 
-                grid.ColumnHeadersDefaultCellStyle.Font =
+                nameLabel.Top =
+                    58;
+
+                nameLabel.Width =
+                    430;
+
+                nameLabel.Height =
+                    22;
+
+                nameLabel.Text =
+                    "TÊN VAN / THIẾT BỊ:";
+
+                nameLabel.Font =
                     new System.Drawing.Font(
                         "Segoe UI",
                         9.5f,
                         System.Drawing.FontStyle.Bold);
 
-                grid.Font =
+                nameBox.Left =
+                    220;
+
+                nameBox.Top =
+                    84;
+
+                nameBox.Width =
+                    450;
+
+                nameBox.Height =
+                    30;
+
+                nameBox.Font =
                     new System.Drawing.Font(
                         "Segoe UI",
-                        9.5f);
+                        10.5f);
 
-                grid.Columns.Add(
-                    "STT",
-                    "STT");
+                nameBox.Text =
+                    string.Equals(
+                        row.Name,
+                        "CHƯA NHẬN DIỆN",
+                        StringComparison.OrdinalIgnoreCase)
+                        ? ""
+                        : (row.Name ?? "");
 
-                grid.Columns["STT"].Width =
-                    55;
+                followDnBox.Left =
+                    220;
 
-                grid.Columns["STT"].DefaultCellStyle.Alignment =
-                    System.Windows.Forms.DataGridViewContentAlignment.MiddleCenter;
+                followDnBox.Top =
+                    128;
 
-                grid.Columns.Add(
-                    "STATUS",
-                    "TRẠNG THÁI");
+                followDnBox.Width =
+                    220;
 
-                grid.Columns["STATUS"].Width =
-                    145;
+                followDnBox.Height =
+                    28;
 
-                grid.Columns.Add(
-                    "NAME",
-                    "NHẬN DIỆN");
+                followDnBox.Text =
+                    "LẤY SIZE THEO DN ỐNG";
 
-                grid.Columns["NAME"].Width =
-                    290;
+                followDnBox.Font =
+                    new System.Drawing.Font(
+                        "Segoe UI",
+                        9.5f,
+                        System.Drawing.FontStyle.Bold);
 
-                grid.Columns.Add(
-                    "SIZE",
-                    "SIZE");
+                followDnBox.Checked =
+                    row.FollowDn;
 
-                grid.Columns["SIZE"].Width =
-                    130;
+                sizeLabel.Left =
+                    220;
 
-                grid.Columns["SIZE"].DefaultCellStyle.Alignment =
-                    System.Windows.Forms.DataGridViewContentAlignment.MiddleCenter;
+                sizeLabel.Top =
+                    172;
 
-                grid.Columns.Add(
-                    "SOURCE",
-                    "NGUỒN");
+                sizeLabel.Width =
+                    120;
 
-                grid.Columns["SOURCE"].Width =
-                    150;
+                sizeLabel.Height =
+                    22;
 
-                grid.Columns.Add(
-                    "NOTE",
-                    "GHI CHÚ");
+                sizeLabel.Text =
+                    "SIZE:";
 
-                grid.Columns["NOTE"].AutoSizeMode =
-                    System.Windows.Forms.DataGridViewAutoSizeColumnMode.Fill;
+                sizeLabel.Font =
+                    new System.Drawing.Font(
+                        "Segoe UI",
+                        9.5f,
+                        System.Drawing.FontStyle.Bold);
 
-                int stt =
-                    1;
+                sizeBox.Left =
+                    300;
 
-                foreach (SmartAuditRow row
-                    in rows
-                        .OrderBy(
-                            r =>
-                                GetSmartAuditStatusOrder(
-                                    r.Status))
-                        .ThenBy(
-                            r =>
-                                r.Name))
+                sizeBox.Top =
+                    168;
+
+                sizeBox.Width =
+                    180;
+
+                sizeBox.Height =
+                    30;
+
+                sizeBox.Font =
+                    new System.Drawing.Font(
+                        "Segoe UI",
+                        10.5f);
+
+                sizeBox.Text =
+                    row.Size ?? "";
+
+                hint.Left =
+                    18;
+
+                hint.Top =
+                    220;
+
+                hint.Width =
+                    650;
+
+                hint.Height =
+                    90;
+
+                hint.Font =
+                    new System.Drawing.Font(
+                        "Segoe UI",
+                        9.2f);
+
+                hint.ForeColor =
+                    System.Drawing.Color.FromArgb(
+                        80,
+                        80,
+                        80);
+
+                hint.Text =
+                    "Cách dùng:\r\n" +
+                    "• Nếu là VAN / FLOW SWITCH đặt trên ống: tick LẤY SIZE THEO DN ỐNG.\r\n" +
+                    "• Nếu AI đã suy đúng DN150 thì giữ SIZE = DN150.\r\n" +
+                    "• Nếu AI suy sai hoặc CẦN KIỂM TRA, có thể gõ trực tiếp DN25, DN50, DN100, DN150...\r\n" +
+                    "• Nếu thiết bị không theo DN (sprinkler, bình chữa cháy...): bỏ tick, SIZE sẽ về '-'.";
+
+                followDnBox.CheckedChanged +=
+                    (s, e) =>
+                    {
+                        sizeBox.Enabled =
+                            followDnBox.Checked;
+
+                        if (!followDnBox.Checked)
+                        {
+                            sizeBox.Text =
+                                "-";
+                        }
+                        else if (string.Equals(
+                                     sizeBox.Text,
+                                     "-",
+                                     StringComparison.OrdinalIgnoreCase))
+                        {
+                            sizeBox.Text =
+                                row.Size == "-"
+                                    ? ""
+                                    : (row.Size ?? "");
+                        }
+                    };
+
+                sizeBox.Enabled =
+                    followDnBox.Checked;
+
+                okButton.Text =
+                    "LƯU THÔNG TIN";
+
+                okButton.Width =
+                    160;
+
+                okButton.Height =
+                    40;
+
+                okButton.Left =
+                    390;
+
+                okButton.Top =
+                    330;
+
+                okButton.DialogResult =
+                    System.Windows.Forms.DialogResult.OK;
+
+                okButton.Font =
+                    new System.Drawing.Font(
+                        "Segoe UI",
+                        9.5f,
+                        System.Drawing.FontStyle.Bold);
+
+                okButton.BackColor =
+                    System.Drawing.Color.FromArgb(
+                        37,
+                        99,
+                        235);
+
+                okButton.ForeColor =
+                    System.Drawing.Color.White;
+
+                okButton.FlatStyle =
+                    System.Windows.Forms.FlatStyle.Flat;
+
+                cancelButton.Text =
+                    "HỦY";
+
+                cancelButton.Width =
+                    110;
+
+                cancelButton.Height =
+                    40;
+
+                cancelButton.Left =
+                    560;
+
+                cancelButton.Top =
+                    330;
+
+                cancelButton.DialogResult =
+                    System.Windows.Forms.DialogResult.Cancel;
+
+                form.Controls.Add(
+                    title);
+
+                form.Controls.Add(
+                    preview);
+
+                form.Controls.Add(
+                    nameLabel);
+
+                form.Controls.Add(
+                    nameBox);
+
+                form.Controls.Add(
+                    followDnBox);
+
+                form.Controls.Add(
+                    sizeLabel);
+
+                form.Controls.Add(
+                    sizeBox);
+
+                form.Controls.Add(
+                    hint);
+
+                form.Controls.Add(
+                    okButton);
+
+                form.Controls.Add(
+                    cancelButton);
+
+                form.AcceptButton =
+                    okButton;
+
+                form.CancelButton =
+                    cancelButton;
+
+                form.Shown +=
+                    (s, e) =>
+                    {
+                        nameBox.Focus();
+                        nameBox.SelectAll();
+                    };
+
+                if (form.ShowDialog() !=
+                    System.Windows.Forms.DialogResult.OK)
                 {
-                    string statusText =
-                        GetSmartAuditStatusText(
-                            row.Status);
+                    return false;
+                }
 
-                    int index =
-                        grid.Rows.Add(
-                            stt++,
-                            statusText,
-                            row.Name,
-                            row.Size,
-                            row.Source,
-                            row.Note);
+                string newName =
+                    NormalizeSmartDisplayName(
+                        nameBox.Text);
+
+                if (string.IsNullOrWhiteSpace(
+                        newName))
+                {
+                    System.Windows.Forms.MessageBox.Show(
+                        "Bạn chưa nhập TÊN VAN / THIẾT BỊ.",
+                        "SỬA NHẬN DIỆN",
+                        System.Windows.Forms.MessageBoxButtons.OK,
+                        System.Windows.Forms.MessageBoxIcon.Warning);
+
+                    return false;
+                }
+
+                row.Name =
+                    newName;
+
+                row.FollowDn =
+                    followDnBox.Checked;
+
+                if (!row.FollowDn)
+                {
+                    row.Size =
+                        "-";
+
+                    row.Status =
+                        "OK";
+                }
+                else
+                {
+                    string enteredSize =
+                        (sizeBox.Text ?? "")
+                            .Trim()
+                            .ToUpperInvariant();
+
+                    if (string.IsNullOrWhiteSpace(
+                            enteredSize))
+                    {
+                        enteredSize =
+                            "KHÔNG RÕ DN";
+                    }
+
+                    if (Regex.IsMatch(
+                            enteredSize,
+                            @"^\d{1,4}$"))
+                    {
+                        enteredSize =
+                            "DN" +
+                            enteredSize;
+                    }
+
+                    row.Size =
+                        enteredSize;
 
                     if (string.Equals(
-                            row.Status,
-                            "MISSING",
+                            row.Size,
+                            "CẦN KIỂM TRA",
                             StringComparison.OrdinalIgnoreCase))
                     {
-                        grid.Rows[index].DefaultCellStyle.BackColor =
-                            System.Drawing.Color.MistyRose;
+                        row.Status =
+                            "DN_CHECK";
                     }
-                    else if (!string.Equals(
-                                 row.Status,
-                                 "OK",
+                    else if (string.Equals(
+                                 row.Size,
+                                 "KHÔNG RÕ DN",
                                  StringComparison.OrdinalIgnoreCase))
                     {
-                        grid.Rows[index].DefaultCellStyle.BackColor =
-                            System.Drawing.Color.LemonChiffon;
+                        row.Status =
+                            "NO_DN";
                     }
                     else
                     {
-                        grid.Rows[index].DefaultCellStyle.BackColor =
-                            System.Drawing.Color.Honeydew;
+                        row.Status =
+                            "OK";
                     }
                 }
 
-                foreach (string zeroName
-                    in legendZero)
-                {
-                    int index =
-                        grid.Rows.Add(
-                            stt++,
-                            "LEGEND 0",
-                            zeroName,
-                            "-",
-                            "LEGEND",
-                            "Có trong Legend nhưng vùng mặt bằng vừa quét chưa thấy lần nào.");
+                row.UserEdited =
+                    true;
 
-                    grid.Rows[index].DefaultCellStyle.BackColor =
-                        System.Drawing.Color.LavenderBlush;
-                }
+                row.Note =
+                    "Người dùng đã ZOOM kiểm tra và sửa thông tin thủ công.";
 
-                closeButton.Text =
-                    "ĐÓNG";
-
-                closeButton.Width =
-                    120;
-
-                closeButton.Height =
-                    38;
-
-                closeButton.Left =
-                    966;
-
-                closeButton.Top =
-                    640;
-
-                closeButton.DialogResult =
-                    System.Windows.Forms.DialogResult.OK;
-
-                closeButton.Font =
-                    new System.Drawing.Font(
-                        "Segoe UI",
-                        9.5f,
-                        System.Drawing.FontStyle.Bold);
-
-                form.Controls.Add(
-                    summary);
-
-                form.Controls.Add(
-                    grid);
-
-                form.Controls.Add(
-                    closeButton);
-
-                form.AcceptButton =
-                    closeButton;
-
-                form.ShowDialog();
+                return true;
             }
         }
+
+        private void ApplySmartAuditCorrections(
+            List<SmartAuditRow> rows)
+        {
+            if (rows == null)
+                return;
+
+            foreach (SmartAuditRow row
+                in rows)
+            {
+                if (row == null)
+                    continue;
+
+                row.Name =
+                    NormalizeSmartDisplayName(
+                        row.Name);
+
+                bool hasConfirmedName =
+                    !string.IsNullOrWhiteSpace(
+                        row.Name) &&
+                    !string.Equals(
+                        row.Name,
+                        "CHƯA NHẬN DIỆN",
+                        StringComparison.OrdinalIgnoreCase);
+
+                if (!hasConfirmedName)
+                {
+                    row.Status =
+                        "MISSING";
+
+                    continue;
+                }
+
+                if (!row.FollowDn)
+                {
+                    row.Size =
+                        "-";
+
+                    row.Status =
+                        "OK";
+                }
+                else if (string.Equals(
+                             row.Size,
+                             "CẦN KIỂM TRA",
+                             StringComparison.OrdinalIgnoreCase))
+                {
+                    row.Status =
+                        "DN_CHECK";
+                }
+                else if (string.Equals(
+                             row.Size,
+                             "KHÔNG RÕ DN",
+                             StringComparison.OrdinalIgnoreCase) ||
+                         string.IsNullOrWhiteSpace(
+                             row.Size))
+                {
+                    row.Status =
+                        "NO_DN";
+                }
+                else
+                {
+                    row.Status =
+                        "OK";
+                }
+
+                if (row.Source.IndexOf(
+                        "CHƯA HỌC",
+                        StringComparison.OrdinalIgnoreCase) >= 0)
+                {
+                    row.Source =
+                        string.Equals(
+                            row.MatchMode,
+                            "GEOMETRY",
+                            StringComparison.OrdinalIgnoreCase)
+                            ? "HÌNH BỔ SUNG"
+                            : "BLOCK BỔ SUNG";
+
+                    row.Note =
+                        "Người dùng đã kiểm tra vị trí và xác nhận tên.";
+                }
+            }
+
+            // Nếu cùng một block/fingerprint xuất hiện nhiều lần,
+            // sửa tên một lần sẽ áp cho toàn bộ các instance cùng ký hiệu.
+            List<IGrouping<string, SmartAuditRow>> groups =
+                rows
+                    .Where(
+                        r =>
+                            r != null &&
+                            !string.IsNullOrWhiteSpace(
+                                GetSmartAuditRuleSignature(
+                                    r)))
+                    .GroupBy(
+                        r =>
+                            GetSmartAuditRuleSignature(
+                                r),
+                        StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+
+            foreach (IGrouping<string, SmartAuditRow> group
+                in groups)
+            {
+                SmartAuditRow confirmed =
+                    group.FirstOrDefault(
+                        r =>
+                            !string.IsNullOrWhiteSpace(
+                                r.Name) &&
+                            !string.Equals(
+                                r.Name,
+                                "CHƯA NHẬN DIỆN",
+                                StringComparison.OrdinalIgnoreCase));
+
+                if (confirmed == null)
+                    continue;
+
+                foreach (SmartAuditRow item
+                    in group)
+                {
+                    if (item == null)
+                        continue;
+
+                    if (string.Equals(
+                            item.Name,
+                            "CHƯA NHẬN DIỆN",
+                            StringComparison.OrdinalIgnoreCase))
+                    {
+                        item.Name =
+                            confirmed.Name;
+
+                        item.FollowDn =
+                            confirmed.FollowDn;
+
+                        if (!item.FollowDn)
+                        {
+                            item.Size =
+                                "-";
+
+                            item.Status =
+                                "OK";
+                        }
+                        else if (string.Equals(
+                                     item.Size,
+                                     "CẦN KIỂM TRA",
+                                     StringComparison.OrdinalIgnoreCase))
+                        {
+                            item.Status =
+                                "DN_CHECK";
+                        }
+                        else if (string.Equals(
+                                     item.Size,
+                                     "KHÔNG RÕ DN",
+                                     StringComparison.OrdinalIgnoreCase))
+                        {
+                            item.Status =
+                                "NO_DN";
+                        }
+                        else
+                        {
+                            item.Status =
+                                "OK";
+                        }
+
+                        item.Note =
+                            "Tự cập nhật theo ký hiệu cùng mẫu đã được người dùng xác nhận.";
+                    }
+                }
+            }
+        }
+
+        private static string GetSmartAuditRuleSignature(
+            SmartAuditRow row)
+        {
+            if (row == null)
+                return "";
+
+            if (string.Equals(
+                    row.MatchMode,
+                    "GEOMETRY",
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                return
+                    string.IsNullOrWhiteSpace(
+                        row.GeometryFingerprint)
+                        ? ""
+                        : "GEO|" +
+                          row.GeometryFingerprint;
+            }
+
+            return
+                string.IsNullOrWhiteSpace(
+                    row.BlockKey)
+                    ? ""
+                    : "BLOCK|" +
+                      row.BlockKey;
+        }
+
+        private void UpdateSmartRulesFromAuditRows(
+            List<SmartSymbolRule> currentRules,
+            List<SmartAuditRow> auditRows)
+        {
+            if (currentRules == null ||
+                auditRows == null)
+            {
+                return;
+            }
+
+            List<SmartSymbolRule> library =
+                LoadSmartSymbolRules();
+
+            foreach (SmartAuditRow row
+                in auditRows)
+            {
+                if (row == null ||
+                    string.Equals(
+                        row.Status,
+                        "MISSING",
+                        StringComparison.OrdinalIgnoreCase) ||
+                    string.IsNullOrWhiteSpace(
+                        row.Name) ||
+                    string.Equals(
+                        row.Name,
+                        "CHƯA NHẬN DIỆN",
+                        StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                string signature =
+                    GetSmartAuditRuleSignature(
+                        row);
+
+                if (string.IsNullOrWhiteSpace(
+                        signature))
+                {
+                    continue;
+                }
+
+                SmartSymbolRule updateRule =
+                    new SmartSymbolRule
+                    {
+                        BlockKey =
+                            row.BlockKey,
+                        DisplayName =
+                            row.Name,
+                        SizeRule =
+                            row.FollowDn
+                                ? "THEO_ONG"
+                                : "KHONG_SIZE",
+                        MatchMode =
+                            string.Equals(
+                                row.MatchMode,
+                                "GEOMETRY",
+                                StringComparison.OrdinalIgnoreCase)
+                                ? "GEOMETRY"
+                                : "BLOCK",
+                        GeometryFingerprint =
+                            row.GeometryFingerprint ?? ""
+                    };
+
+                UpsertSmartRuleList(
+                    currentRules,
+                    updateRule);
+
+                UpsertSmartRuleList(
+                    library,
+                    updateRule);
+            }
+
+            SaveSmartSymbolRules(
+                library);
+        }
+
+        private static void UpsertSmartRuleList(
+            List<SmartSymbolRule> rules,
+            SmartSymbolRule updateRule)
+        {
+            if (rules == null ||
+                updateRule == null)
+            {
+                return;
+            }
+
+            SmartSymbolRule existing =
+                null;
+
+            if (string.Equals(
+                    updateRule.MatchMode,
+                    "GEOMETRY",
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                existing =
+                    rules.FirstOrDefault(
+                        r =>
+                            r != null &&
+                            string.Equals(
+                                r.MatchMode,
+                                "GEOMETRY",
+                                StringComparison.OrdinalIgnoreCase) &&
+                            string.Equals(
+                                r.GeometryFingerprint,
+                                updateRule.GeometryFingerprint,
+                                StringComparison.Ordinal));
+            }
+            else
+            {
+                existing =
+                    rules.FirstOrDefault(
+                        r =>
+                            r != null &&
+                            !string.Equals(
+                                r.MatchMode,
+                                "GEOMETRY",
+                                StringComparison.OrdinalIgnoreCase) &&
+                            string.Equals(
+                                r.BlockKey,
+                                updateRule.BlockKey,
+                                StringComparison.OrdinalIgnoreCase));
+            }
+
+            if (existing == null)
+            {
+                rules.Add(
+                    updateRule);
+
+                return;
+            }
+
+            existing.BlockKey =
+                updateRule.BlockKey;
+
+            existing.DisplayName =
+                updateRule.DisplayName;
+
+            existing.SizeRule =
+                updateRule.SizeRule;
+
+            existing.MatchMode =
+                updateRule.MatchMode;
+
+            existing.GeometryFingerprint =
+                updateRule.GeometryFingerprint;
+        }
+
+        private List<SmartValveStatRow> BuildSmartStatsFromAuditRows(
+            List<SmartAuditRow> rows)
+        {
+            if (rows == null)
+            {
+                return
+                    new List<SmartValveStatRow>();
+            }
+
+            return
+                rows
+                    .Where(
+                        r =>
+                            r != null &&
+                            !string.Equals(
+                                r.Status,
+                                "MISSING",
+                                StringComparison.OrdinalIgnoreCase) &&
+                            !string.IsNullOrWhiteSpace(
+                                r.Name) &&
+                            !string.Equals(
+                                r.Name,
+                                "CHƯA NHẬN DIỆN",
+                                StringComparison.OrdinalIgnoreCase))
+                    .GroupBy(
+                        r =>
+                            (r.Name ?? "") +
+                            "\u001F" +
+                            (r.FollowDn
+                                ? (r.Size ?? "-")
+                                : "-"),
+                        StringComparer.OrdinalIgnoreCase)
+                    .Select(
+                        g =>
+                        {
+                            string[] parts =
+                                g.Key.Split(
+                                    '\u001F');
+
+                            return
+                                new SmartValveStatRow
+                                {
+                                    Loai =
+                                        parts.Length > 0
+                                            ? parts[0]
+                                            : "",
+                                    Size =
+                                        parts.Length > 1
+                                            ? parts[1]
+                                            : "-",
+                                    SoLuong =
+                                        g.Count()
+                                };
+                        })
+                    .OrderBy(
+                        r =>
+                            r.Loai)
+                    .ThenByDescending(
+                        r =>
+                            SmartSizeSortValue(
+                                r.Size))
+                    .ToList();
+        }
+
+
 
         private static int GetSmartAuditStatusOrder(
             string status)
@@ -46256,9 +51561,164 @@ namespace ClassLibrary4
             return "✓ OK";
         }
 
+        private void AppendGlobalAiPipeCandidates(
+            Database db,
+            List<SmartPipeCandidate> candidates)
+        {
+            if (db == null ||
+                candidates == null)
+            {
+                return;
+            }
+
+            HashSet<ObjectId> existingIds =
+                new HashSet<ObjectId>(
+                    candidates
+                        .Where(
+                            c =>
+                                c != null &&
+                                !c.Id.IsNull)
+                        .Select(
+                            c =>
+                                c.Id));
+
+            try
+            {
+                using (Transaction tr =
+                    db.TransactionManager.StartTransaction())
+                {
+                    BlockTableRecord space =
+                        tr.GetObject(
+                            db.CurrentSpaceId,
+                            OpenMode.ForRead,
+                            false) as BlockTableRecord;
+
+                    if (space == null)
+                        return;
+
+                    foreach (ObjectId id
+                        in space)
+                    {
+                        if (existingIds.Contains(
+                                id))
+                        {
+                            continue;
+                        }
+
+                        Curve curve =
+                            tr.GetObject(
+                                id,
+                                OpenMode.ForRead,
+                                false) as Curve;
+
+                        if (curve == null ||
+                            curve.IsErased)
+                        {
+                            continue;
+                        }
+
+                        string layer =
+                            (curve.Layer ?? "")
+                                .Trim();
+
+                        string size =
+                            ExtractAiPipeSizeFromLayer(
+                                layer);
+
+                        if (string.IsNullOrWhiteSpace(
+                                size))
+                        {
+                            continue;
+                        }
+
+                        candidates.Add(
+                            new SmartPipeCandidate
+                            {
+                                Id =
+                                    id,
+                                Size =
+                                    size,
+                                Layer =
+                                    layer,
+                                IsAiGenerated =
+                                    true,
+                                Confidence =
+                                    0.99
+                            });
+
+                        existingIds.Add(
+                            id);
+                    }
+
+                    tr.Commit();
+                }
+            }
+            catch
+            {
+                // AI overlay là nguồn tăng cường.
+                // Nếu CurrentSpace không đọc được thì vẫn giữ candidate từ vùng quét.
+            }
+        }
+
+        private bool TryInferSmartBlockPipeSize(
+            Transaction tr,
+            BlockReference blockReference,
+            List<SmartPipeCandidate> candidates,
+            out string size,
+            out bool uncertain)
+        {
+            size =
+                "";
+
+            uncertain =
+                false;
+
+            if (blockReference == null)
+                return false;
+
+            Extents3d? deviceExtents =
+                null;
+
+            try
+            {
+                deviceExtents =
+                    blockReference.GeometricExtents;
+            }
+            catch
+            {
+            }
+
+            return
+                TryInferSmartPipeSizeFusion(
+                    tr,
+                    blockReference.Position,
+                    deviceExtents,
+                    candidates,
+                    out size,
+                    out uncertain);
+        }
+
         private bool TryInferSmartBlockPipeSize(
             Transaction tr,
             Point3d blockPosition,
+            List<SmartPipeCandidate> candidates,
+            out string size,
+            out bool uncertain)
+        {
+            return
+                TryInferSmartPipeSizeFusion(
+                    tr,
+                    blockPosition,
+                    null,
+                    candidates,
+                    out size,
+                    out uncertain);
+        }
+
+        private bool TryInferSmartPipeSizeFusion(
+            Transaction tr,
+            Point3d insertionPoint,
+            Extents3d? deviceExtents,
             List<SmartPipeCandidate> candidates,
             out string size,
             out bool uncertain)
@@ -46276,14 +51736,46 @@ namespace ClassLibrary4
                 return false;
             }
 
-            List<Tuple<double, string>> hits =
-                new List<Tuple<double, string>>();
+            List<Point3d> referencePoints =
+                GetSmartDeviceReferencePoints(
+                    insertionPoint,
+                    deviceExtents);
+
+            double deviceDiagonal =
+                0.0;
+
+            if (deviceExtents.HasValue)
+            {
+                Extents3d ex =
+                    deviceExtents.Value;
+
+                deviceDiagonal =
+                    PlanDistance(
+                        ex.MinPoint,
+                        ex.MaxPoint);
+            }
+
+            // Với block có base point đặt lệch, khoảng cách theo insertion point có thể sai.
+            // Ngưỡng được nới theo kích thước symbol nhưng vẫn có trần để không hút nhầm ống xa.
+            double maxSearchDistance =
+                Math.Min(
+                    1400.0,
+                    Math.Max(
+                        650.0,
+                        deviceDiagonal * 1.25 +
+                        250.0));
+
+            Dictionary<string, SmartPipeSizeVote> votes =
+                new Dictionary<string, SmartPipeSizeVote>(
+                    StringComparer.OrdinalIgnoreCase);
 
             foreach (SmartPipeCandidate candidate
                 in candidates)
             {
                 if (candidate == null ||
-                    candidate.Id.IsNull)
+                    candidate.Id.IsNull ||
+                    string.IsNullOrWhiteSpace(
+                        candidate.Size))
                 {
                     continue;
                 }
@@ -46300,73 +51792,343 @@ namespace ClassLibrary4
                     continue;
                 }
 
-                double distance =
-                    GetSmartDistancePointToCurve(
-                        curve,
-                        blockPosition);
+                double minDistance =
+                    double.MaxValue;
 
-                if (double.IsNaN(
-                        distance) ||
-                    double.IsInfinity(
-                        distance))
+                foreach (Point3d p
+                    in referencePoints)
+                {
+                    double distance =
+                        GetSmartDistancePointToCurve(
+                            curve,
+                            p);
+
+                    if (distance <
+                        minDistance)
+                    {
+                        minDistance =
+                            distance;
+                    }
+                }
+
+                bool crossesDevice =
+                    false;
+
+                if (deviceExtents.HasValue)
+                {
+                    crossesDevice =
+                        IsSmartCurveInsideExpandedDeviceBox(
+                            curve,
+                            deviceExtents.Value,
+                            130.0);
+                }
+
+                if (!crossesDevice &&
+                    (double.IsNaN(
+                         minDistance) ||
+                     double.IsInfinity(
+                         minDistance) ||
+                     minDistance >
+                         maxSearchDistance))
                 {
                     continue;
                 }
 
-                hits.Add(
-                    Tuple.Create(
-                        distance,
-                        candidate.Size));
+                double confidence =
+                    Math.Max(
+                        0.50,
+                        Math.Min(
+                            1.00,
+                            candidate.Confidence));
+
+                double score =
+                    minDistance /
+                    confidence;
+
+                // Mô hình ống AI là nguồn đã hợp nhất Geometry + Text + Topology.
+                if (candidate.IsAiGenerated)
+                {
+                    score -=
+                        180.0;
+                }
+
+                // Nếu tim ống thực sự xuyên qua vùng hình học của symbol,
+                // đây là bằng chứng mạnh hơn khoảng cách đến block insertion point.
+                if (crossesDevice)
+                {
+                    score -=
+                        360.0;
+                }
+
+                score =
+                    Math.Max(
+                        0.0,
+                        score);
+
+                if (!votes.TryGetValue(
+                        candidate.Size,
+                        out SmartPipeSizeVote vote))
+                {
+                    vote =
+                        new SmartPipeSizeVote
+                        {
+                            Size =
+                                candidate.Size
+                        };
+
+                    votes[candidate.Size] =
+                        vote;
+                }
+
+                vote.SupportCount++;
+
+                if (candidate.IsAiGenerated)
+                {
+                    vote.AiSupportCount++;
+                }
+
+                if (crossesDevice)
+                {
+                    vote.CrossesDeviceBox =
+                        true;
+                }
+
+                if (score <
+                    vote.BestScore)
+                {
+                    vote.BestScore =
+                        score;
+                }
             }
 
-            if (hits.Count == 0)
+            if (votes.Count == 0)
                 return false;
 
-            List<Tuple<double, string>> ordered =
-                hits
+            List<SmartPipeSizeVote> ordered =
+                votes.Values
                     .OrderBy(
-                        x =>
-                            x.Item1)
+                        v =>
+                            v.EffectiveScore)
+                    .ThenByDescending(
+                        v =>
+                            v.AiSupportCount)
+                    .ThenByDescending(
+                        v =>
+                            v.SupportCount)
                     .ToList();
 
-            Tuple<double, string> best =
+            SmartPipeSizeVote best =
                 ordered[0];
 
-            // 600 mm là ngưỡng an toàn mặc định cho block van/thiết bị.
-            // Thường tâm block nằm đúng trên tim nên khoảng cách thực gần 0.
-            if (best.Item1 >
-                600.0)
+            // Không có bằng chứng đủ gần -> không gán.
+            if (best.EffectiveScore >
+                900.0)
             {
                 return false;
             }
 
             size =
-                best.Item2;
+                best.Size;
 
-            // Nếu có một tuyến khác DN gần gần như tuyến tốt nhất,
-            // không đoán bừa — đưa vào CẦN KIỂM TRA.
-            foreach (Tuple<double, string> other
-                in ordered.Skip(1))
+            if (ordered.Count == 1)
             {
-                if (other.Item1 >
-                    best.Item1 + 120.0)
-                {
-                    break;
-                }
+                return true;
+            }
 
-                if (!string.Equals(
-                        other.Item2,
-                        best.Item2,
-                        StringComparison.OrdinalIgnoreCase))
-                {
-                    uncertain =
-                        true;
-                    return true;
-                }
+            SmartPipeSizeVote second =
+                ordered[1];
+
+            // AI overlay xuyên qua symbol hoặc có >=2 support cùng DN:
+            // chỉ coi DN khác là xung đột nếu nó cũng có bằng chứng thực sự mạnh.
+            bool bestIsStrong =
+                best.CrossesDeviceBox ||
+                best.AiSupportCount > 0 ||
+                best.SupportCount >= 2;
+
+            bool secondIsStrong =
+                second.CrossesDeviceBox ||
+                second.AiSupportCount > 0 ||
+                second.SupportCount >= 2;
+
+            double scoreGap =
+                second.EffectiveScore -
+                best.EffectiveScore;
+
+            if (secondIsStrong &&
+                scoreGap < 90.0)
+            {
+                uncertain =
+                    true;
+
+                return true;
+            }
+
+            // Nếu cả hai chỉ là "gần" chứ không xuyên symbol,
+            // cần khoảng cách tách biệt rõ hơn mới chốt.
+            if (!bestIsStrong &&
+                scoreGap < 150.0)
+            {
+                uncertain =
+                    true;
+
+                return true;
             }
 
             return true;
         }
+
+        private List<Point3d> GetSmartDeviceReferencePoints(
+            Point3d insertionPoint,
+            Extents3d? deviceExtents)
+        {
+            List<Point3d> points =
+                new List<Point3d>
+                {
+                    new Point3d(
+                        insertionPoint.X,
+                        insertionPoint.Y,
+                        0.0)
+                };
+
+            if (!deviceExtents.HasValue)
+                return points;
+
+            Extents3d ex =
+                deviceExtents.Value;
+
+            double minX =
+                ex.MinPoint.X;
+
+            double minY =
+                ex.MinPoint.Y;
+
+            double maxX =
+                ex.MaxPoint.X;
+
+            double maxY =
+                ex.MaxPoint.Y;
+
+            double cx =
+                (minX + maxX) * 0.5;
+
+            double cy =
+                (minY + maxY) * 0.5;
+
+            points.Add(
+                new Point3d(
+                    cx,
+                    cy,
+                    0.0));
+
+            points.Add(
+                new Point3d(
+                    minX,
+                    cy,
+                    0.0));
+
+            points.Add(
+                new Point3d(
+                    maxX,
+                    cy,
+                    0.0));
+
+            points.Add(
+                new Point3d(
+                    cx,
+                    minY,
+                    0.0));
+
+            points.Add(
+                new Point3d(
+                    cx,
+                    maxY,
+                    0.0));
+
+            return points;
+        }
+
+        private bool IsSmartCurveInsideExpandedDeviceBox(
+            Curve curve,
+            Extents3d extents,
+            double margin)
+        {
+            if (curve == null)
+                return false;
+
+            double minX =
+                extents.MinPoint.X -
+                margin;
+
+            double minY =
+                extents.MinPoint.Y -
+                margin;
+
+            double maxX =
+                extents.MaxPoint.X +
+                margin;
+
+            double maxY =
+                extents.MaxPoint.Y +
+                margin;
+
+            Point3d center =
+                new Point3d(
+                    (extents.MinPoint.X +
+                     extents.MaxPoint.X) * 0.5,
+                    (extents.MinPoint.Y +
+                     extents.MaxPoint.Y) * 0.5,
+                    curve.StartPoint.Z);
+
+            try
+            {
+                Point3d closest =
+                    curve.GetClosestPointTo(
+                        center,
+                        false);
+
+                if (closest.X >= minX &&
+                    closest.X <= maxX &&
+                    closest.Y >= minY &&
+                    closest.Y <= maxY)
+                {
+                    return true;
+                }
+            }
+            catch
+            {
+            }
+
+            try
+            {
+                Point3d start =
+                    curve.StartPoint;
+
+                if (start.X >= minX &&
+                    start.X <= maxX &&
+                    start.Y >= minY &&
+                    start.Y <= maxY)
+                {
+                    return true;
+                }
+
+                Point3d end =
+                    curve.EndPoint;
+
+                if (end.X >= minX &&
+                    end.X <= maxX &&
+                    end.Y >= minY &&
+                    end.Y <= maxY)
+                {
+                    return true;
+                }
+            }
+            catch
+            {
+            }
+
+            return false;
+        }
+
 
         private double GetSmartDistancePointToCurve(
             Curve curve,
@@ -46889,28 +52651,71 @@ namespace ClassLibrary4
             Editor ed =
                 doc.Editor;
 
-            // PHẢI prompt trước khi LockDocument.
-            // Nếu lock rồi mới GetPoint thì dễ khóa command context.
-            _smartValveStage =
-                "SCAN_OUTPUT_PICK_POINT";
+            Point3d tablePosition =
+                Point3d.Origin;
 
-            PromptPointResult ppr =
-                ed.GetPoint(
-                    "\nKích chọn vị trí đặt BẢNG VAN / THIẾT BỊ THÔNG MINH: ");
+            bool replaceExisting =
+                false;
 
-            if (ppr.Status !=
-                PromptStatus.OK)
+            // Nếu bảng gần nhất còn tồn tại trong DWG,
+            // lấy đúng Position và thay bảng ở cùng chỗ.
+            if (!_lastSmartStatsTableId.IsNull &&
+                _lastSmartStatsTableId.IsValid)
             {
-                return;
+                try
+                {
+                    using (doc.LockDocument())
+                    using (Transaction tr =
+                        db.TransactionManager.StartTransaction())
+                    {
+                        Table oldTable =
+                            tr.GetObject(
+                                _lastSmartStatsTableId,
+                                OpenMode.ForRead,
+                                false) as Table;
+
+                        if (oldTable != null &&
+                            !oldTable.IsErased)
+                        {
+                            tablePosition =
+                                oldTable.Position;
+
+                            replaceExisting =
+                                true;
+                        }
+
+                        tr.Commit();
+                    }
+                }
+                catch
+                {
+                    replaceExisting =
+                        false;
+                }
+            }
+
+            if (!replaceExisting)
+            {
+                _smartValveStage =
+                    "SCAN_OUTPUT_PICK_POINT";
+
+                PromptPointResult ppr =
+                    ed.GetPoint(
+                        "\nKích chọn vị trí đặt BẢNG VAN / THIẾT BỊ THÔNG MINH: ");
+
+                if (ppr.Status !=
+                    PromptStatus.OK)
+                {
+                    return;
+                }
+
+                tablePosition =
+                    ppr.Value;
             }
 
             _smartValveStage =
                 "SCAN_OUTPUT_WRITE_TABLE";
 
-            // FIX eLockViolation:
-            // Ghi Table vào Database bắt buộc phải khóa document,
-            // vì nút được gọi từ WPF Palette (modeless context),
-            // không phải command modal của AutoCAD.
             using (doc.LockDocument())
             using (Transaction tr =
                 db.TransactionManager.StartTransaction())
@@ -46919,6 +52724,29 @@ namespace ClassLibrary4
                     (BlockTableRecord)tr.GetObject(
                         db.CurrentSpaceId,
                         OpenMode.ForWrite);
+
+                if (replaceExisting &&
+                    !_lastSmartStatsTableId.IsNull &&
+                    _lastSmartStatsTableId.IsValid)
+                {
+                    try
+                    {
+                        Table oldTable =
+                            tr.GetObject(
+                                _lastSmartStatsTableId,
+                                OpenMode.ForWrite,
+                                false) as Table;
+
+                        if (oldTable != null &&
+                            !oldTable.IsErased)
+                        {
+                            oldTable.Erase();
+                        }
+                    }
+                    catch
+                    {
+                    }
+                }
 
                 Table table =
                     new Table
@@ -46944,7 +52772,7 @@ namespace ClassLibrary4
                     4);
 
                 table.Position =
-                    ppr.Value;
+                    tablePosition;
 
                 double sf =
                     12.0;
@@ -47063,9 +52891,9 @@ namespace ClassLibrary4
                         CellAlignment.MiddleCenter;
                 }
 
-                // Append trước, rồi GenerateLayout trong DB context đã lock.
-                btr.AppendEntity(
-                    table);
+                ObjectId newTableId =
+                    btr.AppendEntity(
+                        table);
 
                 tr.AddNewlyCreatedDBObject(
                     table,
@@ -47074,6 +52902,9 @@ namespace ClassLibrary4
                 table.GenerateLayout();
 
                 tr.Commit();
+
+                _lastSmartStatsTableId =
+                    newTableId;
             }
 
             _smartValveStage =
@@ -51287,6 +57118,5113 @@ namespace ClassLibrary4
             public WpfTextBox TxtSizeThem { get; set; }
             public ObservableCollection<PipeSizeItem> Sizes { get; set; }
         }
+
+        // ============================================================
+        // STEP 15 - AI BÓC TÁCH TỰ ĐỘNG
+        // GIAI ĐOẠN 1: ĐƯỜNG ỐNG
+        // ============================================================
+
+        private const string AiPipeLayerPrefix = "TDL_AI_PIPE_";
+        private const string AiPipeCheckLayer = "TDL_AI_PIPE_CHECK";
+        private const string AiPipeInfoLayer = "TDL_AI_PIPE_INFO";
+        private const double AiPipeExplicitTextMaxScore = 1800.0;
+
+        private class AiPipeTakeoffStatRow
+        {
+            public string Size { get; set; } = "";
+            public double LengthMeters { get; set; }
+            public int SegmentCount { get; set; }
+            public int ExplicitCount { get; set; }
+            public int InheritedCount { get; set; }
+            public double AverageConfidence { get; set; }
+        }
+
+        private class AiPipeSegmentResult
+        {
+            public SegmentData Segment { get; set; }
+            public string Size { get; set; } = "";
+            public double Length { get; set; }
+            public double Confidence { get; set; }
+            public string Evidence { get; set; } = "";
+        }
+
+        private class AiPipeTakeoffRunResult
+        {
+            public List<AiPipeTakeoffStatRow> Stats { get; set; } =
+                new List<AiPipeTakeoffStatRow>();
+
+            public int RawCurveCount { get; set; }
+            public int SizeTextCount { get; set; }
+            public int ExplicitSegmentCount { get; set; }
+            public int InheritedSegmentCount { get; set; }
+            public int CheckSegmentCount { get; set; }
+            public int OutputSegmentCount { get; set; }
+            public int RejectedCloudCount { get; set; }
+            public int RejectedNonPipeCount { get; set; }
+            public int AmbiguousTextCount { get; set; }
+            public int RepeatedBranchInheritedCount { get; set; }
+            public int AutoTemplateBranchInheritedCount { get; set; }
+            public int BranchObjectInheritedCount { get; set; }
+            public int BranchObjectMatchedCount { get; set; }
+            public double TotalLengthMeters { get; set; }
+            public double AverageConfidence { get; set; }
+        }
+
+        private void BtnAiAutoTakeoff_Click(
+            object sender,
+            RoutedEventArgs e)
+        {
+            try
+            {
+                UpdateAiLearningStatusUi();
+
+                RunAiAutomaticPipeTakeoff();
+            }
+            catch (System.Exception ex)
+            {
+                try
+                {
+                    MessageBox.Show(
+                        "BÓC TÁCH TỰ ĐỘNG gặp lỗi nhưng đã được chặn để không làm AutoCAD thoát.\n\n" +
+                        ex.GetType().Name +
+                        "\n" +
+                        ex.Message,
+                        "AI BÓC TÁCH MEP");
+                }
+                catch
+                {
+                }
+            }
+        }
+
+        private void RunAiAutomaticPipeTakeoff()
+        {
+            Document doc =
+                Autodesk.AutoCAD.ApplicationServices.Core.Application
+                    .DocumentManager
+                    .MdiActiveDocument;
+
+            if (doc == null)
+                return;
+
+            Editor ed = doc.Editor;
+
+            try
+            {
+                Autodesk.AutoCAD.ApplicationServices.Core.Application
+                    .MainWindow
+                    .Focus();
+            }
+            catch
+            {
+            }
+
+            MessageBoxResult confirm =
+                MessageBox.Show(
+                    "AI sẽ dựng lớp nhận diện ĐƯỜNG ỐNG riêng trên bản vẽ.\n\n" +
+                    "• Không xóa/sửa nét gốc.\n" +
+                    "• Đường nhận diện: TDL_AI_PIPE_DN...\n" +
+                    "• Đoạn chưa chắc chắn: TDL_AI_PIPE_CHECK.\n" +
+                    "• Chạy lại sẽ xóa output AI PIPE cũ rồi dựng lại.\n" +
+                    "• V2 tự loại REVCLOUD/đám mây và các curve không giống đường ống.\n" +
+                    "• Sau bước ống có thể chạy tiếp VAN / THIẾT BỊ ngay trong cùng workflow.\n\n" +
+                    "Tiếp tục?",
+                    "AI BÓC TÁCH MEP",
+                    MessageBoxButton.YesNo,
+                    MessageBoxImage.Information);
+
+            if (confirm != MessageBoxResult.Yes)
+                return;
+
+            PromptSelectionOptions pso =
+                new PromptSelectionOptions();
+
+            pso.MessageForAdding =
+                "\n[AI BÓC TÁCH] Quét vùng có đường ống + TEXT DN/D/Ø: ";
+
+            TypedValue[] tvs =
+                new TypedValue[]
+                {
+                    new TypedValue((int)DxfCode.Operator, "<OR"),
+                    new TypedValue((int)DxfCode.Start, "LINE"),
+                    new TypedValue((int)DxfCode.Start, "LWPOLYLINE"),
+                    new TypedValue((int)DxfCode.Start, "POLYLINE"),
+                    new TypedValue((int)DxfCode.Start, "ARC"),
+                    new TypedValue((int)DxfCode.Start, "CIRCLE"),
+                    new TypedValue((int)DxfCode.Start, "INSERT"),
+                    new TypedValue((int)DxfCode.Start, "POINT"),
+                    new TypedValue((int)DxfCode.Start, "TEXT"),
+                    new TypedValue((int)DxfCode.Start, "MTEXT"),
+                    new TypedValue((int)DxfCode.Operator, "OR>")
+                };
+
+            PromptSelectionResult psr =
+                ed.GetSelection(
+                    pso,
+                    new SelectionFilter(tvs));
+
+            if (psr.Status != PromptStatus.OK ||
+                psr.Value == null ||
+                psr.Value.Count == 0)
+            {
+                return;
+            }
+
+            AiPipeTakeoffRunResult run =
+                AnalyzeAndDrawAiPipeTakeoff(
+                    doc,
+                    psr.Value);
+
+            if (run == null ||
+                run.OutputSegmentCount <= 0)
+            {
+                MessageBox.Show(
+                    "Chưa có tuyến nào đủ bằng chứng để AI chốt.\n\n" +
+                    "Cần có ít nhất một TEXT size dạng DN100 / D60 / Ø60 song song với tuyến ống.",
+                    "AI BÓC TÁCH MEP");
+                return;
+            }
+
+            bool placeTable =
+                ShowAiPipeTakeoffSummaryDialog(
+                    run);
+
+            if (placeTable &&
+                run.Stats.Count > 0)
+            {
+                OutputAiPipeTakeoffTable(
+                    doc,
+                    run.Stats);
+            }
+
+            MessageBoxResult continueDevice =
+                MessageBox.Show(
+                    "BƯỚC 1 - ĐƯỜNG ỐNG đã xong.\n\n" +
+                    "Tiếp tục BƯỚC 2 - VAN / THIẾT BỊ?\n\n" +
+                    "Tool sẽ dùng workflow Legend thông minh hiện tại:\n" +
+                    "quét bảng ký hiệu → review → quét mặt bằng → kiểm tra sót → thống kê.",
+                    "AI BÓC TÁCH MEP - BƯỚC 2",
+                    MessageBoxButton.YesNo,
+                    MessageBoxImage.Question);
+
+            if (continueDevice ==
+                MessageBoxResult.Yes)
+            {
+                ThongKeThietBiVanThongMinh(
+                    doc);
+            }
+        }
+
+        private AiPipeTakeoffRunResult AnalyzeAndDrawAiPipeTakeoff(
+            Document doc,
+            SelectionSet selection)
+        {
+            AiPipeTakeoffRunResult result =
+                new AiPipeTakeoffRunResult();
+
+            if (doc == null ||
+                selection == null)
+            {
+                return result;
+            }
+
+            Database db = doc.Database;
+            Editor ed = doc.Editor;
+
+            using (doc.LockDocument())
+            using (Transaction tr =
+                db.TransactionManager.StartTransaction())
+            {
+                BlockTableRecord space =
+                    (BlockTableRecord)tr.GetObject(
+                        db.CurrentSpaceId,
+                        OpenMode.ForWrite);
+
+                DeleteOldAiPipeOutput(
+                    tr,
+                    space);
+
+                List<Curve> originalCurves =
+                    new List<Curve>();
+
+                List<Entity> intersectEntities =
+                    new List<Entity>();
+
+                List<TextData> sizeTexts =
+                    new List<TextData>();
+
+                Dictionary<Curve, string> layerHints =
+                    new Dictionary<Curve, string>();
+
+                // Block nhỏ dùng làm landmark để nhận ra các nhánh copy giống nhau.
+                List<AiPipeContextAnchor> contextAnchors =
+                    new List<AiPipeContextAnchor>();
+
+                foreach (SelectedObject so
+                    in selection)
+                {
+                    if (so == null ||
+                        so.ObjectId.IsNull)
+                    {
+                        continue;
+                    }
+
+                    Entity ent =
+                        tr.GetObject(
+                            so.ObjectId,
+                            OpenMode.ForRead,
+                            false) as Entity;
+
+                    if (ent == null ||
+                        ent.IsErased)
+                    {
+                        continue;
+                    }
+
+                    if (IsAiPipeOutputLayer(
+                            ent.Layer))
+                    {
+                        continue;
+                    }
+
+                    // STEP18H:
+                    // POINT cũng có thể là ký hiệu đầu phun / device marker.
+                    if (ent is DBPoint markerPoint)
+                    {
+                        contextAnchors.Add(
+                            new AiPipeContextAnchor
+                            {
+                                Point =
+                                    markerPoint.Position,
+                                BlockKey =
+                                    GetSmartPointSignature(
+                                        markerPoint),
+                                MaxSpan =
+                                    80.0
+                            });
+
+                        continue;
+                    }
+
+                    // STEP18F:
+                    // Engine VẼ THEO MẪU cũ dùng Circle/Block làm marker.
+                    // Các đầu phun trong hình user là CIRCLE, nên nếu bỏ Circle
+                    // thì targetMarkers=0 và template không bao giờ match.
+                    if (ent is Circle markerCircle)
+                    {
+                        contextAnchors.Add(
+                            new AiPipeContextAnchor
+                            {
+                                Point =
+                                    markerCircle.Center,
+                                BlockKey =
+                                    "CIRCLE",
+                                MaxSpan =
+                                    markerCircle.Radius *
+                                    2.0
+                            });
+
+                        continue;
+                    }
+
+                    if (ent is Line ||
+                        ent is Polyline ||
+                        ent is Polyline2d ||
+                        ent is Polyline3d ||
+                        ent is Arc)
+                    {
+                        Curve curve = ent as Curve;
+
+                        if (curve == null ||
+                            GetAiPipeCurveLength(curve) <= 5.0)
+                        {
+                            continue;
+                        }
+
+                        bool hasLayerHint =
+                            TryParseAiPipeSizeText(
+                                ent.Layer,
+                                out string hintedSize);
+
+                        AiPipeCurveRejectReason rejectReason;
+
+                        if (!IsAiLikelyPipeCurve(
+                                ent,
+                                curve,
+                                hasLayerHint,
+                                out rejectReason))
+                        {
+                            if (rejectReason ==
+                                AiPipeCurveRejectReason.RevisionCloud)
+                            {
+                                result.RejectedCloudCount++;
+                            }
+                            else
+                            {
+                                result.RejectedNonPipeCount++;
+                            }
+
+                            continue;
+                        }
+
+                        originalCurves.Add(curve);
+                        intersectEntities.Add(ent);
+
+                        if (hasLayerHint)
+                        {
+                            layerHints[curve] =
+                                hintedSize;
+                        }
+
+                        continue;
+                    }
+
+                    if (ent is BlockReference contextBlock)
+                    {
+                        try
+                        {
+                            string blockName =
+                                GetShopStatBlockName(
+                                    tr,
+                                    contextBlock);
+
+                            string blockKey =
+                                NormalizeSmartSymbolKey(
+                                    blockName);
+
+                            Extents3d ex =
+                                contextBlock.GeometricExtents;
+
+                            double dx =
+                                Math.Abs(
+                                    ex.MaxPoint.X -
+                                    ex.MinPoint.X);
+
+                            double dy =
+                                Math.Abs(
+                                    ex.MaxPoint.Y -
+                                    ex.MinPoint.Y);
+
+                            double span =
+                                Math.Max(
+                                    dx,
+                                    dy);
+
+                            if (span >= 5.0 &&
+                                span <= 2500.0)
+                            {
+                                List<Point3d> circularCenters =
+                                    GetCircularCentersFromBlock(
+                                        tr,
+                                        contextBlock);
+
+                                if (circularCenters.Count > 0)
+                                {
+                                    foreach (Point3d circleCenter
+                                        in circularCenters)
+                                    {
+                                        contextAnchors.Add(
+                                            new AiPipeContextAnchor
+                                            {
+                                                Point =
+                                                    circleCenter,
+                                                BlockKey =
+                                                    string.IsNullOrWhiteSpace(
+                                                        blockKey)
+                                                        ? "BLOCK_CIRCLE"
+                                                        : blockKey,
+                                                MaxSpan =
+                                                    span
+                                            });
+                                    }
+                                }
+                                else
+                                {
+                                    Point3d center =
+                                        new Point3d(
+                                            (ex.MinPoint.X +
+                                             ex.MaxPoint.X) * 0.5,
+                                            (ex.MinPoint.Y +
+                                             ex.MaxPoint.Y) * 0.5,
+                                            0.0);
+
+                                    contextAnchors.Add(
+                                        new AiPipeContextAnchor
+                                        {
+                                            Point =
+                                                center,
+                                            BlockKey =
+                                                blockKey,
+                                            MaxSpan =
+                                                span
+                                        });
+                                }
+                            }
+                        }
+                        catch
+                        {
+                        }
+
+                        continue;
+                    }
+
+                    if (ent is DBText txt)
+                    {
+                        string raw =
+                            (txt.TextString ?? "")
+                                .Replace("\r", "")
+                                .Replace("\n", "")
+                                .Trim();
+
+                        if (!TryParseAiPipeSizeText(
+                                raw,
+                                out string size))
+                        {
+                            continue;
+                        }
+
+                        Point3d pt =
+                            (txt.Justify != AttachmentPoint.BaseLeft &&
+                             (Math.Abs(txt.AlignmentPoint.X) > 1e-9 ||
+                              Math.Abs(txt.AlignmentPoint.Y) > 1e-9))
+                                ? txt.AlignmentPoint
+                                : txt.Position;
+
+                        sizeTexts.Add(
+                            new TextData
+                            {
+                                Position = pt,
+                                Rotation = txt.Rotation,
+                                TextString = size,
+                                LayerName = GetAiPipeLayerName(size),
+                                Width = FixedDnPipeDisplayWidth
+                            });
+
+                        continue;
+                    }
+
+                    if (ent is MText mtxt)
+                    {
+                        string raw =
+                            (mtxt.Text ?? "")
+                                .Replace("\r", "")
+                                .Replace("\n", "")
+                                .Trim();
+
+                        if (!TryParseAiPipeSizeText(
+                                raw,
+                                out string size))
+                        {
+                            continue;
+                        }
+
+                        sizeTexts.Add(
+                            new TextData
+                            {
+                                Position = mtxt.Location,
+                                Rotation = mtxt.Rotation,
+                                TextString = size,
+                                LayerName = GetAiPipeLayerName(size),
+                                Width = FixedDnPipeDisplayWidth
+                            });
+                    }
+                }
+
+                result.RawCurveCount = originalCurves.Count;
+                result.SizeTextCount = sizeTexts.Count;
+
+                if (originalCurves.Count == 0 ||
+                    sizeTexts.Count == 0)
+                {
+                    tr.Commit();
+                    return result;
+                }
+
+                Dictionary<Curve, List<TextProjectionData>> textMap =
+                    MapAiPipeTextsToCurves(
+                        originalCurves,
+                        sizeTexts,
+                        layerHints,
+                        out int ambiguousTextCount);
+
+                result.AmbiguousTextCount =
+                    ambiguousTextCount;
+
+                List<SegmentData> segments =
+                    SplitAiPipeCurves(
+                        originalCurves,
+                        intersectEntities,
+                        textMap);
+
+                HashSet<SegmentData> explicitText =
+                    new HashSet<SegmentData>();
+
+                HashSet<SegmentData> explicitLayer =
+                    new HashSet<SegmentData>();
+
+                AssignAiPipeTextSeeds(
+                    segments,
+                    textMap,
+                    explicitText);
+
+                AssignAiPipeLayerSeeds(
+                    segments,
+                    layerHints,
+                    explicitText,
+                    explicitLayer);
+
+                if (!segments.Any(
+                        s =>
+                            s != null &&
+                            s.HasExplicitSize &&
+                            !string.IsNullOrWhiteSpace(s.Layer)))
+                {
+                    tr.Commit();
+                    return result;
+                }
+
+                // STEP18F - THỨ TỰ QUAN TRỌNG:
+                // 1) Chỉ fill trong CÙNG parent nếu parent có đúng 1 DN.
+                //    Đây là suy luận an toàn, không truyền qua giao T.
+                int sameParentInherited =
+                    PropagateAiPipeSizesWithinSameParentOnly(
+                        segments);
+
+                result.InheritedSegmentCount +=
+                    sameParentInherited;
+
+                // 2) STEP18H - BRANCH OBJECT ENGINE:
+                //    Dùng đúng engine TryMatchTemplateBranch + marker-bound span cũ.
+                //    Source pattern lấy trực tiếp từ các DN explicit, không đòi source
+                //    đã được fill sẵn 55-82% chiều dài.
+                result.BranchObjectInheritedCount =
+                    PropagateAiPipePatternByBranchObjectEngine(
+                        segments,
+                        contextAnchors,
+                        out int branchObjectMatches);
+
+                result.BranchObjectMatchedCount =
+                    branchObjectMatches;
+
+                result.InheritedSegmentCount +=
+                    result.BranchObjectInheritedCount;
+
+                // 3) Engine STEP18E cũ giữ làm fallback cho target còn trống.
+                result.AutoTemplateBranchInheritedCount =
+                    PropagateAiPipePatternByExistingTemplateEngine(
+                        segments,
+                        contextAnchors);
+
+                result.InheritedSegmentCount +=
+                    result.AutoTemplateBranchInheritedCount;
+
+                // 4) Sau khi copy nhánh mẫu xong mới lan truyền topology cho phần còn lại.
+                result.InheritedSegmentCount +=
+                    PropagateFirePipeSizesByTopology(
+                        segments);
+
+                // STEP18D giữ làm fallback cho các trường hợp đơn giản.
+                result.RepeatedBranchInheritedCount =
+                    PropagateAiPipeSizesByRepeatedBranchTemplate(
+                        segments,
+                        contextAnchors);
+
+                result.InheritedSegmentCount +=
+                    result.RepeatedBranchInheritedCount;
+
+                List<AiPipeSegmentResult> recognized =
+                    BuildAiPipeResults(
+                        segments,
+                        explicitText,
+                        explicitLayer);
+
+                List<SegmentData> checks =
+                    FindAiPipeCheckSegments(
+                        segments);
+
+                result.CheckSegmentCount = checks.Count;
+
+                EnsureAiPipeLayer(
+                    tr,
+                    db,
+                    AiPipeCheckLayer,
+                    30);
+
+                EnsureAiPipeLayer(
+                    tr,
+                    db,
+                    AiPipeInfoLayer,
+                    2);
+
+                foreach (AiPipeSegmentResult item
+                    in recognized)
+                {
+                    if (item?.Segment?.Curve == null)
+                        continue;
+
+                    string layerName =
+                        GetAiPipeLayerName(
+                            item.Size);
+
+                    EnsureAiPipeLayer(
+                        tr,
+                        db,
+                        layerName,
+                        GetExpectedAciColor(
+                            layerName));
+
+                    Entity overlay =
+                        CreateAiPipeOverlay(
+                            item.Segment.Curve,
+                            layerName,
+                            FixedDnPipeDisplayWidth);
+
+                    if (overlay == null)
+                        continue;
+
+                    space.AppendEntity(overlay);
+                    tr.AddNewlyCreatedDBObject(overlay, true);
+                    result.OutputSegmentCount++;
+
+                    if ((explicitText != null &&
+                         explicitText.Contains(
+                             item.Segment)) ||
+                        (item.Confidence >= 0.94 &&
+                         item.Length >= 12000.0))
+                    {
+                        DBText label =
+                            CreateAiPipeLabel(
+                                db,
+                                item.Segment.Curve,
+                                item.Size,
+                                layerName);
+
+                        if (label != null)
+                        {
+                            space.AppendEntity(label);
+                            tr.AddNewlyCreatedDBObject(label, true);
+
+                            try
+                            {
+                                label.AdjustAlignment(db);
+                            }
+                            catch
+                            {
+                            }
+                        }
+                    }
+                }
+
+                foreach (SegmentData segment
+                    in checks)
+                {
+                    if (segment?.Curve == null)
+                        continue;
+
+                    Entity check =
+                        CreateAiPipeOverlay(
+                            segment.Curve,
+                            AiPipeCheckLayer,
+                            0.0);
+
+                    if (check == null)
+                        continue;
+
+                    space.AppendEntity(check);
+                    tr.AddNewlyCreatedDBObject(check, true);
+                }
+
+                result.ExplicitSegmentCount =
+                    recognized.Count(
+                        r =>
+                            r.Segment != null &&
+                            r.Segment.HasExplicitSize);
+
+                result.TotalLengthMeters =
+                    recognized.Sum(r => r.Length) /
+                    1000.0;
+
+                result.AverageConfidence =
+                    recognized.Count > 0
+                        ? recognized.Average(r => r.Confidence)
+                        : 0.0;
+
+                result.Stats =
+                    recognized
+                        .GroupBy(
+                            r => r.Size,
+                            StringComparer.OrdinalIgnoreCase)
+                        .Select(
+                            g => new AiPipeTakeoffStatRow
+                            {
+                                Size = g.Key,
+                                LengthMeters =
+                                    g.Sum(r => r.Length) / 1000.0,
+                                SegmentCount = g.Count(),
+                                ExplicitCount =
+                                    g.Count(
+                                        r =>
+                                            r.Segment != null &&
+                                            r.Segment.HasExplicitSize),
+                                InheritedCount =
+                                    g.Count(
+                                        r =>
+                                            r.Segment != null &&
+                                            !r.Segment.HasExplicitSize),
+                                AverageConfidence =
+                                    g.Average(r => r.Confidence)
+                            })
+                        .OrderByDescending(
+                            r => SmartSizeSortValue(r.Size))
+                        .ToList();
+
+                tr.Commit();
+            }
+
+            try
+            {
+                ed.Regen();
+                ed.WriteMessage(
+                    "\n[AI BÓC TÁCH] Đã dựng " +
+                    result.OutputSegmentCount +
+                    " đoạn; CHECK=" +
+                    result.CheckSegmentCount +
+                    "; confidence=" +
+                    (result.AverageConfidence * 100.0)
+                        .ToString("0.0", CultureInfo.InvariantCulture) +
+                    "%.");
+            }
+            catch
+            {
+            }
+
+            return result;
+        }
+
+        private enum AiPipeCurveRejectReason
+        {
+            None = 0,
+            RevisionCloud = 1,
+            AnnotationLayer = 2,
+            NonPipeGeometry = 3
+        }
+
+        private bool IsAiLikelyPipeCurve(
+            Entity ent,
+            Curve curve,
+            bool hasLayerSizeHint,
+            out AiPipeCurveRejectReason reason)
+        {
+            reason =
+                AiPipeCurveRejectReason.None;
+
+            if (ent == null ||
+                curve == null)
+            {
+                reason =
+                    AiPipeCurveRejectReason.NonPipeGeometry;
+
+                return false;
+            }
+
+            string layer =
+                (ent.Layer ?? "")
+                    .Trim()
+                    .ToUpperInvariant();
+
+            // Layer annotation/markup là bằng chứng loại rất mạnh.
+            string[] rejectLayerTokens =
+                new string[]
+                {
+                    "REVCLOUD",
+                    "REV-CLOUD",
+                    "REV_CLOUD",
+                    "REVISION",
+                    "CLOUD",
+                    "MARKUP",
+                    "MARK-UP",
+                    "HATCH",
+                    "WIPEOUT",
+                    "DEFPOINTS"
+                };
+
+            if (rejectLayerTokens.Any(
+                    token =>
+                        layer.Contains(token)))
+            {
+                reason =
+                    layer.Contains("CLOUD") ||
+                    layer.Contains("REV")
+                        ? AiPipeCurveRejectReason.RevisionCloud
+                        : AiPipeCurveRejectReason.AnnotationLayer;
+
+                return false;
+            }
+
+            if (ent is Polyline pl)
+            {
+                if (IsAiRevisionCloudPolyline(
+                        pl))
+                {
+                    reason =
+                        AiPipeCurveRejectReason.RevisionCloud;
+
+                    return false;
+                }
+
+                // Polyline rất phức tạp nhưng không có bất kỳ bằng chứng layer-size:
+                // ưu tiên precision, không coi là ống ngay.
+                if (!hasLayerSizeHint &&
+                    pl.NumberOfVertices >= 80)
+                {
+                    reason =
+                        AiPipeCurveRejectReason.NonPipeGeometry;
+
+                    return false;
+                }
+            }
+
+            // Arc đơn lẻ dễ là ký hiệu/markup. Nếu nằm trên layer có size thì giữ.
+            // Nếu không có layer-size, chỉ giữ cung có hình học hợp lý như co ống.
+            if (ent is Arc arc &&
+                !hasLayerSizeHint)
+            {
+                double included =
+                    Math.Abs(
+                        arc.EndAngle -
+                        arc.StartAngle);
+
+                while (included >
+                    Math.PI * 2.0)
+                {
+                    included -=
+                        Math.PI * 2.0;
+                }
+
+                if (arc.Radius < 15.0 ||
+                    arc.Radius > 5000.0 ||
+                    included <
+                        Math.PI / 36.0)
+                {
+                    reason =
+                        AiPipeCurveRejectReason.NonPipeGeometry;
+
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        private bool IsAiRevisionCloudPolyline(
+            Polyline pl)
+        {
+            if (pl == null ||
+                pl.NumberOfVertices < 5)
+            {
+                return false;
+            }
+
+            int segmentCount =
+                pl.Closed
+                    ? pl.NumberOfVertices
+                    : pl.NumberOfVertices - 1;
+
+            if (segmentCount <= 0)
+                return false;
+
+            int bulgeCount = 0;
+            int strongBulgeCount = 0;
+            List<double> chordLengths =
+                new List<double>();
+
+            for (int i = 0;
+                i < segmentCount;
+                i++)
+            {
+                try
+                {
+                    double bulge =
+                        Math.Abs(
+                            pl.GetBulgeAt(i));
+
+                    if (bulge > 0.01)
+                        bulgeCount++;
+
+                    if (bulge > 0.12)
+                        strongBulgeCount++;
+
+                    int next =
+                        (i + 1) %
+                        pl.NumberOfVertices;
+
+                    Point2d a =
+                        pl.GetPoint2dAt(i);
+
+                    Point2d b =
+                        pl.GetPoint2dAt(next);
+
+                    chordLengths.Add(
+                        a.GetDistanceTo(b));
+                }
+                catch
+                {
+                }
+            }
+
+            double bulgeRatio =
+                segmentCount > 0
+                    ? (double)bulgeCount /
+                      segmentCount
+                    : 0.0;
+
+            double strongRatio =
+                segmentCount > 0
+                    ? (double)strongBulgeCount /
+                      segmentCount
+                    : 0.0;
+
+            // AutoCAD REVCLOUD điển hình: polyline gồm rất nhiều cung lặp.
+            if (segmentCount >= 6 &&
+                strongBulgeCount >= 4 &&
+                strongRatio >= 0.45)
+            {
+                return true;
+            }
+
+            if (pl.Closed &&
+                segmentCount >= 6 &&
+                bulgeCount >= 4 &&
+                bulgeRatio >= 0.50)
+            {
+                return true;
+            }
+
+            // Dấu hiệu scallop lặp đều: nhiều segment cong có chord gần bằng nhau.
+            if (segmentCount >= 10 &&
+                bulgeRatio >= 0.35 &&
+                chordLengths.Count >= 6)
+            {
+                double mean =
+                    chordLengths.Average();
+
+                if (mean > 1e-6)
+                {
+                    double variance =
+                        chordLengths.Average(
+                            x =>
+                                Math.Pow(
+                                    x - mean,
+                                    2.0));
+
+                    double cv =
+                        Math.Sqrt(variance) /
+                        mean;
+
+                    if (cv <= 0.45)
+                        return true;
+                }
+            }
+
+            return false;
+        }
+
+        private Dictionary<Curve, List<TextProjectionData>>
+            MapAiPipeTextsToCurves(
+                List<Curve> originalCurves,
+                List<TextData> texts,
+                Dictionary<Curve, string> layerHints,
+                out int ambiguousTextCount)
+        {
+            ambiguousTextCount = 0;
+
+            Dictionary<Curve, List<TextProjectionData>> result =
+                new Dictionary<Curve, List<TextProjectionData>>();
+
+            foreach (Curve curve
+                in originalCurves ??
+                new List<Curve>())
+            {
+                result[curve] =
+                    new List<TextProjectionData>();
+            }
+
+            foreach (TextData text
+                in texts ??
+                new List<TextData>())
+            {
+                List<Tuple<Curve, Point3d, double>> candidates =
+                    new List<Tuple<Curve, Point3d, double>>();
+
+                foreach (Curve curve
+                    in originalCurves ??
+                    new List<Curve>())
+                {
+                    if (curve == null)
+                        continue;
+
+                    if (!TryGetClosestPointInPlan(
+                            curve,
+                            text.Position,
+                            out Point3d closest,
+                            out double distance))
+                    {
+                        continue;
+                    }
+
+                    if (distance > 2600.0)
+                        continue;
+
+                    if (!IsTextParallelToCurve(
+                            curve,
+                            closest,
+                            text.Rotation))
+                    {
+                        continue;
+                    }
+
+                    double anglePenalty =
+                        TinhGocLech(
+                            curve,
+                            closest,
+                            text.Rotation) *
+                        5500.0;
+
+                    double score =
+                        distance +
+                        anglePenalty;
+
+                    // Layer có đúng size là bằng chứng cộng thêm.
+                    if (layerHints != null &&
+                        layerHints.TryGetValue(
+                            curve,
+                            out string hintedSize))
+                    {
+                        string normalizedText =
+                            NormalizeAiPipeSize(
+                                text.TextString);
+
+                        if (string.Equals(
+                                NormalizeAiPipeSize(
+                                    hintedSize),
+                                normalizedText,
+                                StringComparison.OrdinalIgnoreCase))
+                        {
+                            score -= 350.0;
+                        }
+                        else
+                        {
+                            score += 900.0;
+                        }
+                    }
+
+                    score +=
+                        GetAiPipeLayerSemanticPenalty(
+                            curve.Layer);
+
+                    candidates.Add(
+                        Tuple.Create(
+                            curve,
+                            closest,
+                            score));
+                }
+
+                List<Tuple<Curve, Point3d, double>> ordered =
+                    candidates
+                        .OrderBy(
+                            item =>
+                                item.Item3)
+                        .ToList();
+
+                if (ordered.Count == 0)
+                    continue;
+
+                Tuple<Curve, Point3d, double> best =
+                    ordered[0];
+
+                if (best.Item3 >
+                    AiPipeExplicitTextMaxScore)
+                {
+                    continue;
+                }
+
+                if (ordered.Count >= 2)
+                {
+                    double secondScore =
+                        ordered[1].Item3;
+
+                    double margin =
+                        secondScore -
+                        best.Item3;
+
+                    // Hai tuyến song song/gần nhau mà chữ không đủ phân biệt:
+                    // bỏ qua thay vì gán đại.
+                    if (margin < 160.0 &&
+                        secondScore < 1500.0)
+                    {
+                        ambiguousTextCount++;
+                        continue;
+                    }
+                }
+
+                try
+                {
+                    double along =
+                        best.Item1.GetDistAtPoint(
+                            best.Item2);
+
+                    result[best.Item1].Add(
+                        new TextProjectionData
+                        {
+                            Text = text,
+                            DistanceAlongCurve = along,
+                            MatchScore = best.Item3
+                        });
+                }
+                catch
+                {
+                }
+            }
+
+            foreach (Curve curve
+                in result.Keys.ToList())
+            {
+                result[curve] =
+                    result[curve]
+                        .OrderBy(
+                            x =>
+                                x.DistanceAlongCurve)
+                        .ThenBy(
+                            x =>
+                                x.MatchScore)
+                        .ToList();
+            }
+
+            return result;
+        }
+
+        private double GetAiPipeLayerSemanticPenalty(
+            string layerName)
+        {
+            string layer =
+                (layerName ?? "")
+                    .ToUpperInvariant();
+
+            if (string.IsNullOrWhiteSpace(layer))
+                return 0.0;
+
+            string[] positive =
+                new string[]
+                {
+                    "PIPE",
+                    "PCCC",
+                    "FIRE",
+                    "SPR",
+                    "WATER",
+                    "FF",
+                    "CTN",
+                    "PPR",
+                    "PVC",
+                    "HDPE",
+                    "ONG",
+                    "ỐNG"
+                };
+
+            if (positive.Any(
+                    token =>
+                        layer.Contains(token)))
+            {
+                return -120.0;
+            }
+
+            string[] negative =
+                new string[]
+                {
+                    "WALL",
+                    "GRID",
+                    "DIM",
+                    "TEXT",
+                    "DOOR",
+                    "WINDOW",
+                    "HATCH",
+                    "REV",
+                    "CLOUD",
+                    "MARKUP",
+                    "ARCH",
+                    "A-"
+                };
+
+            if (negative.Any(
+                    token =>
+                        layer.Contains(token)))
+            {
+                return 900.0;
+            }
+
+            return 0.0;
+        }
+
+        private List<SegmentData> SplitAiPipeCurves(
+            List<Curve> curves,
+            List<Entity> intersectEntities,
+            Dictionary<Curve, List<TextProjectionData>> textMap)
+        {
+            List<SegmentData> result =
+                new List<SegmentData>();
+
+            if (curves == null)
+                return result;
+
+            Plane xyPlane =
+                new Plane(
+                    Point3d.Origin,
+                    Vector3d.ZAxis);
+
+            foreach (Curve mainCurve
+                in curves)
+            {
+                if (mainCurve == null)
+                    continue;
+
+                Point3dCollection splitPoints =
+                    new Point3dCollection();
+
+                foreach (Entity other
+                    in intersectEntities ?? new List<Entity>())
+                {
+                    if (ReferenceEquals(mainCurve, other))
+                        continue;
+
+                    try
+                    {
+                        Point3dCollection pts =
+                            new Point3dCollection();
+
+                        mainCurve.IntersectWith(
+                            other,
+                            Intersect.OnBothOperands,
+                            xyPlane,
+                            pts,
+                            IntPtr.Zero,
+                            IntPtr.Zero);
+
+                        foreach (Point3d p in pts)
+                        {
+                            splitPoints.Add(
+                                mainCurve.GetClosestPointTo(
+                                    p,
+                                    false));
+                        }
+                    }
+                    catch
+                    {
+                    }
+
+                    try
+                    {
+                        if (other is Curve otherCurve)
+                        {
+                            Point3d[] endpoints =
+                                new Point3d[]
+                                {
+                                    otherCurve.StartPoint,
+                                    otherCurve.EndPoint
+                                };
+
+                            foreach (Point3d p in endpoints)
+                            {
+                                Point3d flat =
+                                    new Point3d(
+                                        p.X,
+                                        p.Y,
+                                        mainCurve.StartPoint.Z);
+
+                                Point3d closest =
+                                    mainCurve.GetClosestPointTo(
+                                        flat,
+                                        false);
+
+                                if (PlanDistance(
+                                        closest,
+                                        flat) <= 80.0)
+                                {
+                                    splitPoints.Add(closest);
+                                }
+                            }
+                        }
+                    }
+                    catch
+                    {
+                    }
+                }
+
+                if (mainCurve is Polyline pl)
+                {
+                    for (int i = 0;
+                        i < pl.NumberOfVertices;
+                        i++)
+                    {
+                        splitPoints.Add(
+                            pl.GetPoint3dAt(i));
+                    }
+                }
+
+                double total =
+                    GetAiPipeCurveLength(
+                        mainCurve);
+
+                if (total <= 1.0)
+                    continue;
+
+                List<double> distances =
+                    new List<double>();
+
+                foreach (Point3d p
+                    in splitPoints)
+                {
+                    try
+                    {
+                        Point3d closest =
+                            mainCurve.GetClosestPointTo(
+                                p,
+                                false);
+
+                        double d =
+                            mainCurve.GetDistAtPoint(
+                                closest);
+
+                        if (d > 1.0 &&
+                            d < total - 1.0 &&
+                            !distances.Any(
+                                x => Math.Abs(x - d) < 1.0))
+                        {
+                            distances.Add(d);
+                        }
+                    }
+                    catch
+                    {
+                    }
+                }
+
+                List<double> transitionDistances =
+                    GetTextSizeTransitionDistances(
+                        mainCurve,
+                        textMap,
+                        distances);
+
+                foreach (double d
+                    in transitionDistances)
+                {
+                    if (d > 1.0 &&
+                        d < total - 1.0 &&
+                        !distances.Any(
+                            x => Math.Abs(x - d) < 1.0))
+                    {
+                        distances.Add(d);
+                    }
+                }
+
+                distances.Sort();
+
+                Point3dCollection finalPts =
+                    new Point3dCollection();
+
+                foreach (double d
+                    in distances)
+                {
+                    try
+                    {
+                        finalPts.Add(
+                            mainCurve.GetPointAtDist(d));
+                    }
+                    catch
+                    {
+                    }
+                }
+
+                if (finalPts.Count > 0)
+                {
+                    try
+                    {
+                        DBObjectCollection splits =
+                            mainCurve.GetSplitCurves(finalPts);
+
+                        foreach (DBObject obj
+                            in splits)
+                        {
+                            if (obj is Curve c)
+                            {
+                                result.Add(
+                                    new SegmentData
+                                    {
+                                        Curve = c,
+                                        OriginalParent = mainCurve
+                                    });
+                            }
+                            else
+                            {
+                                obj.Dispose();
+                            }
+                        }
+
+                        continue;
+                    }
+                    catch
+                    {
+                    }
+                }
+
+                Curve clone =
+                    mainCurve.Clone() as Curve;
+
+                if (clone != null)
+                {
+                    result.Add(
+                        new SegmentData
+                        {
+                            Curve = clone,
+                            OriginalParent = mainCurve
+                        });
+                }
+            }
+
+            return result;
+        }
+
+        private void AssignAiPipeTextSeeds(
+            List<SegmentData> segments,
+            Dictionary<Curve, List<TextProjectionData>> textMap,
+            HashSet<SegmentData> explicitText)
+        {
+            if (segments == null ||
+                textMap == null)
+            {
+                return;
+            }
+
+            foreach (KeyValuePair<Curve, List<TextProjectionData>> pair
+                in textMap)
+            {
+                foreach (TextProjectionData projection
+                    in pair.Value ?? new List<TextProjectionData>())
+                {
+                    if (projection?.Text == null ||
+                        projection.MatchScore > AiPipeExplicitTextMaxScore)
+                    {
+                        continue;
+                    }
+
+                    SegmentData best = null;
+                    double bestScore = double.MaxValue;
+
+                    foreach (SegmentData segment
+                        in segments.Where(
+                            s =>
+                                ReferenceEquals(
+                                    s.OriginalParent,
+                                    pair.Key)))
+                    {
+                        if (segment?.Curve == null)
+                            continue;
+
+                        if (!TryGetClosestPointInPlan(
+                                segment.Curve,
+                                projection.Text.Position,
+                                out Point3d closest,
+                                out double distance))
+                        {
+                            continue;
+                        }
+
+                        if (!IsTextParallelToCurve(
+                                segment.Curve,
+                                closest,
+                                projection.Text.Rotation))
+                        {
+                            continue;
+                        }
+
+                        double score =
+                            distance +
+                            TinhGocLech(
+                                segment.Curve,
+                                closest,
+                                projection.Text.Rotation) *
+                            5000.0;
+
+                        if (score < bestScore)
+                        {
+                            best = segment;
+                            bestScore = score;
+                        }
+                    }
+
+                    if (best == null ||
+                        bestScore > AiPipeExplicitTextMaxScore ||
+                        bestScore >= best.BestScore)
+                    {
+                        continue;
+                    }
+
+                    string size =
+                        NormalizeAiPipeSize(
+                            projection.Text.TextString);
+
+                    best.Layer =
+                        GetAiPipeLayerName(size);
+
+                    best.LabelText = size;
+                    best.Width = FixedDnPipeDisplayWidth;
+                    best.BestScore = bestScore;
+                    best.HasExplicitSize = true;
+
+                    explicitText?.Add(best);
+                }
+            }
+        }
+
+        private void AssignAiPipeLayerSeeds(
+            List<SegmentData> segments,
+            Dictionary<Curve, string> hints,
+            HashSet<SegmentData> explicitText,
+            HashSet<SegmentData> explicitLayer)
+        {
+            if (segments == null ||
+                hints == null)
+            {
+                return;
+            }
+
+            foreach (SegmentData segment
+                in segments)
+            {
+                if (segment?.OriginalParent == null ||
+                    !hints.TryGetValue(
+                        segment.OriginalParent,
+                        out string hintedSize))
+                {
+                    continue;
+                }
+
+                if (explicitText != null &&
+                    explicitText.Contains(segment))
+                {
+                    continue;
+                }
+
+                if (!string.IsNullOrWhiteSpace(segment.Layer))
+                    continue;
+
+                segment.Layer =
+                    GetAiPipeLayerName(hintedSize);
+
+                segment.LabelText = hintedSize;
+                segment.Width = FixedDnPipeDisplayWidth;
+                segment.HasExplicitSize = true;
+                segment.BestScore = 250.0;
+
+                explicitLayer?.Add(segment);
+            }
+        }
+
+        private class AiBranchSizeZone
+        {
+            public double StartFraction { get; set; }
+            public double EndFraction { get; set; }
+            public string Layer { get; set; } = "";
+            public string LabelText { get; set; } = "";
+        }
+
+        private class AiBranchObjectCandidate
+        {
+            public Curve SourceParent { get; set; }
+            public Curve TargetParent { get; set; }
+            public Curve SourceMatchCurve { get; set; }
+            public Curve TargetMatchCurve { get; set; }
+            public Matrix3d Transform { get; set; } =
+                Matrix3d.Identity;
+            public double Score { get; set; } =
+                double.MaxValue;
+            public int MarkerCount { get; set; }
+            public bool Reversed { get; set; }
+            public string PatternSignature { get; set; } = "";
+            public List<AiBranchSizeZone> Zones { get; set; } =
+                new List<AiBranchSizeZone>();
+        }
+
+        private class AiAutoTemplateBranchCandidate
+        {
+            public Curve SourceParent { get; set; }
+            public Curve TargetParent { get; set; }
+            public Matrix3d Transform { get; set; } =
+                Matrix3d.Identity;
+            public double Score { get; set; } =
+                double.MaxValue;
+            public int SourceMarkerCount { get; set; }
+            public int TargetMarkerCount { get; set; }
+            public string PatternSignature { get; set; } = "";
+        }
+
+        private int PropagateAiPipePatternByBranchObjectEngine(
+            List<SegmentData> segments,
+            List<AiPipeContextAnchor> anchors,
+            out int matchedBranchCount)
+        {
+            matchedBranchCount =
+                0;
+
+            if (segments == null ||
+                segments.Count == 0 ||
+                anchors == null ||
+                anchors.Count == 0)
+            {
+                return 0;
+            }
+
+            Dictionary<Curve, List<SegmentData>> byParent =
+                segments
+                    .Where(
+                        s =>
+                            s?.OriginalParent != null)
+                    .GroupBy(
+                        s =>
+                            s.OriginalParent)
+                    .ToDictionary(
+                        g =>
+                            g.Key,
+                        g =>
+                            g.ToList());
+
+            if (byParent.Count < 2)
+                return 0;
+
+            List<Curve> allParents =
+                byParent.Keys
+                    .Where(
+                        c =>
+                            c != null)
+                    .ToList();
+
+            List<Curve> sourceParents =
+                allParents
+                    .Where(
+                        p =>
+                            byParent[p].Any(
+                                s =>
+                                    s != null &&
+                                    s.HasExplicitSize &&
+                                    !string.IsNullOrWhiteSpace(
+                                        s.Layer)))
+                    .ToList();
+
+            List<Curve> targetParents =
+                allParents
+                    .Where(
+                        p =>
+                            byParent[p].All(
+                                s =>
+                                    s != null &&
+                                    !s.HasExplicitSize))
+                    .ToList();
+
+            if (sourceParents.Count == 0 ||
+                targetParents.Count == 0)
+            {
+                return 0;
+            }
+
+            int inheritedCount =
+                0;
+
+            foreach (Curve targetParent
+                in targetParents.ToList())
+            {
+                List<Point3d> targetMarkers =
+                    GetAiBranchObjectMarkersNearCurve(
+                        targetParent,
+                        anchors);
+
+                if (targetMarkers.Count < 2)
+                    continue;
+
+                Curve targetBound =
+                    BuildTemplateMarkerBoundReferenceCurve(
+                        targetParent,
+                        targetMarkers);
+
+                if (targetBound == null)
+                    continue;
+
+                List<AiBranchObjectCandidate> matches =
+                    new List<AiBranchObjectCandidate>();
+
+                try
+                {
+                    foreach (Curve sourceParent
+                        in sourceParents)
+                    {
+                        if (sourceParent == null ||
+                            ReferenceEquals(
+                                sourceParent,
+                                targetParent))
+                        {
+                            continue;
+                        }
+
+                        List<Point3d> sourceMarkers =
+                            GetAiBranchObjectMarkersNearCurve(
+                                sourceParent,
+                                anchors);
+
+                        if (sourceMarkers.Count < 2)
+                            continue;
+
+                        // Marker count là feature cực mạnh cho nhánh sprinkler lặp.
+                        int markerDifference =
+                            Math.Abs(
+                                sourceMarkers.Count -
+                                targetMarkers.Count);
+
+                        if (markerDifference >
+                            Math.Max(
+                                1,
+                                (int)Math.Ceiling(
+                                    sourceMarkers.Count *
+                                    0.20)))
+                        {
+                            continue;
+                        }
+
+                        Curve sourceBound =
+                            BuildTemplateMarkerBoundReferenceCurve(
+                                sourceParent,
+                                sourceMarkers);
+
+                        if (sourceBound == null)
+                            continue;
+
+                        List<AiBranchSizeZone> zones =
+                            BuildAiBranchSizeZonesFromExplicitSeeds(
+                                sourceParent,
+                                sourceBound,
+                                byParent[sourceParent]);
+
+                        if (zones.Count == 0)
+                        {
+                            sourceBound.Dispose();
+                            continue;
+                        }
+
+                        List<Point3d> sourceMarkersBound =
+                            GetAiBranchObjectMarkersNearCurve(
+                                sourceBound,
+                                anchors);
+
+                        List<Point3d> targetMarkersBound =
+                            GetAiBranchObjectMarkersNearCurve(
+                                targetBound,
+                                anchors);
+
+                        bool matched =
+                            TryMatchTemplateBranch(
+                                sourceBound,
+                                targetBound,
+                                -1,
+                                -1,
+                                sourceMarkersBound,
+                                targetMarkersBound,
+                                out Matrix3d transform,
+                                out double score);
+
+                        if (!matched)
+                        {
+                            sourceBound.Dispose();
+                            continue;
+                        }
+
+                        Point3d mappedSourceStart =
+                            sourceBound.StartPoint
+                                .TransformBy(
+                                    transform);
+
+                        bool reversed =
+                            GetTemplatePlanDistance(
+                                mappedSourceStart,
+                                targetBound.EndPoint) <
+                            GetTemplatePlanDistance(
+                                mappedSourceStart,
+                                targetBound.StartPoint);
+
+                        string signature =
+                            BuildAiBranchZoneSignature(
+                                zones);
+
+                        matches.Add(
+                            new AiBranchObjectCandidate
+                            {
+                                SourceParent =
+                                    sourceParent,
+                                TargetParent =
+                                    targetParent,
+                                SourceMatchCurve =
+                                    sourceBound,
+                                TargetMatchCurve =
+                                    targetBound.Clone()
+                                        as Curve,
+                                Transform =
+                                    transform,
+                                Score =
+                                    score,
+                                MarkerCount =
+                                    Math.Min(
+                                        sourceMarkersBound.Count,
+                                        targetMarkersBound.Count),
+                                Reversed =
+                                    reversed,
+                                PatternSignature =
+                                    signature,
+                                Zones =
+                                    zones
+                            });
+                    }
+
+                    if (matches.Count == 0)
+                        continue;
+
+                    List<AiBranchObjectCandidate> ranked =
+                        matches
+                            .OrderBy(
+                                m =>
+                                    m.Score)
+                            .ThenByDescending(
+                                m =>
+                                    m.MarkerCount)
+                            .ToList();
+
+                    AiBranchObjectCandidate best =
+                        ranked[0];
+
+                    // Hai mẫu hình học giống nhau nhưng schedule DN khác nhau:
+                    // không đoán nếu điểm số gần nhau.
+                    if (ranked.Count > 1)
+                    {
+                        AiBranchObjectCandidate second =
+                            ranked[1];
+
+                        double scoreTolerance =
+                            Math.Max(
+                                30.0,
+                                GetTemplateCurveLength(
+                                    best.SourceMatchCurve) *
+                                0.008);
+
+                        if (!string.Equals(
+                                best.PatternSignature,
+                                second.PatternSignature,
+                                StringComparison.OrdinalIgnoreCase) &&
+                            Math.Abs(
+                                second.Score -
+                                best.Score) <=
+                            scoreTolerance)
+                        {
+                            continue;
+                        }
+                    }
+
+                    int added =
+                        ApplyAiBranchZonesToTargetParent(
+                            segments,
+                            targetParent,
+                            best.TargetMatchCurve,
+                            best.Zones,
+                            best.Reversed,
+                            best.Score,
+                            best.MarkerCount);
+
+                    if (added > 0)
+                    {
+                        inheritedCount +=
+                            added;
+
+                        matchedBranchCount++;
+                    }
+                }
+                finally
+                {
+                    targetBound.Dispose();
+
+                    foreach (AiBranchObjectCandidate candidate
+                        in matches)
+                    {
+                        try
+                        {
+                            candidate.SourceMatchCurve?.Dispose();
+                        }
+                        catch
+                        {
+                        }
+
+                        try
+                        {
+                            candidate.TargetMatchCurve?.Dispose();
+                        }
+                        catch
+                        {
+                        }
+                    }
+                }
+            }
+
+            return inheritedCount;
+        }
+
+        private List<Point3d> GetAiBranchObjectMarkersNearCurve(
+            Curve curve,
+            List<AiPipeContextAnchor> anchors)
+        {
+            List<Point3d> result =
+                new List<Point3d>();
+
+            if (curve == null ||
+                anchors == null)
+            {
+                return result;
+            }
+
+            double curveLength =
+                GetAiPipeCurveLength(
+                    curve);
+
+            // Tighter than STEP18D: branch markers normally sit ON the pipe centerline.
+            double baseTolerance =
+                Math.Max(
+                    70.0,
+                    Math.Min(
+                        220.0,
+                        curveLength *
+                        0.018));
+
+            foreach (AiPipeContextAnchor anchor
+                in anchors)
+            {
+                if (anchor == null)
+                    continue;
+
+                double tolerance =
+                    Math.Max(
+                        baseTolerance,
+                        Math.Min(
+                            260.0,
+                            anchor.MaxSpan *
+                            0.45 +
+                            50.0));
+
+                if (!TryGetClosestPointInPlan(
+                        curve,
+                        anchor.Point,
+                        out Point3d closest,
+                        out double distance))
+                {
+                    continue;
+                }
+
+                if (distance >
+                    tolerance)
+                {
+                    continue;
+                }
+
+                AddUniquePoint(
+                    result,
+                    anchor.Point,
+                    5.0);
+            }
+
+            // Stable order along curve.
+            return
+                result
+                    .OrderBy(
+                        p =>
+                            GetAiStationOnParent(
+                                curve,
+                                p))
+                    .ToList();
+        }
+
+        private List<AiBranchSizeZone> BuildAiBranchSizeZonesFromExplicitSeeds(
+            Curve sourceParent,
+            Curve sourceBound,
+            List<SegmentData> sourceSegments)
+        {
+            List<AiBranchSizeZone> zones =
+                new List<AiBranchSizeZone>();
+
+            if (sourceParent == null ||
+                sourceBound == null ||
+                sourceSegments == null)
+            {
+                return zones;
+            }
+
+            double low =
+                Math.Min(
+                    GetAiStationOnParent(
+                        sourceParent,
+                        sourceBound.StartPoint),
+                    GetAiStationOnParent(
+                        sourceParent,
+                        sourceBound.EndPoint));
+
+            double high =
+                Math.Max(
+                    GetAiStationOnParent(
+                        sourceParent,
+                        sourceBound.StartPoint),
+                    GetAiStationOnParent(
+                        sourceParent,
+                        sourceBound.EndPoint));
+
+            double span =
+                high -
+                low;
+
+            if (span <= 50.0)
+                return zones;
+
+            var seeds =
+                sourceSegments
+                    .Where(
+                        s =>
+                            s?.Curve != null &&
+                            s.HasExplicitSize &&
+                            !string.IsNullOrWhiteSpace(
+                                s.Layer))
+                    .Select(
+                        s =>
+                        {
+                            double station =
+                                GetAiStationOnParent(
+                                    sourceParent,
+                                    GetAiCurveMidPoint(
+                                        s.Curve));
+
+                            string layer =
+                                s.Layer;
+
+                            string label =
+                                !string.IsNullOrWhiteSpace(
+                                    s.LabelText)
+                                    ? s.LabelText
+                                    : ExtractAiPipeSizeFromLayer(
+                                        layer);
+
+                            return
+                                new
+                                {
+                                    Segment =
+                                        s,
+                                    Station =
+                                        station,
+                                    Fraction =
+                                        (station -
+                                         low) /
+                                        span,
+                                    Layer =
+                                        layer,
+                                    Label =
+                                        label
+                                };
+                        })
+                    .Where(
+                        x =>
+                            x.Fraction >=
+                                -0.05 &&
+                            x.Fraction <=
+                                1.05)
+                    .OrderBy(
+                        x =>
+                            x.Fraction)
+                    .ToList();
+
+            if (seeds.Count == 0)
+                return zones;
+
+            // Clamp and merge seeds that are practically at the same station.
+            var compact =
+                new List<Tuple<double, string, string>>();
+
+            foreach (var seed
+                in seeds)
+            {
+                double f =
+                    Math.Max(
+                        0.0,
+                        Math.Min(
+                            1.0,
+                            seed.Fraction));
+
+                if (compact.Count > 0 &&
+                    Math.Abs(
+                        compact[
+                            compact.Count - 1]
+                            .Item1 -
+                        f) <
+                    0.015)
+                {
+                    compact[
+                        compact.Count - 1] =
+                        Tuple.Create(
+                            f,
+                            seed.Layer,
+                            seed.Label);
+
+                    continue;
+                }
+
+                compact.Add(
+                    Tuple.Create(
+                        f,
+                        seed.Layer,
+                        seed.Label));
+            }
+
+            if (compact.Count == 0)
+                return zones;
+
+            List<double> boundaries =
+                new List<double>
+                {
+                    0.0
+                };
+
+            for (int i = 0;
+                i < compact.Count - 1;
+                i++)
+            {
+                boundaries.Add(
+                    (compact[i].Item1 +
+                     compact[i + 1].Item1) *
+                    0.5);
+            }
+
+            boundaries.Add(
+                1.0);
+
+            for (int i = 0;
+                i < compact.Count;
+                i++)
+            {
+                AiBranchSizeZone zone =
+                    new AiBranchSizeZone
+                    {
+                        StartFraction =
+                            boundaries[i],
+                        EndFraction =
+                            boundaries[i + 1],
+                        Layer =
+                            compact[i].Item2,
+                        LabelText =
+                            compact[i].Item3
+                    };
+
+                // Merge adjacent equal DN.
+                if (zones.Count > 0 &&
+                    string.Equals(
+                        zones[
+                            zones.Count - 1]
+                            .Layer,
+                        zone.Layer,
+                        StringComparison.OrdinalIgnoreCase))
+                {
+                    zones[
+                        zones.Count - 1]
+                        .EndFraction =
+                        zone.EndFraction;
+                }
+                else
+                {
+                    zones.Add(
+                        zone);
+                }
+            }
+
+            return zones;
+        }
+
+        private string BuildAiBranchZoneSignature(
+            List<AiBranchSizeZone> zones)
+        {
+            if (zones == null ||
+                zones.Count == 0)
+            {
+                return "";
+            }
+
+            return
+                string.Join(
+                    "|",
+                    zones.Select(
+                        z =>
+                            ExtractAiPipeSizeFromLayer(
+                                z.Layer) +
+                            ":" +
+                            z.StartFraction.ToString(
+                                "0.00",
+                                CultureInfo.InvariantCulture) +
+                            "-" +
+                            z.EndFraction.ToString(
+                                "0.00",
+                                CultureInfo.InvariantCulture)));
+        }
+
+        private int ApplyAiBranchZonesToTargetParent(
+            List<SegmentData> allSegments,
+            Curve targetParent,
+            Curve targetBound,
+            List<AiBranchSizeZone> sourceZones,
+            bool reversed,
+            double matchScore,
+            int markerCount)
+        {
+            if (allSegments == null ||
+                targetParent == null ||
+                targetBound == null ||
+                sourceZones == null ||
+                sourceZones.Count == 0)
+            {
+                return 0;
+            }
+
+            double parentLength =
+                GetAiPipeCurveLength(
+                    targetParent);
+
+            if (parentLength <= 50.0)
+                return 0;
+
+            double low =
+                Math.Min(
+                    GetAiStationOnParent(
+                        targetParent,
+                        targetBound.StartPoint),
+                    GetAiStationOnParent(
+                        targetParent,
+                        targetBound.EndPoint));
+
+            double high =
+                Math.Max(
+                    GetAiStationOnParent(
+                        targetParent,
+                        targetBound.StartPoint),
+                    GetAiStationOnParent(
+                        targetParent,
+                        targetBound.EndPoint));
+
+            double span =
+                high -
+                low;
+
+            if (span <= 50.0)
+                return 0;
+
+            List<double> splitDistances =
+                new List<double>();
+
+            // Preserve all old split boundaries (T/intersections etc.).
+            foreach (SegmentData oldSegment
+                in allSegments.Where(
+                    s =>
+                        s?.Curve != null &&
+                        ReferenceEquals(
+                            s.OriginalParent,
+                            targetParent)))
+            {
+                Point3d[] points =
+                    new Point3d[]
+                    {
+                        oldSegment.Curve.StartPoint,
+                        oldSegment.Curve.EndPoint
+                    };
+
+                foreach (Point3d p
+                    in points)
+                {
+                    double d =
+                        GetAiStationOnParent(
+                            targetParent,
+                            p);
+
+                    AddAiSplitDistance(
+                        splitDistances,
+                        d,
+                        parentLength);
+                }
+            }
+
+            AddAiSplitDistance(
+                splitDistances,
+                low,
+                parentLength);
+
+            AddAiSplitDistance(
+                splitDistances,
+                high,
+                parentLength);
+
+            foreach (AiBranchSizeZone zone
+                in sourceZones)
+            {
+                double[] sourceFractions =
+                    new double[]
+                    {
+                        zone.StartFraction,
+                        zone.EndFraction
+                    };
+
+                foreach (double sourceFraction
+                    in sourceFractions)
+                {
+                    double targetFraction =
+                        reversed
+                            ? 1.0 -
+                              sourceFraction
+                            : sourceFraction;
+
+                    double d =
+                        low +
+                        span *
+                        targetFraction;
+
+                    AddAiSplitDistance(
+                        splitDistances,
+                        d,
+                        parentLength);
+                }
+            }
+
+            splitDistances =
+                splitDistances
+                    .Where(
+                        d =>
+                            d > 1.0 &&
+                            d <
+                                parentLength - 1.0)
+                    .Distinct()
+                    .OrderBy(
+                        d =>
+                            d)
+                    .ToList();
+
+            Point3dCollection pointsToSplit =
+                new Point3dCollection();
+
+            foreach (double d
+                in splitDistances)
+            {
+                try
+                {
+                    pointsToSplit.Add(
+                        targetParent.GetPointAtDist(
+                            d));
+                }
+                catch
+                {
+                }
+            }
+
+            List<Curve> pieces =
+                new List<Curve>();
+
+            if (pointsToSplit.Count > 0)
+            {
+                try
+                {
+                    DBObjectCollection splitObjects =
+                        targetParent.GetSplitCurves(
+                            pointsToSplit);
+
+                    foreach (DBObject obj
+                        in splitObjects)
+                    {
+                        if (obj is Curve c)
+                        {
+                            pieces.Add(
+                                c);
+                        }
+                        else
+                        {
+                            obj.Dispose();
+                        }
+                    }
+                }
+                catch
+                {
+                }
+            }
+
+            if (pieces.Count == 0)
+            {
+                Curve clone =
+                    targetParent.Clone()
+                        as Curve;
+
+                if (clone != null)
+                {
+                    pieces.Add(
+                        clone);
+                }
+            }
+
+            if (pieces.Count == 0)
+                return 0;
+
+            List<SegmentData> replacements =
+                new List<SegmentData>();
+
+            int assigned =
+                0;
+
+            foreach (Curve piece
+                in pieces)
+            {
+                Point3d mid =
+                    GetAiCurveMidPoint(
+                        piece);
+
+                double station =
+                    GetAiStationOnParent(
+                        targetParent,
+                        mid);
+
+                SegmentData replacement =
+                    new SegmentData
+                    {
+                        Curve =
+                            piece,
+                        OriginalParent =
+                            targetParent,
+                        Width =
+                            FixedDnPipeDisplayWidth
+                    };
+
+                if (station >=
+                        low - 1.0 &&
+                    station <=
+                        high + 1.0)
+                {
+                    double targetFraction =
+                        (station -
+                         low) /
+                        span;
+
+                    targetFraction =
+                        Math.Max(
+                            0.0,
+                            Math.Min(
+                                1.0,
+                                targetFraction));
+
+                    double sourceFraction =
+                        reversed
+                            ? 1.0 -
+                              targetFraction
+                            : targetFraction;
+
+                    AiBranchSizeZone zone =
+                        sourceZones
+                            .FirstOrDefault(
+                                z =>
+                                    sourceFraction >=
+                                        z.StartFraction -
+                                        1e-6 &&
+                                    sourceFraction <=
+                                        z.EndFraction +
+                                        1e-6);
+
+                    if (zone == null)
+                    {
+                        zone =
+                            sourceZones
+                                .OrderBy(
+                                    z =>
+                                        Math.Abs(
+                                            sourceFraction -
+                                            (z.StartFraction +
+                                             z.EndFraction) *
+                                            0.5))
+                                .FirstOrDefault();
+                    }
+
+                    if (zone != null)
+                    {
+                        replacement.Layer =
+                            zone.Layer;
+
+                        replacement.LabelText =
+                            zone.LabelText;
+
+                        replacement.HasExplicitSize =
+                            false;
+
+                        replacement.AiInferenceSource =
+                            "BRANCH_OBJECT_TEMPLATE";
+
+                        double confidence =
+                            markerCount >= 4
+                                ? 0.985
+                                : markerCount == 3
+                                    ? 0.975
+                                    : 0.955;
+
+                        // A very large matching error lowers confidence slightly,
+                        // but does not destroy a 4-marker exact repeated branch.
+                        double penalty =
+                            Math.Min(
+                                0.025,
+                                matchScore /
+                                Math.Max(
+                                    5000.0,
+                                    span) *
+                                0.015);
+
+                        replacement.AiInferenceConfidence =
+                            Math.Max(
+                                0.92,
+                                confidence -
+                                penalty);
+
+                        assigned++;
+                    }
+                }
+
+                replacements.Add(
+                    replacement);
+            }
+
+            if (assigned <= 0)
+            {
+                foreach (Curve piece
+                    in pieces)
+                {
+                    try
+                    {
+                        piece.Dispose();
+                    }
+                    catch
+                    {
+                    }
+                }
+
+                return 0;
+            }
+
+            List<SegmentData> old =
+                allSegments
+                    .Where(
+                        s =>
+                            s != null &&
+                            ReferenceEquals(
+                                s.OriginalParent,
+                                targetParent))
+                    .ToList();
+
+            foreach (SegmentData oldSegment
+                in old)
+            {
+                allSegments.Remove(
+                    oldSegment);
+
+                try
+                {
+                    oldSegment.Curve?.Dispose();
+                }
+                catch
+                {
+                }
+            }
+
+            allSegments.AddRange(
+                replacements);
+
+            return assigned;
+        }
+
+        private void AddAiSplitDistance(
+            List<double> distances,
+            double value,
+            double maxLength)
+        {
+            if (distances == null ||
+                double.IsNaN(
+                    value) ||
+                double.IsInfinity(
+                    value))
+            {
+                return;
+            }
+
+            value =
+                Math.Max(
+                    0.0,
+                    Math.Min(
+                        maxLength,
+                        value));
+
+            if (!distances.Any(
+                    d =>
+                        Math.Abs(
+                            d -
+                            value) <
+                        1.0))
+            {
+                distances.Add(
+                    value);
+            }
+        }
+
+        private int PropagateAiPipePatternByExistingTemplateEngine(
+            List<SegmentData> segments,
+            List<AiPipeContextAnchor> anchors)
+        {
+            if (segments == null ||
+                segments.Count == 0)
+            {
+                return 0;
+            }
+
+            // Parent curve là LINE/POLYLINE gốc trước khi Split theo text DN.
+            List<Curve> parentCurves =
+                segments
+                    .Where(
+                        s =>
+                            s?.OriginalParent != null)
+                    .Select(
+                        s =>
+                            s.OriginalParent)
+                    .Distinct()
+                    .ToList();
+
+            if (parentCurves.Count < 2)
+                return 0;
+
+            Dictionary<Curve, List<SegmentData>> segmentsByParent =
+                segments
+                    .Where(
+                        s =>
+                            s?.OriginalParent != null)
+                    .GroupBy(
+                        s =>
+                            s.OriginalParent)
+                    .ToDictionary(
+                        g =>
+                            g.Key,
+                        g =>
+                            g.ToList());
+
+            // SOURCE:
+            // phải có DN nhận diện phủ gần hết tuyến.
+            List<Curve> sourceParents =
+                parentCurves
+                    .Where(
+                        parent =>
+                            IsAiTemplateSourceParent(
+                                parent,
+                                segmentsByParent[parent]))
+                    .ToList();
+
+            // TARGET:
+            // toàn tuyến chưa có DN. Đây chính là nhánh dưới trong hình user.
+            List<Curve> targetParents =
+                parentCurves
+                    .Where(
+                        parent =>
+                            IsAiTemplateUnknownTargetParent(
+                                segmentsByParent[parent]))
+                    .ToList();
+
+            if (sourceParents.Count == 0 ||
+                targetParents.Count == 0)
+            {
+                return 0;
+            }
+
+            List<Point3d> allAnchorPoints =
+                (anchors ??
+                 new List<AiPipeContextAnchor>())
+                    .Where(
+                        a =>
+                            a != null)
+                    .Select(
+                        a =>
+                            a.Point)
+                    .ToList();
+
+            int inheritedCount =
+                0;
+
+            foreach (Curve targetParent
+                in targetParents.ToList())
+            {
+                if (targetParent == null)
+                    continue;
+
+                List<Point3d> targetMarkers =
+                    GetAiTemplateMarkersNearCurveStrict(
+                        targetParent,
+                        anchors);
+
+                // Với nhánh chỉ là một line thẳng, marker chính là bằng chứng
+                // phân biệt "nhánh sprinkler copy" với line kiến trúc.
+                if (targetMarkers.Count < 2)
+                    continue;
+
+                int targetRootIndex =
+                    FindTemplateBranchRootIndex(
+                        targetParent,
+                        parentCurves);
+
+                List<AiAutoTemplateBranchCandidate> matches =
+                    new List<AiAutoTemplateBranchCandidate>();
+
+                foreach (Curve sourceParent
+                    in sourceParents)
+                {
+                    if (sourceParent == null ||
+                        ReferenceEquals(
+                            sourceParent,
+                            targetParent))
+                    {
+                        continue;
+                    }
+
+                    if (sourceParent.ObjectId != ObjectId.Null &&
+                        targetParent.ObjectId != ObjectId.Null &&
+                        sourceParent.ObjectId ==
+                            targetParent.ObjectId)
+                    {
+                        continue;
+                    }
+
+                    List<Point3d> sourceMarkers =
+                        GetAiTemplateMarkersNearCurveStrict(
+                            sourceParent,
+                            anchors);
+
+                    if (sourceMarkers.Count < 2)
+                        continue;
+
+                    // Marker count phải gần giống. Ví dụ 4 đầu phun ↔ 4 đầu phun.
+                    if (Math.Abs(
+                            sourceMarkers.Count -
+                            targetMarkers.Count) >
+                        Math.Max(
+                            1,
+                            (int)Math.Ceiling(
+                                sourceMarkers.Count *
+                                0.25)))
+                    {
+                        continue;
+                    }
+
+                    int sourceRootIndex =
+                        FindTemplateBranchRootIndex(
+                            sourceParent,
+                            parentCurves);
+
+                    bool matched =
+                        TryMatchTemplateBranch(
+                            sourceParent,
+                            targetParent,
+                            sourceRootIndex,
+                            targetRootIndex,
+                            sourceMarkers,
+                            targetMarkers,
+                            out Matrix3d transform,
+                            out double score);
+
+                    if (!matched)
+                        continue;
+
+                    string pattern =
+                        GetAiPipeParentPatternSignature(
+                            sourceParent,
+                            segmentsByParent[sourceParent]);
+
+                    if (string.IsNullOrWhiteSpace(
+                            pattern))
+                    {
+                        continue;
+                    }
+
+                    matches.Add(
+                        new AiAutoTemplateBranchCandidate
+                        {
+                            SourceParent =
+                                sourceParent,
+                            TargetParent =
+                                targetParent,
+                            Transform =
+                                transform,
+                            Score =
+                                score,
+                            SourceMarkerCount =
+                                sourceMarkers.Count,
+                            TargetMarkerCount =
+                                targetMarkers.Count,
+                            PatternSignature =
+                                pattern
+                        });
+                }
+
+                if (matches.Count == 0)
+                    continue;
+
+                List<AiAutoTemplateBranchCandidate> ranked =
+                    matches
+                        .OrderBy(
+                            m =>
+                                m.Score)
+                        .ThenByDescending(
+                            m =>
+                                Math.Min(
+                                    m.SourceMarkerCount,
+                                    m.TargetMarkerCount))
+                        .ToList();
+
+                AiAutoTemplateBranchCandidate best =
+                    ranked[0];
+
+                // Nếu nhánh mẫu thứ 2 gần như ngang điểm nhưng lại có pattern DN khác,
+                // không đoán. Ví dụ hai loại nhánh cùng hình nhưng schedule khác nhau.
+                if (ranked.Count > 1)
+                {
+                    AiAutoTemplateBranchCandidate second =
+                        ranked[1];
+
+                    double ambiguityTolerance =
+                        Math.Max(
+                            40.0,
+                            GetTemplateCurveLength(
+                                best.SourceParent) *
+                            0.006);
+
+                    if (!string.Equals(
+                            best.PatternSignature,
+                            second.PatternSignature,
+                            StringComparison.OrdinalIgnoreCase) &&
+                        Math.Abs(
+                            second.Score -
+                            best.Score) <=
+                        ambiguityTolerance)
+                    {
+                        continue;
+                    }
+                }
+
+                int inheritedForTarget =
+                    ApplyAiPipePatternToMatchedTarget(
+                        segments,
+                        best.SourceParent,
+                        best.TargetParent,
+                        best.Transform,
+                        segmentsByParent[
+                            best.SourceParent],
+                        best.Score,
+                        best.SourceMarkerCount,
+                        best.TargetMarkerCount);
+
+                inheritedCount +=
+                    inheritedForTarget;
+
+                if (inheritedForTarget > 0)
+                {
+                    // Dictionary cũ không còn đúng sau khi target bị split.
+                    // Không dùng target này thêm lần nữa trong vòng hiện tại.
+                    continue;
+                }
+            }
+
+            return inheritedCount;
+        }
+
+        private bool IsAiTemplateSourceParent(
+            Curve parent,
+            List<SegmentData> parentSegments)
+        {
+            if (parent == null ||
+                parentSegments == null ||
+                parentSegments.Count == 0)
+            {
+                return false;
+            }
+
+            double totalParentLength =
+                GetAiPipeCurveLength(
+                    parent);
+
+            if (totalParentLength <= 100.0)
+                return false;
+
+            double knownLength =
+                parentSegments
+                    .Where(
+                        s =>
+                            s?.Curve != null &&
+                            !string.IsNullOrWhiteSpace(
+                                s.Layer))
+                    .Sum(
+                        s =>
+                            GetAiPipeCurveLength(
+                                s.Curve));
+
+            int explicitSeedCount =
+                parentSegments.Count(
+                    s =>
+                        s != null &&
+                        s.HasExplicitSize &&
+                        !string.IsNullOrWhiteSpace(
+                            s.Layer));
+
+            double coverage =
+                knownLength /
+                Math.Max(
+                    totalParentLength,
+                    1.0);
+
+            // STEP18F:
+            // - 1 seed: phải phủ rất cao (sau same-parent fill thường = 100%).
+            // - >=2 seed trên nhánh nhiều DN: cho phép coverage thấp hơn,
+            //   vì GetTextSizeTransitionDistances đã chia zone theo các text.
+            if (explicitSeedCount >= 2)
+            {
+                return
+                    coverage >=
+                        0.55;
+            }
+
+            return
+                explicitSeedCount >= 1 &&
+                coverage >=
+                    0.82;
+        }
+
+        private bool IsAiTemplateUnknownTargetParent(
+            List<SegmentData> parentSegments)
+        {
+            if (parentSegments == null ||
+                parentSegments.Count == 0)
+            {
+                return false;
+            }
+
+            // STEP18F:
+            // Target = nhánh KHÔNG CÓ TEXT/LAYER SIZE TRỰC TIẾP.
+            // Không dùng Layer blank làm điều kiện vì các bước suy luận khác
+            // có thể đã tạm gán Layer dù user không hề ghi DN.
+            return
+                parentSegments.All(
+                    s =>
+                        s != null &&
+                        !s.HasExplicitSize);
+        }
+
+        private List<Point3d> GetAiTemplateMarkersNearCurveStrict(
+            Curve curve,
+            List<AiPipeContextAnchor> anchors)
+        {
+            List<Point3d> result =
+                new List<Point3d>();
+
+            if (curve == null ||
+                anchors == null ||
+                anchors.Count == 0)
+            {
+                return result;
+            }
+
+            double curveLength =
+                GetAiPipeCurveLength(
+                    curve);
+
+            double corridor =
+                Math.Max(
+                    180.0,
+                    Math.Min(
+                        520.0,
+                        curveLength * 0.035));
+
+            foreach (AiPipeContextAnchor anchor
+                in anchors)
+            {
+                if (anchor == null)
+                    continue;
+
+                double allowed =
+                    Math.Max(
+                        corridor,
+                        Math.Min(
+                            520.0,
+                            anchor.MaxSpan * 0.80 +
+                            80.0));
+
+                if (!TryGetClosestPointInPlan(
+                        curve,
+                        anchor.Point,
+                        out Point3d ignored,
+                        out double distance))
+                {
+                    continue;
+                }
+
+                if (distance >
+                    allowed)
+                {
+                    continue;
+                }
+
+                AddUniquePoint(
+                    result,
+                    anchor.Point,
+                    5.0);
+            }
+
+            return
+                result;
+        }
+
+        private string GetAiPipeParentPatternSignature(
+            Curve parent,
+            List<SegmentData> parentSegments)
+        {
+            if (parent == null ||
+                parentSegments == null)
+            {
+                return "";
+            }
+
+            List<SegmentData> ordered =
+                parentSegments
+                    .Where(
+                        s =>
+                            s?.Curve != null &&
+                            !string.IsNullOrWhiteSpace(
+                                s.Layer))
+                    .OrderBy(
+                        s =>
+                            GetAiStationOnParent(
+                                parent,
+                                GetAiCurveMidPoint(
+                                    s.Curve)))
+                    .ToList();
+
+            if (ordered.Count == 0)
+                return "";
+
+            List<string> pieces =
+                new List<string>();
+
+            foreach (SegmentData segment
+                in ordered)
+            {
+                string size =
+                    ExtractAiPipeSizeFromLayer(
+                        segment.Layer);
+
+                if (string.IsNullOrWhiteSpace(
+                        size))
+                {
+                    size =
+                        segment.LabelText ??
+                        "";
+                }
+
+                double midStation =
+                    GetAiStationOnParent(
+                        parent,
+                        GetAiCurveMidPoint(
+                            segment.Curve));
+
+                double parentLength =
+                    Math.Max(
+                        1.0,
+                        GetAiPipeCurveLength(
+                            parent));
+
+                double fraction =
+                    midStation /
+                    parentLength;
+
+                pieces.Add(
+                    size +
+                    "@" +
+                    Math.Round(
+                        fraction,
+                        2)
+                        .ToString(
+                            "0.00",
+                            CultureInfo.InvariantCulture));
+            }
+
+            return
+                string.Join(
+                    "|",
+                    pieces);
+        }
+
+        private double GetAiStationOnParent(
+            Curve parent,
+            Point3d point)
+        {
+            if (parent == null)
+                return 0.0;
+
+            try
+            {
+                Point3d closest =
+                    parent.GetClosestPointTo(
+                        point,
+                        false);
+
+                return
+                    parent.GetDistAtPoint(
+                        closest);
+            }
+            catch
+            {
+                return 0.0;
+            }
+        }
+
+        private int ApplyAiPipePatternToMatchedTarget(
+            List<SegmentData> allSegments,
+            Curve sourceParent,
+            Curve targetParent,
+            Matrix3d transform,
+            List<SegmentData> sourceSegments,
+            double matchScore,
+            int sourceMarkerCount,
+            int targetMarkerCount)
+        {
+            if (allSegments == null ||
+                sourceParent == null ||
+                targetParent == null ||
+                sourceSegments == null)
+            {
+                return 0;
+            }
+
+            List<SegmentData> knownSourceSegments =
+                sourceSegments
+                    .Where(
+                        s =>
+                            s?.Curve != null &&
+                            !string.IsNullOrWhiteSpace(
+                                s.Layer))
+                    .ToList();
+
+            if (knownSourceSegments.Count == 0)
+                return 0;
+
+            double targetLength =
+                GetAiPipeCurveLength(
+                    targetParent);
+
+            if (targetLength <= 100.0)
+                return 0;
+
+            List<double> splitDistances =
+                new List<double>();
+
+            // Copy boundary của PATTERN từ source sang target bằng transform
+            // của engine mẫu cũ. Đây là chỗ STEP18D pairwise không làm được.
+            foreach (SegmentData sourceSegment
+                in knownSourceSegments)
+            {
+                Point3d[] endpoints =
+                    new Point3d[]
+                    {
+                        sourceSegment.Curve.StartPoint,
+                        sourceSegment.Curve.EndPoint
+                    };
+
+                foreach (Point3d sourcePoint
+                    in endpoints)
+                {
+                    try
+                    {
+                        Point3d expectedTarget =
+                            sourcePoint.TransformBy(
+                                transform);
+
+                        Point3d targetClosest =
+                            targetParent.GetClosestPointTo(
+                                expectedTarget,
+                                false);
+
+                        double planError =
+                            PlanDistance(
+                                expectedTarget,
+                                targetClosest);
+
+                        double boundaryTolerance =
+                            Math.Max(
+                                100.0,
+                                targetLength *
+                                0.01);
+
+                        if (planError >
+                            boundaryTolerance)
+                        {
+                            continue;
+                        }
+
+                        double d =
+                            targetParent.GetDistAtPoint(
+                                targetClosest);
+
+                        if (d > 2.0 &&
+                            d <
+                                targetLength - 2.0 &&
+                            !splitDistances.Any(
+                                x =>
+                                    Math.Abs(
+                                        x - d) <
+                                    2.0))
+                        {
+                            splitDistances.Add(
+                                d);
+                        }
+                    }
+                    catch
+                    {
+                    }
+                }
+            }
+
+            splitDistances.Sort();
+
+            List<Curve> targetPieces =
+                new List<Curve>();
+
+            if (splitDistances.Count > 0)
+            {
+                Point3dCollection points =
+                    new Point3dCollection();
+
+                foreach (double d
+                    in splitDistances)
+                {
+                    try
+                    {
+                        points.Add(
+                            targetParent.GetPointAtDist(
+                                d));
+                    }
+                    catch
+                    {
+                    }
+                }
+
+                if (points.Count > 0)
+                {
+                    try
+                    {
+                        DBObjectCollection splitObjects =
+                            targetParent.GetSplitCurves(
+                                points);
+
+                        foreach (DBObject obj
+                            in splitObjects)
+                        {
+                            if (obj is Curve c)
+                            {
+                                targetPieces.Add(
+                                    c);
+                            }
+                            else
+                            {
+                                obj.Dispose();
+                            }
+                        }
+                    }
+                    catch
+                    {
+                    }
+                }
+            }
+
+            if (targetPieces.Count == 0)
+            {
+                Curve clone =
+                    targetParent.Clone()
+                        as Curve;
+
+                if (clone != null)
+                {
+                    targetPieces.Add(
+                        clone);
+                }
+            }
+
+            if (targetPieces.Count == 0)
+                return 0;
+
+            // Source segment midpoint sau transform là "tọa độ kỳ vọng"
+            // của từng zone DN trên target.
+            List<Tuple<SegmentData, Point3d>> expectedSourceZones =
+                knownSourceSegments
+                    .Select(
+                        s =>
+                            Tuple.Create(
+                                s,
+                                GetAiCurveMidPoint(
+                                    s.Curve)
+                                    .TransformBy(
+                                        transform)))
+                    .ToList();
+
+            List<SegmentData> newTargetSegments =
+                new List<SegmentData>();
+
+            foreach (Curve targetPiece
+                in targetPieces)
+            {
+                Point3d targetMid =
+                    GetAiCurveMidPoint(
+                        targetPiece);
+
+                var bestSourceZone =
+                    expectedSourceZones
+                        .OrderBy(
+                            z =>
+                                PlanDistance(
+                                    z.Item2,
+                                    targetMid))
+                        .FirstOrDefault();
+
+                if (bestSourceZone == null ||
+                    bestSourceZone.Item1 == null)
+                {
+                    targetPiece.Dispose();
+                    continue;
+                }
+
+                SegmentData sourceZone =
+                    bestSourceZone.Item1;
+
+                double confidence =
+                    0.93;
+
+                // 3+ marker giống nhau => đây gần như đúng use-case của
+                // chức năng VẼ THEO MẪU, nâng confidence.
+                int commonMarkers =
+                    Math.Min(
+                        sourceMarkerCount,
+                        targetMarkerCount);
+
+                if (commonMarkers >= 4)
+                {
+                    confidence =
+                        0.98;
+                }
+                else if (commonMarkers >= 3)
+                {
+                    confidence =
+                        0.97;
+                }
+                else if (commonMarkers >= 2)
+                {
+                    confidence =
+                        0.95;
+                }
+
+                double scorePenalty =
+                    Math.Min(
+                        0.03,
+                        matchScore /
+                        Math.Max(
+                            5000.0,
+                            GetTemplateCurveLength(
+                                sourceParent)) *
+                        0.02);
+
+                confidence =
+                    Math.Max(
+                        0.90,
+                        confidence -
+                        scorePenalty);
+
+                newTargetSegments.Add(
+                    new SegmentData
+                    {
+                        Curve =
+                            targetPiece,
+                        OriginalParent =
+                            targetParent,
+                        Layer =
+                            sourceZone.Layer,
+                        LabelText =
+                            sourceZone.LabelText,
+                        Width =
+                            FixedDnPipeDisplayWidth,
+                        HasExplicitSize =
+                            false,
+                        AiInferenceSource =
+                            "AUTO_TEMPLATE_BRANCH",
+                        AiInferenceConfidence =
+                            confidence
+                    });
+            }
+
+            if (newTargetSegments.Count == 0)
+                return 0;
+
+            // Chỉ replace target cũ khi toàn bộ pieces đã được map DN.
+            List<SegmentData> oldTargetSegments =
+                allSegments
+                    .Where(
+                        s =>
+                            s != null &&
+                            ReferenceEquals(
+                                s.OriginalParent,
+                                targetParent))
+                    .ToList();
+
+            foreach (SegmentData oldSegment
+                in oldTargetSegments)
+            {
+                allSegments.Remove(
+                    oldSegment);
+
+                try
+                {
+                    oldSegment.Curve?.Dispose();
+                }
+                catch
+                {
+                }
+            }
+
+            allSegments.AddRange(
+                newTargetSegments);
+
+            return
+                newTargetSegments.Count;
+        }
+
+        private int PropagateAiPipeSizesByRepeatedBranchTemplate(
+            List<SegmentData> segments,
+            List<AiPipeContextAnchor> anchors)
+        {
+            if (segments == null ||
+                segments.Count == 0)
+            {
+                return 0;
+            }
+
+            List<SegmentData> sourceSegments =
+                segments
+                    .Where(
+                        s =>
+                            s?.Curve != null &&
+                            !string.IsNullOrWhiteSpace(
+                                s.Layer))
+                    .ToList();
+
+            List<SegmentData> targetSegments =
+                segments
+                    .Where(
+                        s =>
+                            s?.Curve != null &&
+                            string.IsNullOrWhiteSpace(
+                                s.Layer))
+                    .ToList();
+
+            if (sourceSegments.Count == 0 ||
+                targetSegments.Count == 0)
+            {
+                return 0;
+            }
+
+            List<AiRepeatedBranchProposal> proposals =
+                new List<AiRepeatedBranchProposal>();
+
+            foreach (SegmentData source
+                in sourceSegments)
+            {
+                double sourceLength =
+                    GetAiPipeCurveLength(
+                        source.Curve);
+
+                if (sourceLength <= 50.0)
+                    continue;
+
+                Point3d sourceMid =
+                    GetAiCurveMidPoint(
+                        source.Curve);
+
+                double sourceAngle =
+                    GetAiCurveAxisAngle(
+                        source.Curve);
+
+                foreach (SegmentData target
+                    in targetSegments)
+                {
+                    double targetLength =
+                        GetAiPipeCurveLength(
+                            target.Curve);
+
+                    if (targetLength <= 50.0)
+                        continue;
+
+                    double lengthTolerance =
+                        Math.Max(
+                            80.0,
+                            Math.Max(
+                                sourceLength,
+                                targetLength) *
+                            0.025);
+
+                    double lengthDiff =
+                        Math.Abs(
+                            sourceLength -
+                            targetLength);
+
+                    if (lengthDiff >
+                        lengthTolerance)
+                    {
+                        continue;
+                    }
+
+                    double targetAngle =
+                        GetAiCurveAxisAngle(
+                            target.Curve);
+
+                    double angleDiff =
+                        GetAiParallelAngleDifference(
+                            sourceAngle,
+                            targetAngle);
+
+                    if (angleDiff >
+                        3.0 * Math.PI / 180.0)
+                    {
+                        continue;
+                    }
+
+                    Point3d targetMid =
+                        GetAiCurveMidPoint(
+                            target.Curve);
+
+                    double dx =
+                        targetMid.X -
+                        sourceMid.X;
+
+                    double dy =
+                        targetMid.Y -
+                        sourceMid.Y;
+
+                    if (Math.Sqrt(
+                            dx * dx +
+                            dy * dy) <
+                        200.0)
+                    {
+                        continue;
+                    }
+
+                    int anchorMatches =
+                        CountAiTranslatedAnchorMatches(
+                            source.Curve,
+                            target.Curve,
+                            dx,
+                            dy,
+                            anchors);
+
+                    double lengthScore =
+                        1.0 -
+                        Math.Min(
+                            1.0,
+                            lengthDiff /
+                            Math.Max(
+                                lengthTolerance,
+                                1.0));
+
+                    double angleScore =
+                        1.0 -
+                        Math.Min(
+                            1.0,
+                            angleDiff /
+                            (3.0 *
+                             Math.PI /
+                             180.0));
+
+                    double sameLayerBonus =
+                        0.0;
+
+                    try
+                    {
+                        string sourceOriginalLayer =
+                            source.OriginalParent?.Layer ??
+                            "";
+
+                        string targetOriginalLayer =
+                            target.OriginalParent?.Layer ??
+                            "";
+
+                        if (!string.IsNullOrWhiteSpace(
+                                sourceOriginalLayer) &&
+                            string.Equals(
+                                sourceOriginalLayer,
+                                targetOriginalLayer,
+                                StringComparison.OrdinalIgnoreCase))
+                        {
+                            sameLayerBonus =
+                                0.08;
+                        }
+                    }
+                    catch
+                    {
+                    }
+
+                    double pairScore =
+                        0.53 * lengthScore +
+                        0.27 * angleScore +
+                        sameLayerBonus +
+                        Math.Min(
+                            0.22,
+                            anchorMatches * 0.075);
+
+                    proposals.Add(
+                        new AiRepeatedBranchProposal
+                        {
+                            Source =
+                                source,
+                            Target =
+                                target,
+                            Dx =
+                                dx,
+                            Dy =
+                                dy,
+                            PairScore =
+                                pairScore,
+                            AnchorMatches =
+                                anchorMatches,
+                            TranslationKey =
+                                GetAiTranslationKey(
+                                    dx,
+                                    dy,
+                                    40.0)
+                        });
+                }
+            }
+
+            if (proposals.Count == 0)
+                return 0;
+
+            Dictionary<SegmentData, List<AiRepeatedBranchProposal>> votesByTarget =
+                new Dictionary<
+                    SegmentData,
+                    List<AiRepeatedBranchProposal>>();
+
+            foreach (IGrouping<string, AiRepeatedBranchProposal> group
+                in proposals.GroupBy(
+                    p =>
+                        p.TranslationKey,
+                    StringComparer.OrdinalIgnoreCase))
+            {
+                List<AiRepeatedBranchProposal> list =
+                    group.ToList();
+
+                int uniqueSourceCount =
+                    list
+                        .Select(
+                            p =>
+                                p.Source)
+                        .Distinct()
+                        .Count();
+
+                int uniqueTargetCount =
+                    list
+                        .Select(
+                            p =>
+                                p.Target)
+                        .Distinct()
+                        .Count();
+
+                int bestAnchorMatches =
+                    list.Max(
+                        p =>
+                            p.AnchorMatches);
+
+                int totalAnchorMatches =
+                    list.Sum(
+                        p =>
+                            p.AnchorMatches);
+
+                double averagePairScore =
+                    list.Average(
+                        p =>
+                            p.PairScore);
+
+                bool geometryStrong =
+                    uniqueSourceCount >= 2 &&
+                    uniqueTargetCount >= 2 &&
+                    averagePairScore >= 0.72;
+
+                bool landmarkStrong =
+                    bestAnchorMatches >= 2 &&
+                    averagePairScore >= 0.72;
+
+                bool mixedStrong =
+                    uniqueTargetCount >= 2 &&
+                    totalAnchorMatches >= 1 &&
+                    averagePairScore >= 0.70;
+
+                if (!geometryStrong &&
+                    !landmarkStrong &&
+                    !mixedStrong)
+                {
+                    continue;
+                }
+
+                foreach (AiRepeatedBranchProposal proposal
+                    in list)
+                {
+                    if (proposal?.Target == null ||
+                        proposal.Source == null ||
+                        string.IsNullOrWhiteSpace(
+                            proposal.Source.Layer))
+                    {
+                        continue;
+                    }
+
+                    if (!votesByTarget.TryGetValue(
+                            proposal.Target,
+                            out List<AiRepeatedBranchProposal> targetVotes))
+                    {
+                        targetVotes =
+                            new List<AiRepeatedBranchProposal>();
+
+                        votesByTarget[
+                            proposal.Target] =
+                            targetVotes;
+                    }
+
+                    targetVotes.Add(
+                        proposal);
+                }
+            }
+
+            int inherited =
+                0;
+
+            foreach (
+                KeyValuePair<
+                    SegmentData,
+                    List<AiRepeatedBranchProposal>>
+                    pair
+                in votesByTarget)
+            {
+                SegmentData target =
+                    pair.Key;
+
+                if (target == null ||
+                    !string.IsNullOrWhiteSpace(
+                        target.Layer))
+                {
+                    continue;
+                }
+
+                var ranked =
+                    pair.Value
+                        .Where(
+                            p =>
+                                p?.Source != null &&
+                                !string.IsNullOrWhiteSpace(
+                                    p.Source.Layer))
+                        .GroupBy(
+                            p =>
+                                p.Source.Layer,
+                            StringComparer.OrdinalIgnoreCase)
+                        .Select(
+                            g =>
+                                new
+                                {
+                                    Layer =
+                                        g.Key,
+                                    Count =
+                                        g.Count(),
+                                    Best =
+                                        g.Max(
+                                            p =>
+                                                p.PairScore +
+                                                p.AnchorMatches * 0.04),
+                                    Anchor =
+                                        g.Max(
+                                            p =>
+                                                p.AnchorMatches),
+                                    Source =
+                                        g.OrderByDescending(
+                                            p =>
+                                                p.PairScore +
+                                                p.AnchorMatches * 0.04)
+                                         .First()
+                                         .Source
+                                })
+                        .OrderByDescending(
+                            x =>
+                                x.Count)
+                        .ThenByDescending(
+                            x =>
+                                x.Anchor)
+                        .ThenByDescending(
+                            x =>
+                                x.Best)
+                        .ToList();
+
+                if (ranked.Count == 0)
+                    continue;
+
+                var best =
+                    ranked[0];
+
+                if (ranked.Count > 1)
+                {
+                    var second =
+                        ranked[1];
+
+                    if (best.Count ==
+                            second.Count &&
+                        Math.Abs(
+                            best.Best -
+                            second.Best) <
+                        0.10)
+                    {
+                        continue;
+                    }
+                }
+
+                target.Layer =
+                    best.Layer;
+
+                target.Width =
+                    FixedDnPipeDisplayWidth;
+
+                target.LabelText =
+                    best.Source?.LabelText ??
+                    ExtractAiPipeSizeFromLayer(
+                        best.Layer);
+
+                target.AiInferenceSource =
+                    "REPEATED_BRANCH_TEMPLATE";
+
+                target.AiInferenceConfidence =
+                    Math.Min(
+                        0.95,
+                        0.88 +
+                        Math.Min(
+                            0.07,
+                            best.Count * 0.02 +
+                            best.Anchor * 0.015));
+
+                inherited++;
+            }
+
+            return inherited;
+        }
+
+        private string GetAiTranslationKey(
+            double dx,
+            double dy,
+            double quantum)
+        {
+            if (quantum <= 1.0)
+                quantum = 40.0;
+
+            long qx =
+                (long)Math.Round(
+                    dx /
+                    quantum);
+
+            long qy =
+                (long)Math.Round(
+                    dy /
+                    quantum);
+
+            return
+                qx.ToString(
+                    CultureInfo.InvariantCulture) +
+                "|" +
+                qy.ToString(
+                    CultureInfo.InvariantCulture);
+        }
+
+        private Point3d GetAiCurveMidPoint(
+            Curve curve)
+        {
+            if (curve == null)
+                return Point3d.Origin;
+
+            try
+            {
+                double length =
+                    GetAiPipeCurveLength(
+                        curve);
+
+                if (length > 1.0)
+                {
+                    Point3d p =
+                        curve.GetPointAtDist(
+                            length * 0.5);
+
+                    return
+                        new Point3d(
+                            p.X,
+                            p.Y,
+                            0.0);
+                }
+            }
+            catch
+            {
+            }
+
+            try
+            {
+                return
+                    new Point3d(
+                        (curve.StartPoint.X +
+                         curve.EndPoint.X) * 0.5,
+                        (curve.StartPoint.Y +
+                         curve.EndPoint.Y) * 0.5,
+                        0.0);
+            }
+            catch
+            {
+                return Point3d.Origin;
+            }
+        }
+
+        private double GetAiCurveAxisAngle(
+            Curve curve)
+        {
+            if (curve == null)
+                return 0.0;
+
+            try
+            {
+                Point3d a =
+                    curve.StartPoint;
+
+                Point3d b =
+                    curve.EndPoint;
+
+                Vector3d v =
+                    new Vector3d(
+                        b.X - a.X,
+                        b.Y - a.Y,
+                        0.0);
+
+                if (v.Length >
+                    1e-6)
+                {
+                    double angle =
+                        Math.Atan2(
+                            v.Y,
+                            v.X);
+
+                    while (angle <
+                        0.0)
+                    {
+                        angle +=
+                            Math.PI;
+                    }
+
+                    while (angle >=
+                        Math.PI)
+                    {
+                        angle -=
+                            Math.PI;
+                    }
+
+                    return angle;
+                }
+            }
+            catch
+            {
+            }
+
+            return 0.0;
+        }
+
+        private double GetAiParallelAngleDifference(
+            double a,
+            double b)
+        {
+            double diff =
+                Math.Abs(
+                    a -
+                    b);
+
+            diff =
+                diff %
+                Math.PI;
+
+            if (diff >
+                Math.PI / 2.0)
+            {
+                diff =
+                    Math.PI -
+                    diff;
+            }
+
+            return
+                Math.Abs(
+                    diff);
+        }
+
+        private int CountAiTranslatedAnchorMatches(
+            Curve source,
+            Curve target,
+            double dx,
+            double dy,
+            List<AiPipeContextAnchor> anchors)
+        {
+            if (source == null ||
+                target == null ||
+                anchors == null ||
+                anchors.Count == 0)
+            {
+                return 0;
+            }
+
+            double sourceLength =
+                GetAiPipeCurveLength(
+                    source);
+
+            double targetLength =
+                GetAiPipeCurveLength(
+                    target);
+
+            double corridor =
+                Math.Max(
+                    280.0,
+                    Math.Min(
+                        700.0,
+                        Math.Max(
+                            sourceLength,
+                            targetLength) *
+                        0.05));
+
+            List<AiPipeContextAnchor> sourceAnchors =
+                anchors
+                    .Where(
+                        a =>
+                            a != null &&
+                            GetSmartDistancePointToCurve(
+                                source,
+                                a.Point) <=
+                            Math.Max(
+                                corridor,
+                                a.MaxSpan * 0.75 +
+                                100.0))
+                    .ToList();
+
+            List<AiPipeContextAnchor> targetAnchors =
+                anchors
+                    .Where(
+                        a =>
+                            a != null &&
+                            GetSmartDistancePointToCurve(
+                                target,
+                                a.Point) <=
+                            Math.Max(
+                                corridor,
+                                a.MaxSpan * 0.75 +
+                                100.0))
+                    .ToList();
+
+            if (sourceAnchors.Count == 0 ||
+                targetAnchors.Count == 0)
+            {
+                return 0;
+            }
+
+            int matches =
+                0;
+
+            HashSet<AiPipeContextAnchor> usedTargets =
+                new HashSet<AiPipeContextAnchor>();
+
+            foreach (AiPipeContextAnchor sourceAnchor
+                in sourceAnchors)
+            {
+                Point3d translated =
+                    new Point3d(
+                        sourceAnchor.Point.X +
+                        dx,
+                        sourceAnchor.Point.Y +
+                        dy,
+                        0.0);
+
+                AiPipeContextAnchor best =
+                    targetAnchors
+                        .Where(
+                            t =>
+                                !usedTargets.Contains(
+                                    t) &&
+                                (string.IsNullOrWhiteSpace(
+                                     sourceAnchor.BlockKey) ||
+                                 string.IsNullOrWhiteSpace(
+                                     t.BlockKey) ||
+                                 string.Equals(
+                                     sourceAnchor.BlockKey,
+                                     t.BlockKey,
+                                     StringComparison.OrdinalIgnoreCase)))
+                        .OrderBy(
+                            t =>
+                                PlanDistance(
+                                    translated,
+                                    t.Point))
+                        .FirstOrDefault();
+
+                if (best == null)
+                    continue;
+
+                double tolerance =
+                    Math.Max(
+                        150.0,
+                        Math.Min(
+                            350.0,
+                            Math.Max(
+                                sourceAnchor.MaxSpan,
+                                best.MaxSpan) *
+                            0.65 +
+                            80.0));
+
+                if (PlanDistance(
+                        translated,
+                        best.Point) <=
+                    tolerance)
+                {
+                    matches++;
+                    usedTargets.Add(
+                        best);
+                }
+            }
+
+            return matches;
+        }
+
+        private List<AiPipeSegmentResult> BuildAiPipeResults(
+            List<SegmentData> segments,
+            HashSet<SegmentData> explicitText,
+            HashSet<SegmentData> explicitLayer)
+        {
+            List<AiPipeSegmentResult> result =
+                new List<AiPipeSegmentResult>();
+
+            if (segments == null)
+                return result;
+
+            Dictionary<Curve, HashSet<string>> explicitByParent =
+                segments
+                    .Where(
+                        s =>
+                            s != null &&
+                            s.HasExplicitSize &&
+                            s.OriginalParent != null &&
+                            !string.IsNullOrWhiteSpace(s.Layer))
+                    .GroupBy(s => s.OriginalParent)
+                    .ToDictionary(
+                        g => g.Key,
+                        g => new HashSet<string>(
+                            g.Select(s => s.Layer),
+                            StringComparer.OrdinalIgnoreCase));
+
+            foreach (SegmentData segment
+                in segments)
+            {
+                if (segment?.Curve == null ||
+                    string.IsNullOrWhiteSpace(segment.Layer))
+                {
+                    continue;
+                }
+
+                string size =
+                    ExtractAiPipeSizeFromLayer(
+                        segment.Layer);
+
+                if (string.IsNullOrWhiteSpace(size))
+                    continue;
+
+                double confidence;
+                string evidence;
+
+                if (explicitText != null &&
+                    explicitText.Contains(segment))
+                {
+                    confidence = 0.99;
+                    evidence = "TEXT song song";
+                }
+                else if (explicitLayer != null &&
+                         explicitLayer.Contains(segment))
+                {
+                    confidence = 0.95;
+                    evidence = "Layer gốc";
+                }
+                else if (string.Equals(
+                             segment.AiInferenceSource,
+                             "BRANCH_OBJECT_TEMPLATE",
+                             StringComparison.OrdinalIgnoreCase))
+                {
+                    confidence =
+                        segment.AiInferenceConfidence > 0.0
+                            ? segment.AiInferenceConfidence
+                            : 0.97;
+
+                    evidence =
+                        "Branch Object / mẫu có sẵn";
+                }
+                else if (string.Equals(
+                             segment.AiInferenceSource,
+                             "AUTO_TEMPLATE_BRANCH",
+                             StringComparison.OrdinalIgnoreCase))
+                {
+                    confidence =
+                        segment.AiInferenceConfidence > 0.0
+                            ? segment.AiInferenceConfidence
+                            : 0.96;
+
+                    evidence =
+                        "Auto Template / engine mẫu cũ";
+                }
+                else if (string.Equals(
+                             segment.AiInferenceSource,
+                             "REPEATED_BRANCH_TEMPLATE",
+                             StringComparison.OrdinalIgnoreCase))
+                {
+                    confidence =
+                        segment.AiInferenceConfidence > 0.0
+                            ? segment.AiInferenceConfidence
+                            : 0.93;
+
+                    evidence =
+                        "Nhánh giống nhau / Template fallback";
+                }
+                else
+                {
+                    bool sameParent =
+                        segment.OriginalParent != null &&
+                        explicitByParent.TryGetValue(
+                            segment.OriginalParent,
+                            out HashSet<string> parentSizes) &&
+                        parentSizes.Count == 1;
+
+                    if (sameParent)
+                    {
+                        confidence =
+                            segment.AiInferenceConfidence > 0.0
+                                ? segment.AiInferenceConfidence
+                                : 0.94;
+
+                        evidence =
+                            "Cùng LINE/POLYLINE";
+                    }
+                    else
+                    {
+                        confidence =
+                            segment.AiInferenceConfidence > 0.0
+                                ? segment.AiInferenceConfidence
+                                : 0.84;
+
+                        evidence =
+                            "Topology thẳng hàng";
+                    }
+                }
+
+                double length =
+                    GetAiPipeCurveLength(
+                        segment.Curve);
+
+                if (length <= 1.0)
+                    continue;
+
+                result.Add(
+                    new AiPipeSegmentResult
+                    {
+                        Segment = segment,
+                        Size = size,
+                        Length = length,
+                        Confidence = confidence,
+                        Evidence = evidence
+                    });
+            }
+
+            return result;
+        }
+
+        private List<SegmentData> FindAiPipeCheckSegments(
+            List<SegmentData> segments)
+        {
+            List<SegmentData> result =
+                new List<SegmentData>();
+
+            if (segments == null ||
+                segments.Count == 0)
+            {
+                return result;
+            }
+
+            List<AutomaticPipeNetworkNode> nodes =
+                BuildAutomaticPipeNetworkNodes(
+                    segments);
+
+            HashSet<SegmentData> added =
+                new HashSet<SegmentData>();
+
+            foreach (AutomaticPipeNetworkNode node
+                in nodes)
+            {
+                bool hasKnown =
+                    node.Ends.Any(
+                        e =>
+                            e?.Segment != null &&
+                            !string.IsNullOrWhiteSpace(
+                                e.Segment.Layer));
+
+                if (!hasKnown)
+                    continue;
+
+                foreach (SegmentData unknown
+                    in node.Ends
+                        .Select(e => e.Segment)
+                        .Where(
+                            s =>
+                                s != null &&
+                                string.IsNullOrWhiteSpace(s.Layer))
+                        .Distinct())
+                {
+                    if (added.Contains(unknown) ||
+                        unknown.Curve == null ||
+                        GetAiPipeCurveLength(
+                            unknown.Curve) <= 5.0)
+                    {
+                        continue;
+                    }
+
+                    added.Add(unknown);
+                    result.Add(unknown);
+                }
+            }
+
+            return result;
+        }
+
+        private bool TryParseAiPipeSizeText(
+            string raw,
+            out string size)
+        {
+            size = "";
+
+            if (string.IsNullOrWhiteSpace(raw))
+                return false;
+
+            string normalized =
+                NormalizeSmartDisplayName(raw)
+                    .ToUpperInvariant()
+                    .Replace("Ø", "D")
+                    .Replace("Φ", "D")
+                    .Replace(" ", "");
+
+            if (normalized.Contains("FFL") ||
+                normalized.Contains("LEVEL") ||
+                normalized.Contains("EL+"))
+            {
+                return false;
+            }
+
+            Match dn =
+                Regex.Match(
+                    normalized,
+                    @"DN(?<N>\d{1,4}(?:[.,]\d+)?)",
+                    RegexOptions.IgnoreCase);
+
+            if (dn.Success &&
+                double.TryParse(
+                    dn.Groups["N"].Value.Replace(',', '.'),
+                    NumberStyles.Float,
+                    CultureInfo.InvariantCulture,
+                    out double dnValue) &&
+                dnValue >= 10.0 &&
+                dnValue <= 1200.0)
+            {
+                size =
+                    "DN" +
+                    FormatSizeNumber(dnValue);
+
+                return true;
+            }
+
+            Match outside =
+                Regex.Match(
+                    normalized,
+                    @"(?:^|[^A-Z0-9])D(?<N>\d{1,4}(?:[.,]\d+)?)(?:$|[^0-9])",
+                    RegexOptions.IgnoreCase);
+
+            if (outside.Success &&
+                double.TryParse(
+                    outside.Groups["N"].Value.Replace(',', '.'),
+                    NumberStyles.Float,
+                    CultureInfo.InvariantCulture,
+                    out double outsideValue) &&
+                outsideValue >= 10.0 &&
+                outsideValue <= 1300.0 &&
+                TryConvertOutsideDiameterToNominal(
+                    outsideValue,
+                    out double nominal))
+            {
+                size =
+                    "DN" +
+                    FormatSizeNumber(nominal);
+
+                return true;
+            }
+
+            return false;
+        }
+
+        private static string NormalizeAiPipeSize(
+            string raw)
+        {
+            if (string.IsNullOrWhiteSpace(raw))
+                return "";
+
+            Match m =
+                Regex.Match(
+                    raw,
+                    @"DN\s*(?<N>\d{1,4}(?:[.,]\d+)?)",
+                    RegexOptions.IgnoreCase);
+
+            return m.Success
+                ? "DN" +
+                  m.Groups["N"].Value.Replace(',', '.')
+                : raw.Trim().ToUpperInvariant();
+        }
+
+        private static string GetAiPipeLayerName(
+            string size)
+        {
+            return
+                AiPipeLayerPrefix +
+                NormalizeAiPipeSize(size)
+                    .Replace(" ", "")
+                    .Replace(".", "_");
+        }
+
+        private static string ExtractAiPipeSizeFromLayer(
+            string layer)
+        {
+            if (string.IsNullOrWhiteSpace(layer) ||
+                !layer.StartsWith(
+                    AiPipeLayerPrefix,
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                return "";
+            }
+
+            string suffix =
+                layer.Substring(
+                    AiPipeLayerPrefix.Length)
+                    .Replace("_", ".");
+
+            Match m =
+                Regex.Match(
+                    suffix,
+                    @"DN\d{1,4}(?:\.\d+)?",
+                    RegexOptions.IgnoreCase);
+
+            return m.Success
+                ? m.Value.ToUpperInvariant()
+                : "";
+        }
+
+        private static bool IsAiPipeOutputLayer(
+            string layer)
+        {
+            if (string.IsNullOrWhiteSpace(layer))
+                return false;
+
+            return
+                layer.StartsWith(
+                    AiPipeLayerPrefix,
+                    StringComparison.OrdinalIgnoreCase) ||
+                layer.Equals(
+                    AiPipeCheckLayer,
+                    StringComparison.OrdinalIgnoreCase) ||
+                layer.Equals(
+                    AiPipeInfoLayer,
+                    StringComparison.OrdinalIgnoreCase);
+        }
+
+        private void DeleteOldAiPipeOutput(
+            Transaction tr,
+            BlockTableRecord space)
+        {
+            if (tr == null ||
+                space == null)
+            {
+                return;
+            }
+
+            List<ObjectId> ids =
+                new List<ObjectId>();
+
+            foreach (ObjectId id in space)
+            {
+                Entity ent =
+                    tr.GetObject(
+                        id,
+                        OpenMode.ForRead,
+                        false) as Entity;
+
+                if (ent != null &&
+                    !ent.IsErased &&
+                    IsAiPipeOutputLayer(ent.Layer))
+                {
+                    ids.Add(id);
+                }
+            }
+
+            foreach (ObjectId id in ids)
+            {
+                Entity ent =
+                    tr.GetObject(
+                        id,
+                        OpenMode.ForWrite,
+                        false) as Entity;
+
+                if (ent != null &&
+                    !ent.IsErased)
+                {
+                    ent.Erase();
+                }
+            }
+        }
+
+        private void EnsureAiPipeLayer(
+            Transaction tr,
+            Database db,
+            string layerName,
+            short aci)
+        {
+            LayerTable lt =
+                (LayerTable)tr.GetObject(
+                    db.LayerTableId,
+                    OpenMode.ForRead);
+
+            LayerTableRecord ltr = null;
+
+            if (!lt.Has(layerName))
+            {
+                lt.UpgradeOpen();
+
+                ltr =
+                    new LayerTableRecord
+                    {
+                        Name = layerName
+                    };
+
+                lt.Add(ltr);
+                tr.AddNewlyCreatedDBObject(ltr, true);
+            }
+            else
+            {
+                ltr =
+                    tr.GetObject(
+                        lt[layerName],
+                        OpenMode.ForWrite,
+                        false) as LayerTableRecord;
+            }
+
+            if (ltr != null)
+            {
+                ltr.Color =
+                    Autodesk.AutoCAD.Colors.Color.FromColorIndex(
+                        ColorMethod.ByAci,
+                        aci);
+            }
+        }
+
+        private Entity CreateAiPipeOverlay(
+            Curve source,
+            string layerName,
+            double width)
+        {
+            if (source == null)
+                return null;
+
+            try
+            {
+                Entity clone =
+                    source.Clone() as Entity;
+
+                if (clone == null)
+                    return null;
+
+                clone.Layer = layerName;
+                clone.Color =
+                    Autodesk.AutoCAD.Colors.Color.FromColorIndex(
+                        ColorMethod.ByLayer,
+                        256);
+
+                clone.LineWeight =
+                    Autodesk.AutoCAD.DatabaseServices.LineWeight.ByLayer;
+
+                if (clone is Polyline pl)
+                {
+                    pl.ConstantWidth = width;
+                }
+
+                return clone;
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private DBText CreateAiPipeLabel(
+            Database db,
+            Curve curve,
+            string size,
+            string layerName)
+        {
+            try
+            {
+                double length =
+                    GetAiPipeCurveLength(curve);
+
+                if (length <= 1.0)
+                    return null;
+
+                Point3d middle =
+                    curve.GetPointAtDist(
+                        length * 0.5);
+
+                double parameter =
+                    curve.GetParameterAtPoint(
+                        curve.GetClosestPointTo(
+                            middle,
+                            false));
+
+                Vector3d direction =
+                    curve.GetFirstDerivative(
+                        parameter);
+
+                direction =
+                    new Vector3d(
+                        direction.X,
+                        direction.Y,
+                        0.0);
+
+                if (direction.Length <= 1e-6)
+                    return null;
+
+                direction = direction.GetNormal();
+
+                double rotation =
+                    direction.AngleOnPlane(
+                        new Plane());
+
+                if (rotation > Math.PI / 2.0 &&
+                    rotation <= 3.0 * Math.PI / 2.0)
+                {
+                    rotation -= Math.PI;
+                    direction = direction.Negate();
+                }
+
+                Vector3d normal =
+                    direction.RotateBy(
+                        Math.PI / 2.0,
+                        Vector3d.ZAxis);
+
+                DBText text =
+                    new DBText();
+
+                text.SetDatabaseDefaults(db);
+                text.TextStyleId = db.Textstyle;
+                text.TextString = size;
+                text.Height = 95.0;
+                text.Layer = layerName;
+                text.ColorIndex = 256;
+                text.Justify =
+                    AttachmentPoint.BottomCenter;
+                text.AlignmentPoint =
+                    middle + normal * 90.0;
+                text.Rotation = rotation;
+
+                return text;
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private double GetAiPipeCurveLength(
+            Curve curve)
+        {
+            if (curve == null)
+                return 0.0;
+
+            try
+            {
+                return
+                    curve.GetDistanceAtParameter(
+                        curve.EndParam);
+            }
+            catch
+            {
+                try
+                {
+                    return
+                        curve.StartPoint.DistanceTo(
+                            curve.EndPoint);
+                }
+                catch
+                {
+                    return 0.0;
+                }
+            }
+        }
+
+        private bool ShowAiPipeTakeoffSummaryDialog(
+            AiPipeTakeoffRunResult run)
+        {
+            using (System.Windows.Forms.Form form =
+                new System.Windows.Forms.Form())
+            using (System.Windows.Forms.Label title =
+                new System.Windows.Forms.Label())
+            using (System.Windows.Forms.Label summary =
+                new System.Windows.Forms.Label())
+            using (System.Windows.Forms.DataGridView grid =
+                new System.Windows.Forms.DataGridView())
+            using (System.Windows.Forms.Button tableButton =
+                new System.Windows.Forms.Button())
+            using (System.Windows.Forms.Button closeButton =
+                new System.Windows.Forms.Button())
+            {
+                form.Text =
+                    "AI BÓC TÁCH ĐƯỜNG ỐNG";
+
+                form.StartPosition =
+                    System.Windows.Forms.FormStartPosition.CenterScreen;
+
+                form.Width = 900;
+                form.Height = 650;
+                form.BackColor = System.Drawing.Color.White;
+
+                title.Left = 16;
+                title.Top = 12;
+                title.Width = 840;
+                title.Height = 28;
+                title.Text =
+                    "KẾT QUẢ BÓC TÁCH TỰ ĐỘNG - ĐƯỜNG ỐNG";
+
+                title.Font =
+                    new System.Drawing.Font(
+                        "Segoe UI",
+                        12.0f,
+                        System.Drawing.FontStyle.Bold);
+
+                summary.Left = 16;
+                summary.Top = 45;
+                summary.Width = 840;
+                summary.Height = 92;
+
+                summary.Text =
+                    "Curve quét: " +
+                    run.RawCurveCount +
+                    "   |   Text size: " +
+                    run.SizeTextCount +
+                    "   |   Đoạn AI: " +
+                    run.OutputSegmentCount +
+                    "   |   CHECK: " +
+                    run.CheckSegmentCount +
+                    "   |   NHÁNH MATCH: " +
+                    run.BranchObjectMatchedCount +
+                    "   |   ĐOẠN THEO MẪU: " +
+                    run.BranchObjectInheritedCount +
+                    "\r\nMẪU CŨ FALLBACK: " +
+                    run.AutoTemplateBranchInheritedCount +
+                    "   |   FALLBACK NHÁNH: " +
+                    run.RepeatedBranchInheritedCount +
+                    "\r\nĐã loại ĐÁM MÂY/REVCLOUD: " +
+                    run.RejectedCloudCount +
+                    "   |   Curve không giống ống: " +
+                    run.RejectedNonPipeCount +
+                    "   |   Text mơ hồ bỏ qua: " +
+                    run.AmbiguousTextCount +
+                    "\r\nTổng chiều dài: " +
+                    run.TotalLengthMeters.ToString(
+                        "0.00",
+                        CultureInfo.InvariantCulture) +
+                    " m   |   Tin cậy TB: " +
+                    (run.AverageConfidence * 100.0).ToString(
+                        "0.0",
+                        CultureInfo.InvariantCulture) +
+                    "%\r\nTDL_AI_PIPE_CHECK không được tính vào khối lượng.";
+
+                grid.Left = 16;
+                grid.Top = 145;
+                grid.Width = 850;
+                grid.Height = 385;
+                grid.AllowUserToAddRows = false;
+                grid.AllowUserToDeleteRows = false;
+                grid.ReadOnly = true;
+                grid.RowHeadersVisible = false;
+                grid.BackgroundColor = System.Drawing.Color.White;
+                grid.EnableHeadersVisualStyles = false;
+
+                grid.ColumnHeadersDefaultCellStyle.BackColor =
+                    System.Drawing.Color.FromArgb(
+                        236,
+                        242,
+                        248);
+
+                grid.Font =
+                    new System.Drawing.Font(
+                        "Segoe UI",
+                        9.5f);
+
+                grid.Columns.Add("SIZE", "SIZE");
+                grid.Columns["SIZE"].Width = 110;
+
+                grid.Columns.Add("LENGTH", "CHIỀU DÀI (m)");
+                grid.Columns["LENGTH"].Width = 145;
+
+                grid.Columns.Add("SEGMENT", "SỐ ĐOẠN");
+                grid.Columns["SEGMENT"].Width = 105;
+
+                grid.Columns.Add("EXPLICIT", "TRỰC TIẾP");
+                grid.Columns["EXPLICIT"].Width = 110;
+
+                grid.Columns.Add("INHERITED", "KẾ THỪA");
+                grid.Columns["INHERITED"].Width = 105;
+
+                grid.Columns.Add("CONFIDENCE", "TIN CẬY");
+                grid.Columns["CONFIDENCE"].AutoSizeMode =
+                    System.Windows.Forms.DataGridViewAutoSizeColumnMode.Fill;
+
+                foreach (AiPipeTakeoffStatRow row
+                    in run.Stats)
+                {
+                    grid.Rows.Add(
+                        row.Size,
+                        row.LengthMeters.ToString(
+                            "0.00",
+                            CultureInfo.InvariantCulture),
+                        row.SegmentCount,
+                        row.ExplicitCount,
+                        row.InheritedCount,
+                        (row.AverageConfidence * 100.0).ToString(
+                            "0.0",
+                            CultureInfo.InvariantCulture) +
+                        "%");
+                }
+
+                tableButton.Text =
+                    "ĐẶT BẢNG THỐNG KÊ";
+
+                tableButton.Width = 190;
+                tableButton.Height = 40;
+                tableButton.Left = 535;
+                tableButton.Top = 548;
+                tableButton.DialogResult =
+                    System.Windows.Forms.DialogResult.OK;
+
+                tableButton.BackColor =
+                    System.Drawing.Color.FromArgb(
+                        37,
+                        99,
+                        235);
+
+                tableButton.ForeColor =
+                    System.Drawing.Color.White;
+
+                tableButton.FlatStyle =
+                    System.Windows.Forms.FlatStyle.Flat;
+
+                closeButton.Text = "ĐÓNG";
+                closeButton.Width = 120;
+                closeButton.Height = 40;
+                closeButton.Left = 740;
+                closeButton.Top = 548;
+                closeButton.DialogResult =
+                    System.Windows.Forms.DialogResult.Cancel;
+
+                form.Controls.Add(title);
+                form.Controls.Add(summary);
+                form.Controls.Add(grid);
+                form.Controls.Add(tableButton);
+                form.Controls.Add(closeButton);
+
+                form.AcceptButton = tableButton;
+                form.CancelButton = closeButton;
+
+                return
+                    form.ShowDialog() ==
+                    System.Windows.Forms.DialogResult.OK;
+            }
+        }
+
+        private void OutputAiPipeTakeoffTable(
+            Document doc,
+            List<AiPipeTakeoffStatRow> rows)
+        {
+            if (doc == null ||
+                rows == null ||
+                rows.Count == 0)
+            {
+                return;
+            }
+
+            Editor ed = doc.Editor;
+            Database db = doc.Database;
+
+            PromptPointResult ppr =
+                ed.GetPoint(
+                    "\nChọn vị trí đặt BẢNG AI THỐNG KÊ ĐƯỜNG ỐNG: ");
+
+            if (ppr.Status != PromptStatus.OK)
+                return;
+
+            using (doc.LockDocument())
+            using (Transaction tr =
+                db.TransactionManager.StartTransaction())
+            {
+                BlockTableRecord space =
+                    (BlockTableRecord)tr.GetObject(
+                        db.CurrentSpaceId,
+                        OpenMode.ForWrite);
+
+                Table table = new Table();
+                table.SetDatabaseDefaults(db);
+                table.TableStyle = db.Tablestyle;
+                table.SetSize(rows.Count + 2, 5);
+                table.Position = ppr.Value;
+
+                double sf = 9.0;
+
+                for (int r = 0;
+                    r < table.Rows.Count;
+                    r++)
+                {
+                    table.Rows[r].Height =
+                        (r == 0 ? 400.0 : 300.0) * sf;
+
+                    for (int c = 0;
+                        c < 5;
+                        c++)
+                    {
+                        table.Cells[r, c].TextStyleId =
+                            db.Textstyle;
+
+                        table.Cells[r, c].TextHeight =
+                            125.0 * sf;
+                    }
+                }
+
+                table.Columns[0].Width = 750.0 * sf;
+                table.Columns[1].Width = 1500.0 * sf;
+                table.Columns[2].Width = 1900.0 * sf;
+                table.Columns[3].Width = 1500.0 * sf;
+                table.Columns[4].Width = 1400.0 * sf;
+
+                try
+                {
+                    table.MergeCells(
+                        CellRange.Create(
+                            table,
+                            0,
+                            0,
+                            0,
+                            4));
+                }
+                catch
+                {
+                }
+
+                table.Cells[0, 0].TextString =
+                    "AI - BẢNG THỐNG KÊ ĐƯỜNG ỐNG";
+
+                table.Cells[0, 0].Alignment =
+                    CellAlignment.MiddleCenter;
+
+                string[] headers =
+                    new string[]
+                    {
+                        "STT",
+                        "SIZE",
+                        "CHIỀU DÀI (m)",
+                        "SỐ ĐOẠN",
+                        "TIN CẬY"
+                    };
+
+                for (int c = 0;
+                    c < headers.Length;
+                    c++)
+                {
+                    table.Cells[1, c].TextString =
+                        headers[c];
+
+                    table.Cells[1, c].Alignment =
+                        CellAlignment.MiddleCenter;
+                }
+
+                for (int i = 0;
+                    i < rows.Count;
+                    i++)
+                {
+                    AiPipeTakeoffStatRow row = rows[i];
+                    int r = i + 2;
+
+                    table.Cells[r, 0].TextString =
+                        (i + 1).ToString();
+
+                    table.Cells[r, 1].TextString =
+                        row.Size;
+
+                    table.Cells[r, 2].TextString =
+                        row.LengthMeters.ToString(
+                            "0.00",
+                            CultureInfo.InvariantCulture);
+
+                    table.Cells[r, 3].TextString =
+                        row.SegmentCount.ToString();
+
+                    table.Cells[r, 4].TextString =
+                        (row.AverageConfidence * 100.0).ToString(
+                            "0.0",
+                            CultureInfo.InvariantCulture) +
+                        "%";
+
+                    for (int c = 0;
+                        c < 5;
+                        c++)
+                    {
+                        table.Cells[r, c].Alignment =
+                            CellAlignment.MiddleCenter;
+                    }
+                }
+
+                space.AppendEntity(table);
+                tr.AddNewlyCreatedDBObject(table, true);
+                table.GenerateLayout();
+                tr.Commit();
+            }
+        }
+
+
     }
 
 

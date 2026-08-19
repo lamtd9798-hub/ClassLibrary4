@@ -1815,11 +1815,91 @@
                 </TabItem>
 
                 <TabItem Header="8. AI">
-                    <Grid>
-                        <TextBlock Text="Chức năng AI sẽ cập nhật sau..."
-                                   HorizontalAlignment="Center" VerticalAlignment="Center"
-                                   Foreground="Gray" FontStyle="Italic"/>
-                    </Grid>
+                    <ScrollViewer VerticalScrollBarVisibility="Auto"
+                                  HorizontalScrollBarVisibility="Disabled">
+                        <StackPanel Margin="10">
+
+                            <Border Background="#FFF4F7FB"
+                                    BorderBrush="#FFD7E0EA"
+                                    BorderThickness="1"
+                                    CornerRadius="6"
+                                    Padding="10"
+                                    Margin="0,0,0,10">
+                                <StackPanel>
+                                    <TextBlock Text="AI BÓC TÁCH MEP"
+                                               FontSize="14"
+                                               FontWeight="Bold"
+                                               Foreground="#FF223A5E"
+                                               HorizontalAlignment="Center"/>
+                                    <TextBlock Text="Geometry + Topology + Pipe-Device Fusion + Local Learning Memory"
+                                               Margin="0,5,0,0"
+                                               FontSize="10.5"
+                                               TextWrapping="Wrap"
+                                               Foreground="#FF5A6673"
+                                               TextAlignment="Center"/>
+                                </StackPanel>
+                            </Border>
+
+                            <Button x:Name="BtnAiAutoTakeoff"
+                                    Content="BÓC TÁCH TỰ ĐỘNG"
+                                    Height="46"
+                                    FontSize="14"
+                                    FontWeight="Bold"
+                                    Background="#FF6A1B9A"
+                                    Foreground="White"
+                                    Cursor="Hand"
+                                    Click="BtnAiAutoTakeoff_Click">
+                                <Button.ToolTip>
+                                    <ToolTip>
+                                        <TextBlock MaxWidth="310"
+                                                   TextWrapping="Wrap"
+                                                   Text="V3: Bước 1 dựng mô hình ống AI. Bước 2 dùng Pipe-Device Fusion: ưu tiên TDL_AI_PIPE_DN..., tâm hình học block thay vì chỉ base point, bỏ xung đột DN giả và suy DN cho VAN / THIẾT BỊ chính xác hơn."/>
+                                    </ToolTip>
+                                </Button.ToolTip>
+                            </Button>
+
+                            <Border Margin="0,10,0,0"
+                                    Padding="9"
+                                    Background="#FFF0FDF4"
+                                    BorderBrush="#FFB7E4C7"
+                                    BorderThickness="1"
+                                    CornerRadius="5">
+                                <StackPanel>
+                                    <TextBlock x:Name="TxtAiLearningStatus"
+                                               Text="AI Learning: LOCAL  •  Tự học đang bật"
+                                               FontSize="10.5"
+                                               FontWeight="Bold"
+                                               Foreground="#FF166534"
+                                               TextAlignment="Center"
+                                               TextWrapping="Wrap"/>
+                                    <Button x:Name="BtnAiLearningMemory"
+                                            Content="BỘ NHỚ AI"
+                                            Height="30"
+                                            Margin="0,7,0,0"
+                                            FontSize="10.5"
+                                            FontWeight="SemiBold"
+                                            Background="#FFEAF7EE"
+                                            Foreground="#FF166534"
+                                            BorderBrush="#FF86C99A"
+                                            Cursor="Hand"
+                                            Click="BtnAiLearningMemory_Click"/>
+                                </StackPanel>
+                            </Border>
+
+                            <Border Margin="0,10,0,0"
+                                    Padding="9"
+                                    Background="#FFFFFBEB"
+                                    BorderBrush="#FFF3D58B"
+                                    BorderThickness="1"
+                                    CornerRadius="5">
+                                <TextBlock FontSize="10.5"
+                                           TextWrapping="Wrap"
+                                           Foreground="#FF664D10"
+                                           Text="Bản V4: AI Learning LOCAL tự học từ Legend đã review, tên/THEO DN bạn sửa và các ứng viên bạn BỎ QUA. Positive Memory giúp nhận lại ký hiệu đã sửa; Negative Memory chặn lỗi lặp lại. Dữ liệu chỉ là fingerprint/rule, không lưu DWG."/>
+                            </Border>
+
+                        </StackPanel>
+                    </ScrollViewer>
                 </TabItem>
             </TabControl>
         </Grid>
