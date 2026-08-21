@@ -306,6 +306,12 @@ namespace ClassLibrary4
 
             // STEP21: chỉ kiểm tra trạng thái. Không bắt buộc phải có model ONNX.
             UpdateOnnxStatusUi();
+
+            // STEP21C: chỉ đọc local cloud-state, không gọi Internet lúc mở Palette.
+            UpdateAiCloudStatusUi();
+
+            // STEP21D: Dataset cũng chỉ đọc local summary khi mở Palette.
+            UpdateAiDatasetStatusUi();
         }
 
         private WpfComboBox TimComboBox(string name)
@@ -41431,6 +41437,25 @@ namespace ClassLibrary4
         private const double OnnxDeviceMinConfidence = 0.80;
         private const double OnnxDeviceMinMargin = 0.12;
 
+        // ============================================================
+        // STEP21C - AI LEARNING CLOUD
+        // Local-first: Cloud lỗi/mất mạng không làm gián đoạn AutoCAD.
+        // Consensus mặc định: >= 3 voter độc lập + winner rõ mới tự áp dụng.
+        // ============================================================
+        private AiCloudSyncClient _aiCloudSyncClient = null;
+        private bool _aiCloudSyncBusy = false;
+        private const int AiCloudMinConsensusVotes = 3;
+
+        // ============================================================
+        // STEP21D - CLOUD DATASET
+        // Mỗi correction có preview sẽ tự sinh sample 224x224 + SHA256.
+        // Local-first: sample nằm local nếu chưa có mạng.
+        // ============================================================
+        private AiDatasetManager _aiDatasetManager = null;
+        private bool _aiDatasetSyncBusy = false;
+        private AiDatasetCloudSummary _lastAiDatasetCloudSummary =
+            new AiDatasetCloudSummary();
+
         private string SmartSymbolLibraryPath
         {
             get
@@ -41920,7 +41945,24 @@ namespace ClassLibrary4
             SaveAiLearningMemory(
                 memory);
 
+            // STEP21C:
+            // Correction local được queue để sync. Dữ liệu vừa kéo từ Cloud
+            // không được gửi ngược lên như một "phiếu" mới của máy này.
+            if (!string.Equals(
+                    source,
+                    "CLOUD_SYNC",
+                    StringComparison.OrdinalIgnoreCase) &&
+                !string.Equals(
+                    source,
+                    "CLOUD_APPROVED",
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                EnqueueAiCloudVote(
+                    existing);
+            }
+
             UpdateAiLearningStatusUi();
+            UpdateAiCloudStatusUi();
         }
 
         private void LearnAiFromLegendRows(
@@ -42018,6 +42060,12 @@ namespace ClassLibrary4
                 "AUDIT_IGNORE",
                 true);
 
+            CaptureAiDatasetFromAuditRow(
+                row,
+                "NEGATIVE",
+                "AUDIT_IGNORE",
+                "");
+
             row.NegativeLearned =
                 true;
         }
@@ -42059,6 +42107,22 @@ namespace ClassLibrary4
                     continue;
                 }
 
+                string previousLabelForHardNegative =
+                    row.UserEdited &&
+                    !string.IsNullOrWhiteSpace(
+                        row.OriginalName) &&
+                    !string.Equals(
+                        row.OriginalName,
+                        row.Name,
+                        StringComparison.OrdinalIgnoreCase)
+                        ? row.OriginalName
+                        : "";
+
+                string auditDatasetSource =
+                    row.UserEdited
+                        ? "AUDIT_USER_EDIT"
+                        : "AUDIT_CONFIRM_NEW";
+
                 UpsertAiLearningMemory(
                     row.MatchMode,
                     row.BlockKey,
@@ -42066,10 +42130,14 @@ namespace ClassLibrary4
                     row.Name,
                     row.FollowDn,
                     "POSITIVE",
-                    row.UserEdited
-                        ? "AUDIT_USER_EDIT"
-                        : "AUDIT_CONFIRM_NEW",
+                    auditDatasetSource,
                     true);
+
+                CaptureAiDatasetFromAuditRow(
+                    row,
+                    "POSITIVE",
+                    auditDatasetSource,
+                    previousLabelForHardNegative);
 
                 row.UserEdited =
                     false;
@@ -42290,6 +42358,1606 @@ namespace ClassLibrary4
             catch
             {
             }
+        }
+
+        private AiDatasetManager GetAiDatasetManager()
+        {
+            if (_aiDatasetManager == null)
+            {
+                _aiDatasetManager =
+                    new AiDatasetManager();
+            }
+
+            return
+                _aiDatasetManager;
+        }
+
+        private void CaptureAiDatasetFromLegendRow(
+            SmartLegendAutoRow row,
+            string decision,
+            string source,
+            string hardNegativeLabel)
+        {
+            if (row == null ||
+                row.Preview == null)
+            {
+                return;
+            }
+
+            try
+            {
+                string signature =
+                    GetAiLearningSignature(
+                        row.MatchMode,
+                        row.BlockKey,
+                        row.GeometryFingerprint);
+
+                GetAiDatasetManager()
+                    .CaptureSample(
+                        row.Preview,
+                        signature,
+                        row.MatchMode,
+                        row.BlockKey,
+                        row.GeometryFingerprint,
+                        row.DisplayName,
+                        row.FollowDn,
+                        decision,
+                        source,
+                        hardNegativeLabel);
+
+                UpdateAiDatasetStatusUi();
+            }
+            catch
+            {
+                // Dataset không được làm gián đoạn workflow chính.
+            }
+        }
+
+        private void CaptureAiDatasetFromAuditRow(
+            SmartAuditRow row,
+            string decision,
+            string source,
+            string hardNegativeLabel)
+        {
+            if (row == null ||
+                row.Preview == null)
+            {
+                return;
+            }
+
+            try
+            {
+                string signature =
+                    GetAiLearningSignature(
+                        row.MatchMode,
+                        row.BlockKey,
+                        row.GeometryFingerprint);
+
+                GetAiDatasetManager()
+                    .CaptureSample(
+                        row.Preview,
+                        signature,
+                        row.MatchMode,
+                        row.BlockKey,
+                        row.GeometryFingerprint,
+                        row.Name,
+                        row.FollowDn,
+                        decision,
+                        source,
+                        hardNegativeLabel);
+
+                UpdateAiDatasetStatusUi();
+            }
+            catch
+            {
+            }
+        }
+
+        private void UpdateAiDatasetStatusUi()
+        {
+            try
+            {
+                if (TxtAiDatasetStatus == null)
+                    return;
+
+                AiDatasetLocalSummary local =
+                    GetAiDatasetManager()
+                        .GetLocalSummary();
+
+                AiDatasetCloudSummary cloud =
+                    _lastAiDatasetCloudSummary ??
+                    new AiDatasetCloudSummary();
+
+                TxtAiDatasetStatus.Text =
+                    "AI DATASET: LOCAL " +
+                    local.Total +
+                    " • CHỜ " +
+                    local.Pending +
+                    " • " +
+                    local.ClassCount +
+                    " loại" +
+                    "\nCLOUD " +
+                    cloud.TotalSamples +
+                    " • APPROVED " +
+                    cloud.Approved +
+                    " • PENDING " +
+                    cloud.Pending +
+                    " • CONFLICT " +
+                    cloud.Conflict;
+
+                TxtAiDatasetStatus.Foreground =
+                    new System.Windows.Media.SolidColorBrush(
+                        System.Windows.Media.Color.FromRgb(
+                            91,
+                            33,
+                            182));
+            }
+            catch
+            {
+            }
+        }
+
+        private async void BtnAiDatasetSync_Click(
+            object sender,
+            RoutedEventArgs e)
+        {
+            await SyncAiDatasetOnlyAsync(
+                true);
+        }
+
+        private async System.Threading.Tasks.Task<AiDatasetSyncResult> SyncAiDatasetOnlyAsync(
+            bool showMessage)
+        {
+            if (_aiDatasetSyncBusy)
+            {
+                return
+                    new AiDatasetSyncResult
+                    {
+                        Success =
+                            false,
+                        Message =
+                            "Dataset đang đồng bộ."
+                    };
+            }
+
+            AiCloudConfig config =
+                GetAiCloudClient()
+                    .LoadConfig();
+
+            if (!config.IsConfigured)
+            {
+                if (showMessage)
+                {
+                    MessageBox.Show(
+                        "AI Cloud chưa được cấu hình.\n\n" +
+                        "Bấm CẤU HÌNH CLOUD trước.",
+                        "AI DATASET");
+                }
+
+                return
+                    new AiDatasetSyncResult
+                    {
+                        Success =
+                            false,
+                        Message =
+                            "AI Cloud chưa cấu hình."
+                    };
+            }
+
+            _aiDatasetSyncBusy =
+                true;
+
+            try
+            {
+                if (BtnAiDatasetSync != null)
+                {
+                    BtnAiDatasetSync.IsEnabled =
+                        false;
+
+                    BtnAiDatasetSync.Content =
+                        "ĐANG SYNC...";
+                }
+
+                AiDatasetSyncResult result =
+                    await GetAiDatasetManager()
+                        .SyncPendingAsync(
+                            config);
+
+                _lastAiDatasetCloudSummary =
+                    result.CloudSummary ??
+                    new AiDatasetCloudSummary();
+
+                UpdateAiDatasetStatusUi();
+
+                if (showMessage)
+                {
+                    MessageBox.Show(
+                        "ĐỒNG BỘ DATASET\n\n" +
+                        "↑ Upload mới: " +
+                        result.Uploaded +
+                        "\n" +
+                        "＝ Trùng hash: " +
+                        result.Duplicate +
+                        "\n" +
+                        "✕ Lỗi: " +
+                        result.Failed +
+                        "\n" +
+                        "… Còn chờ: " +
+                        result.PendingAfterSync +
+                        "\n\n" +
+                        "Cloud total: " +
+                        _lastAiDatasetCloudSummary.TotalSamples +
+                        "\nApproved: " +
+                        _lastAiDatasetCloudSummary.Approved +
+                        "\nPending: " +
+                        _lastAiDatasetCloudSummary.Pending +
+                        "\nConflict: " +
+                        _lastAiDatasetCloudSummary.Conflict +
+                        (result.Success
+                            ? ""
+                            : "\n\n" +
+                              result.Message),
+                        "AI DATASET");
+                }
+
+                return
+                    result;
+            }
+            catch (System.Exception ex)
+            {
+                if (showMessage)
+                {
+                    MessageBox.Show(
+                        "Lỗi Dataset Cloud:\n" +
+                        ex.Message +
+                        "\n\nLocal Dataset vẫn được giữ nguyên.",
+                        "AI DATASET");
+                }
+
+                return
+                    new AiDatasetSyncResult
+                    {
+                        Success =
+                            false,
+                        Message =
+                            ex.Message
+                    };
+            }
+            finally
+            {
+                _aiDatasetSyncBusy =
+                    false;
+
+                if (BtnAiDatasetSync != null)
+                {
+                    BtnAiDatasetSync.IsEnabled =
+                        true;
+
+                    BtnAiDatasetSync.Content =
+                        "ĐỒNG BỘ DATASET";
+                }
+
+                UpdateAiDatasetStatusUi();
+            }
+        }
+
+        private void BtnAiDatasetManage_Click(
+            object sender,
+            RoutedEventArgs e)
+        {
+            ShowAiDatasetManagerDialog();
+        }
+
+        private void ShowAiDatasetManagerDialog()
+        {
+            AiDatasetManager manager =
+                GetAiDatasetManager();
+
+            List<AiDatasetSample> samples =
+                manager
+                    .LoadSamples()
+                    .OrderByDescending(
+                        x =>
+                            x?.UpdatedUtc)
+                    .ToList();
+
+            using (System.Windows.Forms.Form form =
+                new System.Windows.Forms.Form())
+            using (System.Windows.Forms.DataGridView grid =
+                new System.Windows.Forms.DataGridView())
+            using (System.Windows.Forms.Button deleteButton =
+                new System.Windows.Forms.Button())
+            using (System.Windows.Forms.Button syncButton =
+                new System.Windows.Forms.Button())
+            using (System.Windows.Forms.Button closeButton =
+                new System.Windows.Forms.Button())
+            using (System.Windows.Forms.Label summaryLabel =
+                new System.Windows.Forms.Label())
+            {
+                List<System.Drawing.Bitmap> thumbnails =
+                    new List<System.Drawing.Bitmap>();
+
+                try
+                {
+                    form.Text =
+                        "AI DATASET - LOCAL TRAINING SAMPLES";
+
+                    form.StartPosition =
+                        System.Windows.Forms.FormStartPosition.CenterScreen;
+
+                    form.Width =
+                        1280;
+
+                    form.Height =
+                        760;
+
+                    form.MinimizeBox =
+                        false;
+
+                    form.BackColor =
+                        System.Drawing.Color.White;
+
+                    AiDatasetLocalSummary summary =
+                        manager.GetLocalSummary();
+
+                    summaryLabel.Left =
+                        16;
+
+                    summaryLabel.Top =
+                        14;
+
+                    summaryLabel.Width =
+                        1200;
+
+                    summaryLabel.Height =
+                        30;
+
+                    summaryLabel.Text =
+                        "LOCAL: " +
+                        summary.Total +
+                        " mẫu   |   CHỜ CLOUD: " +
+                        summary.Pending +
+                        "   |   ĐÃ SYNC: " +
+                        summary.Synced +
+                        "   |   POSITIVE: " +
+                        summary.Positive +
+                        "   |   NEGATIVE: " +
+                        summary.Negative +
+                        "   |   LOẠI: " +
+                        summary.ClassCount;
+
+                    summaryLabel.Font =
+                        new System.Drawing.Font(
+                            "Segoe UI",
+                            10.5f,
+                            System.Drawing.FontStyle.Bold);
+
+                    summaryLabel.ForeColor =
+                        System.Drawing.Color.FromArgb(
+                            76,
+                            29,
+                            149);
+
+                    grid.Left =
+                        16;
+
+                    grid.Top =
+                        52;
+
+                    grid.Width =
+                        1230;
+
+                    grid.Height =
+                        610;
+
+                    grid.AllowUserToAddRows =
+                        false;
+
+                    grid.AllowUserToDeleteRows =
+                        false;
+
+                    grid.AllowUserToResizeRows =
+                        false;
+
+                    grid.ReadOnly =
+                        true;
+
+                    grid.MultiSelect =
+                        true;
+
+                    grid.SelectionMode =
+                        System.Windows.Forms.DataGridViewSelectionMode.FullRowSelect;
+
+                    grid.RowHeadersVisible =
+                        false;
+
+                    grid.AutoGenerateColumns =
+                        false;
+
+                    grid.BackgroundColor =
+                        System.Drawing.Color.White;
+
+                    grid.RowTemplate.Height =
+                        76;
+
+                    grid.ColumnHeadersHeight =
+                        38;
+
+                    System.Windows.Forms.DataGridViewImageColumn imageColumn =
+                        new System.Windows.Forms.DataGridViewImageColumn();
+
+                    imageColumn.Name =
+                        "IMAGE";
+
+                    imageColumn.HeaderText =
+                        "KÝ HIỆU";
+
+                    imageColumn.Width =
+                        100;
+
+                    imageColumn.ImageLayout =
+                        System.Windows.Forms.DataGridViewImageCellLayout.Zoom;
+
+                    grid.Columns.Add(
+                        imageColumn);
+
+                    string[] names =
+                        new string[]
+                        {
+                            "LABEL",
+                            "DECISION",
+                            "HARD_NEGATIVE",
+                            "MODE",
+                            "SOURCE",
+                            "CLOUD",
+                            "HASH"
+                        };
+
+                    string[] headers =
+                        new string[]
+                        {
+                            "TÊN THIẾT BỊ",
+                            "LOẠI MẪU",
+                            "KHÔNG PHẢI",
+                            "NHẬN DẠNG",
+                            "NGUỒN",
+                            "CLOUD",
+                            "HASH"
+                        };
+
+                    int[] widths =
+                        new int[]
+                        {
+                            320,
+                            95,
+                            220,
+                            105,
+                            155,
+                            85,
+                            180
+                        };
+
+                    for (int i = 0;
+                        i < names.Length;
+                        i++)
+                    {
+                        System.Windows.Forms.DataGridViewTextBoxColumn col =
+                            new System.Windows.Forms.DataGridViewTextBoxColumn();
+
+                        col.Name =
+                            names[i];
+
+                        col.HeaderText =
+                            headers[i];
+
+                        col.Width =
+                            widths[i];
+
+                        grid.Columns.Add(
+                            col);
+                    }
+
+                    foreach (AiDatasetSample sample
+                        in samples)
+                    {
+                        if (sample == null)
+                            continue;
+
+                        System.Drawing.Bitmap thumb =
+                            null;
+
+                        try
+                        {
+                            if (!string.IsNullOrWhiteSpace(
+                                    sample.ImagePath) &&
+                                File.Exists(
+                                    sample.ImagePath))
+                            {
+                                using (System.Drawing.Image image =
+                                    System.Drawing.Image.FromFile(
+                                        sample.ImagePath))
+                                {
+                                    thumb =
+                                        new System.Drawing.Bitmap(
+                                            image);
+                                }
+
+                                thumbnails.Add(
+                                    thumb);
+                            }
+                        }
+                        catch
+                        {
+                            thumb =
+                                null;
+                        }
+
+                        int rowIndex =
+                            grid.Rows.Add(
+                                thumb,
+                                string.IsNullOrWhiteSpace(
+                                    sample.Label)
+                                    ? "(NEGATIVE)"
+                                    : sample.Label,
+                                sample.Decision,
+                                sample.HardNegativeLabel,
+                                sample.MatchMode,
+                                sample.Source,
+                                sample.CloudSynced
+                                    ? "ĐÃ SYNC"
+                                    : "CHỜ",
+                                sample.SampleHash);
+
+                        grid.Rows[rowIndex].Tag =
+                            sample;
+                    }
+
+                    deleteButton.Text =
+                        "XÓA MẪU ĐÃ CHỌN";
+
+                    deleteButton.Left =
+                        16;
+
+                    deleteButton.Top =
+                        676;
+
+                    deleteButton.Width =
+                        180;
+
+                    deleteButton.Height =
+                        38;
+
+                    deleteButton.BackColor =
+                        System.Drawing.Color.FromArgb(
+                            254,
+                            242,
+                            242);
+
+                    deleteButton.ForeColor =
+                        System.Drawing.Color.FromArgb(
+                            185,
+                            28,
+                            28);
+
+                    deleteButton.FlatStyle =
+                        System.Windows.Forms.FlatStyle.Flat;
+
+                    deleteButton.Click +=
+                        (s, e) =>
+                        {
+                            List<System.Windows.Forms.DataGridViewRow> selected =
+                                grid.SelectedRows
+                                    .Cast<System.Windows.Forms.DataGridViewRow>()
+                                    .ToList();
+
+                            if (selected.Count == 0)
+                                return;
+
+                            System.Windows.Forms.DialogResult confirm =
+                                System.Windows.Forms.MessageBox.Show(
+                                    "Xóa " +
+                                    selected.Count +
+                                    " mẫu LOCAL đã chọn?\n\n" +
+                                    "Nếu mẫu đã upload Cloud, thao tác này CHƯA xóa bản Cloud.",
+                                    "AI DATASET",
+                                    System.Windows.Forms.MessageBoxButtons.YesNo,
+                                    System.Windows.Forms.MessageBoxIcon.Warning);
+
+                            if (confirm !=
+                                System.Windows.Forms.DialogResult.Yes)
+                            {
+                                return;
+                            }
+
+                            foreach (System.Windows.Forms.DataGridViewRow gridRow
+                                in selected)
+                            {
+                                AiDatasetSample sample =
+                                    gridRow.Tag as AiDatasetSample;
+
+                                if (sample == null)
+                                    continue;
+
+                                manager.DeleteSample(
+                                    sample.SampleHash);
+
+                                grid.Rows.Remove(
+                                    gridRow);
+                            }
+
+                            UpdateAiDatasetStatusUi();
+                        };
+
+                    syncButton.Text =
+                        "ĐỒNG BỘ DATASET";
+
+                    syncButton.Left =
+                        890;
+
+                    syncButton.Top =
+                        676;
+
+                    syncButton.Width =
+                        170;
+
+                    syncButton.Height =
+                        38;
+
+                    syncButton.BackColor =
+                        System.Drawing.Color.FromArgb(
+                            237,
+                            233,
+                            254);
+
+                    syncButton.ForeColor =
+                        System.Drawing.Color.FromArgb(
+                            91,
+                            33,
+                            182);
+
+                    syncButton.FlatStyle =
+                        System.Windows.Forms.FlatStyle.Flat;
+
+                    syncButton.Click +=
+                        async (s, e) =>
+                        {
+                            syncButton.Enabled =
+                                false;
+
+                            syncButton.Text =
+                                "ĐANG SYNC...";
+
+                            try
+                            {
+                                AiDatasetSyncResult result =
+                                    await SyncAiDatasetOnlyAsync(
+                                        false);
+
+                                System.Windows.Forms.MessageBox.Show(
+                                    "Upload mới: " +
+                                    result.Uploaded +
+                                    "\nTrùng hash: " +
+                                    result.Duplicate +
+                                    "\nLỗi: " +
+                                    result.Failed +
+                                    "\nCòn chờ: " +
+                                    result.PendingAfterSync,
+                                    "AI DATASET");
+                            }
+                            finally
+                            {
+                                syncButton.Enabled =
+                                    true;
+
+                                syncButton.Text =
+                                    "ĐỒNG BỘ DATASET";
+                            }
+                        };
+
+                    closeButton.Text =
+                        "ĐÓNG";
+
+                    closeButton.Left =
+                        1075;
+
+                    closeButton.Top =
+                        676;
+
+                    closeButton.Width =
+                        170;
+
+                    closeButton.Height =
+                        38;
+
+                    closeButton.DialogResult =
+                        System.Windows.Forms.DialogResult.OK;
+
+                    form.Controls.Add(
+                        summaryLabel);
+
+                    form.Controls.Add(
+                        grid);
+
+                    form.Controls.Add(
+                        deleteButton);
+
+                    form.Controls.Add(
+                        syncButton);
+
+                    form.Controls.Add(
+                        closeButton);
+
+                    form.AcceptButton =
+                        closeButton;
+
+                    form.ShowDialog();
+                }
+                finally
+                {
+                    foreach (System.Drawing.Bitmap bitmap
+                        in thumbnails)
+                    {
+                        try
+                        {
+                            bitmap?.Dispose();
+                        }
+                        catch
+                        {
+                        }
+                    }
+                }
+            }
+        }
+
+        private AiCloudSyncClient GetAiCloudClient()
+        {
+            if (_aiCloudSyncClient == null)
+            {
+                _aiCloudSyncClient =
+                    new AiCloudSyncClient();
+            }
+
+            return _aiCloudSyncClient;
+        }
+
+        private void EnqueueAiCloudVote(
+            AiLearningMemoryEntry entry)
+        {
+            if (entry == null ||
+                string.IsNullOrWhiteSpace(entry.Signature))
+            {
+                return;
+            }
+
+            try
+            {
+                GetAiCloudClient().EnqueueVote(
+                    new AiCloudVote
+                    {
+                        Signature = entry.Signature,
+                        MatchMode = entry.MatchMode ?? "BLOCK",
+                        BlockKey = entry.BlockKey ?? "",
+                        GeometryFingerprint =
+                            entry.GeometryFingerprint ?? "",
+                        Label = entry.Label ?? "",
+                        Decision = entry.Decision ?? "POSITIVE",
+                        FollowDn = entry.FollowDn,
+                        Scope =
+                            string.IsNullOrWhiteSpace(entry.Scope)
+                                ? "GLOBAL"
+                                : entry.Scope,
+                        Source = entry.LastSource ?? "",
+                        ClientUpdatedUtc = entry.UpdatedUtc ?? ""
+                    });
+            }
+            catch
+            {
+                // Cloud queue không được phép làm gián đoạn thao tác CAD.
+            }
+        }
+
+        private void UpdateAiCloudStatusUi()
+        {
+            try
+            {
+                if (TxtAiCloudStatus == null)
+                    return;
+
+                AiCloudSyncClient client =
+                    GetAiCloudClient();
+
+                AiCloudConfig config =
+                    client.LoadConfig();
+
+                AiCloudLocalState state =
+                    client.LoadState();
+
+                int pending =
+                    client.GetPendingCount();
+
+                if (!config.IsConfigured)
+                {
+                    TxtAiCloudStatus.Text =
+                        "AI CLOUD: CHƯA CẤU HÌNH  •  ↑ " +
+                        pending +
+                        " correction đang chờ";
+
+                    TxtAiCloudStatus.Foreground =
+                        new System.Windows.Media.SolidColorBrush(
+                            System.Windows.Media.Color.FromRgb(
+                                146,
+                                64,
+                                14));
+
+                    return;
+                }
+
+                string lastSync =
+                    "chưa sync";
+
+                DateTime syncUtc;
+
+                if (DateTime.TryParse(
+                        state.LastSyncUtc,
+                        CultureInfo.InvariantCulture,
+                        DateTimeStyles.RoundtripKind,
+                        out syncUtc))
+                {
+                    lastSync =
+                        syncUtc
+                            .ToLocalTime()
+                            .ToString(
+                                "dd/MM HH:mm",
+                                CultureInfo.InvariantCulture);
+                }
+
+                TxtAiCloudStatus.Text =
+                    "AI CLOUD: SẴN SÀNG  •  " +
+                    config.CompanyCode +
+                    "  •  ↑ " +
+                    pending +
+                    " chờ  •  Approved " +
+                    state.LastApproved +
+                    "  •  Conflict " +
+                    state.LastConflict +
+                    "  •  Sync " +
+                    lastSync;
+
+                TxtAiCloudStatus.Foreground =
+                    new System.Windows.Media.SolidColorBrush(
+                        System.Windows.Media.Color.FromRgb(
+                            29,
+                            78,
+                            216));
+            }
+            catch
+            {
+            }
+        }
+
+        private void BtnAiCloudConfigure_Click(
+            object sender,
+            RoutedEventArgs e)
+        {
+            AiCloudSyncClient client =
+                GetAiCloudClient();
+
+            AiCloudConfig config =
+                client.LoadConfig();
+
+            if (!ShowAiCloudConfigDialog(
+                    config))
+            {
+                return;
+            }
+
+            client.SaveConfig(
+                config);
+
+            UpdateAiCloudStatusUi();
+            UpdateAiDatasetStatusUi();
+
+            MessageBox.Show(
+                "Đã lưu cấu hình AI Cloud.\n\n" +
+                "Bấm ĐỒNG BỘ AI để kiểm tra kết nối và tải consensus.",
+                "AI CLOUD");
+        }
+
+        private async void BtnAiCloudSync_Click(
+            object sender,
+            RoutedEventArgs e)
+        {
+            if (_aiCloudSyncBusy)
+                return;
+
+            AiCloudSyncClient client =
+                GetAiCloudClient();
+
+            AiCloudConfig config =
+                client.LoadConfig();
+
+            if (!config.IsConfigured)
+            {
+                MessageBox.Show(
+                    "AI Cloud chưa được cấu hình.\n\n" +
+                    "Bấm CẤU HÌNH CLOUD trước.",
+                    "AI CLOUD");
+
+                return;
+            }
+
+            _aiCloudSyncBusy =
+                true;
+
+            try
+            {
+                if (BtnAiCloudSync != null)
+                {
+                    BtnAiCloudSync.IsEnabled =
+                        false;
+
+                    BtnAiCloudSync.Content =
+                        "ĐANG ĐỒNG BỘ...";
+                }
+
+                if (TxtAiCloudStatus != null)
+                {
+                    TxtAiCloudStatus.Text =
+                        "AI CLOUD: đang upload correction + tải consensus...";
+                }
+
+                AiCloudSyncResult result =
+                    await client.SyncAsync();
+
+                if (!result.Success)
+                {
+                    AiCloudLocalState failState =
+                        client.LoadState();
+
+                    failState.LastMessage =
+                        result.Message;
+
+                    client.SaveState(
+                        failState);
+
+                    MessageBox.Show(
+                        "Đồng bộ AI Cloud chưa thành công:\n\n" +
+                        result.Message +
+                        "\n\nLocal Memory vẫn hoạt động bình thường.",
+                        "AI CLOUD");
+
+                    return;
+                }
+
+                int approved;
+                int pending;
+                int conflict;
+
+                ApplyAiCloudConsensus(
+                    result.ConsensusRows,
+                    out approved,
+                    out pending,
+                    out conflict);
+
+                // STEP21D:
+                // Một nút ĐỒNG BỘ AI đồng bộ luôn cả Memory + Dataset.
+                AiDatasetSyncResult datasetResult =
+                    await SyncAiDatasetOnlyAsync(
+                        false);
+
+                if (datasetResult.CloudSummary != null)
+                {
+                    _lastAiDatasetCloudSummary =
+                        datasetResult.CloudSummary;
+                }
+
+                AiCloudLocalState state =
+                    client.LoadState();
+
+                state.LastSyncUtc =
+                    DateTime.UtcNow.ToString(
+                        "O",
+                        CultureInfo.InvariantCulture);
+
+                state.LastUploaded =
+                    result.Uploaded;
+
+                state.LastCloudGroups =
+                    result.ConsensusRows != null
+                        ? result.ConsensusRows.Count
+                        : 0;
+
+                state.LastApproved =
+                    approved;
+
+                state.LastPending =
+                    pending;
+
+                state.LastConflict =
+                    conflict;
+
+                state.LastMessage =
+                    "OK";
+
+                client.SaveState(
+                    state);
+
+                UpdateAiLearningStatusUi();
+                UpdateAiCloudStatusUi();
+                UpdateAiDatasetStatusUi();
+
+                MessageBox.Show(
+                    "ĐỒNG BỘ AI CLOUD XONG\n\n" +
+                    "MEMORY\n" +
+                    "↑ Upload: " +
+                    result.Uploaded +
+                    " correction\n" +
+                    "✓ Approved tự áp dụng: " +
+                    approved +
+                    "\n" +
+                    "… Pending: " +
+                    pending +
+                    "\n" +
+                    "⚠ Conflict: " +
+                    conflict +
+                    "\n\nDATASET\n" +
+                    "↑ Upload mới: " +
+                    datasetResult.Uploaded +
+                    "\n" +
+                    "＝ Trùng hash: " +
+                    datasetResult.Duplicate +
+                    "\n" +
+                    "✕ Lỗi: " +
+                    datasetResult.Failed +
+                    "\n" +
+                    "Cloud samples: " +
+                    _lastAiDatasetCloudSummary.TotalSamples +
+                    "\n" +
+                    "Approved dataset: " +
+                    _lastAiDatasetCloudSummary.Approved +
+                    "\n\n" +
+                    "Mặc định cần tối thiểu " +
+                    AiCloudMinConsensusVotes +
+                    " người độc lập để tự áp dụng.",
+                    "AI CLOUD");
+            }
+            catch (System.Exception ex)
+            {
+                MessageBox.Show(
+                    "Lỗi AI Cloud:\n" +
+                    ex.Message,
+                    "AI CLOUD");
+            }
+            finally
+            {
+                _aiCloudSyncBusy =
+                    false;
+
+                if (BtnAiCloudSync != null)
+                {
+                    BtnAiCloudSync.IsEnabled =
+                        true;
+
+                    BtnAiCloudSync.Content =
+                        "ĐỒNG BỘ AI";
+                }
+
+                UpdateAiCloudStatusUi();
+                UpdateAiDatasetStatusUi();
+            }
+        }
+
+        private bool ShowAiCloudConfigDialog(
+            AiCloudConfig config)
+        {
+            if (config == null)
+                return false;
+
+            config.Normalize();
+
+            using (System.Windows.Forms.Form form =
+                new System.Windows.Forms.Form())
+            using (System.Windows.Forms.Label title =
+                new System.Windows.Forms.Label())
+            using (System.Windows.Forms.Label urlLabel =
+                new System.Windows.Forms.Label())
+            using (System.Windows.Forms.TextBox urlBox =
+                new System.Windows.Forms.TextBox())
+            using (System.Windows.Forms.Label keyLabel =
+                new System.Windows.Forms.Label())
+            using (System.Windows.Forms.TextBox keyBox =
+                new System.Windows.Forms.TextBox())
+            using (System.Windows.Forms.Label companyLabel =
+                new System.Windows.Forms.Label())
+            using (System.Windows.Forms.TextBox companyBox =
+                new System.Windows.Forms.TextBox())
+            using (System.Windows.Forms.Label syncKeyLabel =
+                new System.Windows.Forms.Label())
+            using (System.Windows.Forms.TextBox syncKeyBox =
+                new System.Windows.Forms.TextBox())
+            using (System.Windows.Forms.Label voterLabel =
+                new System.Windows.Forms.Label())
+            using (System.Windows.Forms.TextBox voterBox =
+                new System.Windows.Forms.TextBox())
+            using (System.Windows.Forms.Label hint =
+                new System.Windows.Forms.Label())
+            using (System.Windows.Forms.Button saveButton =
+                new System.Windows.Forms.Button())
+            using (System.Windows.Forms.Button cancelButton =
+                new System.Windows.Forms.Button())
+            {
+                form.Text =
+                    "CẤU HÌNH AI LEARNING CLOUD";
+
+                form.StartPosition =
+                    System.Windows.Forms.FormStartPosition.CenterScreen;
+
+                form.Width =
+                    760;
+
+                form.Height =
+                    560;
+
+                form.MinimizeBox =
+                    false;
+
+                form.MaximizeBox =
+                    false;
+
+                form.BackColor =
+                    System.Drawing.Color.White;
+
+                title.Left = 20;
+                title.Top = 16;
+                title.Width = 690;
+                title.Height = 30;
+                title.Text =
+                    "SUPABASE - AI MEMORY DÙNG CHUNG";
+
+                title.Font =
+                    new System.Drawing.Font(
+                        "Segoe UI",
+                        12.0f,
+                        System.Drawing.FontStyle.Bold);
+
+                title.ForeColor =
+                    System.Drawing.Color.FromArgb(
+                        30,
+                        64,
+                        175);
+
+                int labelLeft = 24;
+                int boxLeft = 220;
+                int boxWidth = 485;
+
+                urlLabel.Left = labelLeft;
+                urlLabel.Top = 70;
+                urlLabel.Width = 185;
+                urlLabel.Text =
+                    "SUPABASE PROJECT URL:";
+
+                urlBox.Left = boxLeft;
+                urlBox.Top = 66;
+                urlBox.Width = boxWidth;
+                urlBox.Text = config.ProjectUrl ?? "";
+
+                keyLabel.Left = labelLeft;
+                keyLabel.Top = 115;
+                keyLabel.Width = 190;
+                keyLabel.Text =
+                    "PUBLISHABLE KEY:";
+
+                keyBox.Left = boxLeft;
+                keyBox.Top = 111;
+                keyBox.Width = boxWidth;
+                keyBox.Text =
+                    config.PublishableKey ?? "";
+                keyBox.UseSystemPasswordChar =
+                    true;
+
+                companyLabel.Left = labelLeft;
+                companyLabel.Top = 160;
+                companyLabel.Width = 190;
+                companyLabel.Text =
+                    "COMPANY CODE:";
+
+                companyBox.Left = boxLeft;
+                companyBox.Top = 156;
+                companyBox.Width = 250;
+                companyBox.Text =
+                    config.CompanyCode ?? "";
+
+                syncKeyLabel.Left = labelLeft;
+                syncKeyLabel.Top = 205;
+                syncKeyLabel.Width = 190;
+                syncKeyLabel.Text =
+                    "COMPANY SYNC KEY:";
+
+                syncKeyBox.Left = boxLeft;
+                syncKeyBox.Top = 201;
+                syncKeyBox.Width = boxWidth;
+                syncKeyBox.Text =
+                    config.CompanySyncKey ?? "";
+                syncKeyBox.UseSystemPasswordChar =
+                    true;
+
+                voterLabel.Left = labelLeft;
+                voterLabel.Top = 250;
+                voterLabel.Width = 190;
+                voterLabel.Text =
+                    "VOTER ID MÁY NÀY:";
+
+                voterBox.Left = boxLeft;
+                voterBox.Top = 246;
+                voterBox.Width = boxWidth;
+                voterBox.ReadOnly =
+                    true;
+                voterBox.Text =
+                    config.VoterId;
+
+                hint.Left = 24;
+                hint.Top = 300;
+                hint.Width = 680;
+                hint.Height = 120;
+
+                hint.Text =
+                    "LƯU Ý BẢO MẬT:\r\n" +
+                    "• Chỉ dùng Supabase PUBLISHABLE key (sb_publishable_...) hoặc legacy anon key.\r\n" +
+                    "• TUYỆT ĐỐI không dán Secret / service_role key vào plugin.\r\n" +
+                    "• Company Sync Key chỉ cấp quyền module AI Memory qua RPC.\r\n" +
+                    "• Mỗi Voter ID chỉ có 1 phiếu/signature → một người không thể spam confirmations.";
+
+                hint.ForeColor =
+                    System.Drawing.Color.FromArgb(
+                        80,
+                        80,
+                        80);
+
+                saveButton.Text =
+                    "LƯU CẤU HÌNH";
+
+                saveButton.Width = 160;
+                saveButton.Height = 42;
+                saveButton.Left = 420;
+                saveButton.Top = 455;
+
+                saveButton.BackColor =
+                    System.Drawing.Color.FromArgb(
+                        37,
+                        99,
+                        235);
+
+                saveButton.ForeColor =
+                    System.Drawing.Color.White;
+
+                saveButton.FlatStyle =
+                    System.Windows.Forms.FlatStyle.Flat;
+
+                saveButton.DialogResult =
+                    System.Windows.Forms.DialogResult.OK;
+
+                cancelButton.Text = "HỦY";
+                cancelButton.Width = 120;
+                cancelButton.Height = 42;
+                cancelButton.Left = 590;
+                cancelButton.Top = 455;
+                cancelButton.DialogResult =
+                    System.Windows.Forms.DialogResult.Cancel;
+
+                form.Controls.Add(title);
+                form.Controls.Add(urlLabel);
+                form.Controls.Add(urlBox);
+                form.Controls.Add(keyLabel);
+                form.Controls.Add(keyBox);
+                form.Controls.Add(companyLabel);
+                form.Controls.Add(companyBox);
+                form.Controls.Add(syncKeyLabel);
+                form.Controls.Add(syncKeyBox);
+                form.Controls.Add(voterLabel);
+                form.Controls.Add(voterBox);
+                form.Controls.Add(hint);
+                form.Controls.Add(saveButton);
+                form.Controls.Add(cancelButton);
+
+                form.AcceptButton =
+                    saveButton;
+
+                form.CancelButton =
+                    cancelButton;
+
+                if (form.ShowDialog() !=
+                    System.Windows.Forms.DialogResult.OK)
+                {
+                    return false;
+                }
+
+                config.ProjectUrl =
+                    (urlBox.Text ?? "").Trim();
+
+                config.PublishableKey =
+                    (keyBox.Text ?? "").Trim();
+
+                config.CompanyCode =
+                    (companyBox.Text ?? "").Trim();
+
+                config.CompanySyncKey =
+                    (syncKeyBox.Text ?? "").Trim();
+
+                config.Normalize();
+
+                if (!config.IsConfigured)
+                {
+                    MessageBox.Show(
+                        "Bạn chưa nhập đủ Project URL / Publishable Key / Company Code / Company Sync Key.",
+                        "AI CLOUD");
+
+                    return false;
+                }
+
+                if (config.PublishableKey.StartsWith(
+                        "sb_secret_",
+                        StringComparison.OrdinalIgnoreCase))
+                {
+                    MessageBox.Show(
+                        "KHÔNG ĐƯỢC dùng Supabase Secret key trong AutoCAD plugin.\n\n" +
+                        "Hãy dùng Publishable key (sb_publishable_...).",
+                        "AI CLOUD");
+
+                    return false;
+                }
+
+                return true;
+            }
+        }
+
+        private void ApplyAiCloudConsensus(
+            List<AiCloudConsensusRow> rows,
+            out int approvedCount,
+            out int pendingCount,
+            out int conflictCount)
+        {
+            approvedCount = 0;
+            pendingCount = 0;
+            conflictCount = 0;
+
+            if (rows == null ||
+                rows.Count == 0)
+            {
+                return;
+            }
+
+            List<AiLearningMemoryEntry> memory =
+                LoadAiLearningMemory();
+
+            foreach (IGrouping<string, AiCloudConsensusRow> signatureGroup
+                in rows
+                    .Where(
+                        r =>
+                            r != null &&
+                            !string.IsNullOrWhiteSpace(
+                                r.Signature) &&
+                            (string.IsNullOrWhiteSpace(
+                                 r.Scope) ||
+                             string.Equals(
+                                 r.Scope,
+                                 "GLOBAL",
+                                 StringComparison.OrdinalIgnoreCase)))
+                    .GroupBy(
+                        r =>
+                            r.Signature,
+                        StringComparer.OrdinalIgnoreCase))
+            {
+                List<AiCloudConsensusRow> positiveRows =
+                    signatureGroup
+                        .Where(
+                            r =>
+                                r.PositiveVotes > 0 &&
+                                !string.IsNullOrWhiteSpace(
+                                    r.Label))
+                        .OrderByDescending(
+                            r =>
+                                r.PositiveVotes)
+                        .ToList();
+
+                int negativeVotes =
+                    signatureGroup.Sum(
+                        r =>
+                            Math.Max(
+                                0,
+                                r.NegativeVotes));
+
+                AiCloudConsensusRow best =
+                    positiveRows.FirstOrDefault();
+
+                int bestVotes =
+                    best != null
+                        ? best.PositiveVotes
+                        : 0;
+
+                int secondVotes =
+                    positiveRows.Count > 1
+                        ? positiveRows[1].PositiveVotes
+                        : 0;
+
+                bool positiveApproved =
+                    best != null &&
+                    bestVotes >=
+                        AiCloudMinConsensusVotes &&
+                    (
+                        secondVotes == 0 ||
+                        bestVotes - secondVotes >= 2 ||
+                        bestVotes >= secondVotes * 2
+                    ) &&
+                    bestVotes >
+                        negativeVotes;
+
+                bool negativeApproved =
+                    negativeVotes >=
+                        AiCloudMinConsensusVotes &&
+                    negativeVotes >=
+                        bestVotes + 2;
+
+                if (positiveApproved)
+                {
+                    UpsertCloudApprovedMemory(
+                        memory,
+                        best.Signature,
+                        best.MatchMode,
+                        best.BlockKey,
+                        best.GeometryFingerprint,
+                        best.Label,
+                        best.FollowDn,
+                        "POSITIVE",
+                        bestVotes,
+                        negativeVotes,
+                        best.LastEventAt);
+
+                    approvedCount++;
+                    continue;
+                }
+
+                if (negativeApproved)
+                {
+                    AiCloudConsensusRow template =
+                        best ??
+                        signatureGroup.First();
+
+                    UpsertCloudApprovedMemory(
+                        memory,
+                        template.Signature,
+                        template.MatchMode,
+                        template.BlockKey,
+                        template.GeometryFingerprint,
+                        "",
+                        false,
+                        "NEGATIVE",
+                        bestVotes,
+                        negativeVotes,
+                        template.LastEventAt);
+
+                    approvedCount++;
+                    continue;
+                }
+
+                bool hasRealConflict =
+                    best != null &&
+                    secondVotes > 0 &&
+                    Math.Abs(
+                        bestVotes -
+                        secondVotes) <=
+                        1;
+
+                if (hasRealConflict)
+                {
+                    conflictCount++;
+                }
+                else
+                {
+                    pendingCount++;
+                }
+            }
+
+            SaveAiLearningMemory(
+                memory);
+        }
+
+        private void UpsertCloudApprovedMemory(
+            List<AiLearningMemoryEntry> memory,
+            string signature,
+            string matchMode,
+            string blockKey,
+            string geometryFingerprint,
+            string label,
+            bool followDn,
+            string decision,
+            int positiveVotes,
+            int negativeVotes,
+            string cloudUpdatedAt)
+        {
+            if (memory == null ||
+                string.IsNullOrWhiteSpace(
+                    signature))
+            {
+                return;
+            }
+
+            AiLearningMemoryEntry entry =
+                memory.FirstOrDefault(
+                    x =>
+                        x != null &&
+                        string.Equals(
+                            x.Signature,
+                            signature,
+                            StringComparison.OrdinalIgnoreCase));
+
+            if (entry == null)
+            {
+                entry =
+                    new AiLearningMemoryEntry
+                    {
+                        Signature =
+                            signature
+                    };
+
+                memory.Add(
+                    entry);
+            }
+
+            entry.MatchMode =
+                string.IsNullOrWhiteSpace(
+                    matchMode)
+                    ? "BLOCK"
+                    : matchMode;
+
+            entry.BlockKey =
+                blockKey ?? "";
+
+            entry.GeometryFingerprint =
+                geometryFingerprint ?? "";
+
+            entry.Decision =
+                string.Equals(
+                    decision,
+                    "NEGATIVE",
+                    StringComparison.OrdinalIgnoreCase)
+                    ? "NEGATIVE"
+                    : "POSITIVE";
+
+            entry.Label =
+                entry.Decision ==
+                    "POSITIVE"
+                    ? NormalizeSmartDisplayName(
+                        label)
+                    : "";
+
+            entry.FollowDn =
+                entry.Decision ==
+                    "POSITIVE" &&
+                followDn;
+
+            entry.Confirmations =
+                Math.Max(
+                    entry.Confirmations,
+                    positiveVotes);
+
+            entry.Rejections =
+                Math.Max(
+                    entry.Rejections,
+                    negativeVotes);
+
+            entry.Scope =
+                "GLOBAL";
+
+            entry.UpdatedUtc =
+                string.IsNullOrWhiteSpace(
+                    cloudUpdatedAt)
+                    ? DateTime.UtcNow.ToString(
+                        "O",
+                        CultureInfo.InvariantCulture)
+                    : cloudUpdatedAt;
+
+            entry.LastSource =
+                "CLOUD_SYNC";
         }
 
         private void BtnAiLearningMemory_Click(
@@ -45454,14 +47122,24 @@ namespace ClassLibrary4
                 library);
 
             // Local AI Memory cũng ghi ngay.
-            LearnAiFromSymbolRules(
-                learnedRules,
+            string normalizedSource =
                 string.IsNullOrWhiteSpace(
                     source)
                     ? "MANUAL_SYMBOL_EDIT"
-                    : source);
+                    : source;
+
+            LearnAiFromSymbolRules(
+                learnedRules,
+                normalizedSource);
+
+            CaptureAiDatasetFromLegendRow(
+                row,
+                "POSITIVE",
+                normalizedSource,
+                "");
 
             UpdateAiLearningStatusUi();
+            UpdateAiDatasetStatusUi();
         }
 
         private bool ReselectSmartLegendSymbol(
