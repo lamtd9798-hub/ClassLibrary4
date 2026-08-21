@@ -1831,7 +1831,7 @@
                                                FontWeight="Bold"
                                                Foreground="#FF223A5E"
                                                HorizontalAlignment="Center"/>
-                                    <TextBlock Text="Geometry + Topology + Pipe-Device Fusion + Local Learning Memory"
+                                    <TextBlock Text="CAD Native + Vector + ONNX Vision + Topology + Local Learning"
                                                Margin="0,5,0,0"
                                                FontSize="10.5"
                                                TextWrapping="Wrap"
@@ -1841,22 +1841,102 @@
                             </Border>
 
                             <Button x:Name="BtnAiAutoTakeoff"
-                                    Content="BÓC TÁCH TỰ ĐỘNG"
+                                    Content="AI NHẬN DIỆN ĐƯỜNG ỐNG"
                                     Height="46"
-                                    FontSize="14"
+                                    FontSize="13.5"
                                     FontWeight="Bold"
-                                    Background="#FF6A1B9A"
+                                    Background="#FF0078D7"
                                     Foreground="White"
+                                    Margin="0,0,0,8"
                                     Cursor="Hand"
                                     Click="BtnAiAutoTakeoff_Click">
                                 <Button.ToolTip>
                                     <ToolTip>
                                         <TextBlock MaxWidth="310"
                                                    TextWrapping="Wrap"
-                                                   Text="V3: Bước 1 dựng mô hình ống AI. Bước 2 dùng Pipe-Device Fusion: ưu tiên TDL_AI_PIPE_DN..., tâm hình học block thay vì chỉ base point, bỏ xung đột DN giả và suy DN cho VAN / THIẾT BỊ chính xác hơn."/>
+                                                   Text="Chỉ nhận diện ĐƯỜNG ỐNG: Text DN + geometry + topology + branch-template. Không tự chạy sang thiết bị."/>
                                     </ToolTip>
                                 </Button.ToolTip>
                             </Button>
+
+                            <Button x:Name="BtnAiDeviceOnly"
+                                    Content="AI NHẬN DIỆN VAN / THIẾT BỊ"
+                                    Height="46"
+                                    FontSize="13"
+                                    FontWeight="Bold"
+                                    Background="#FF6A1B9A"
+                                    Foreground="White"
+                                    Margin="0,0,0,8"
+                                    Cursor="Hand"
+                                    Click="BtnAiDeviceOnly_Click">
+                                <Button.ToolTip>
+                                    <ToolTip>
+                                        <TextBlock MaxWidth="310"
+                                                   TextWrapping="Wrap"
+                                                   Text="Chỉ nhận diện VAN / THIẾT BỊ. STEP21: Exact Block → Vector Fingerprint → ONNX Classifier → Vision Lite → Pipe Context. Nếu chưa có model ONNX, các tầng cũ vẫn chạy bình thường."/>
+                                    </ToolTip>
+                                </Button.ToolTip>
+                            </Button>
+
+                            <Border Margin="0,0,0,8"
+                                    Padding="8"
+                                    Background="#FFF8FAFC"
+                                    BorderBrush="#FFCBD5E1"
+                                    BorderThickness="1"
+                                    CornerRadius="5">
+                                <StackPanel>
+                                    <TextBlock x:Name="TxtOnnxStatus"
+                                               Text="ONNX: CHƯA CÓ MODEL  •  CAD/Vector/Vision cũ vẫn hoạt động"
+                                               FontSize="10"
+                                               FontWeight="SemiBold"
+                                               Foreground="#FF92400E"
+                                               TextAlignment="Center"
+                                               TextWrapping="Wrap"/>
+                                    <Button x:Name="BtnOnnxLoadModel"
+                                            Content="NẠP MODEL ONNX"
+                                            Height="30"
+                                            Margin="0,7,0,0"
+                                            FontSize="10.5"
+                                            FontWeight="SemiBold"
+                                            Background="#FFEFF6FF"
+                                            Foreground="#FF1D4ED8"
+                                            BorderBrush="#FF93C5FD"
+                                            Cursor="Hand"
+                                            Click="BtnOnnxLoadModel_Click"/>
+                                </StackPanel>
+                            </Border>
+
+                            <Grid Margin="0,0,0,8">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="8"/>
+                                    <ColumnDefinition Width="*"/>
+                                </Grid.ColumnDefinitions>
+
+                                <Button x:Name="BtnAiReopenDeviceAudit"
+                                        Grid.Column="0"
+                                        Content="MỞ LẠI KIỂM TRA"
+                                        Height="34"
+                                        FontSize="10.5"
+                                        FontWeight="SemiBold"
+                                        Background="#FFF1F5F9"
+                                        Foreground="#FF334155"
+                                        BorderBrush="#FFCBD5E1"
+                                        Cursor="Hand"
+                                        Click="BtnAiReopenDeviceAudit_Click"/>
+
+                                <Button x:Name="BtnAiReopenLegend"
+                                        Grid.Column="2"
+                                        Content="SỬA LẠI LEGEND"
+                                        Height="34"
+                                        FontSize="10.5"
+                                        FontWeight="SemiBold"
+                                        Background="#FFFFF7ED"
+                                        Foreground="#FF9A3412"
+                                        BorderBrush="#FFFED7AA"
+                                        Cursor="Hand"
+                                        Click="BtnAiReopenLegend_Click"/>
+                            </Grid>
 
                             <Border Margin="0,10,0,0"
                                     Padding="9"
@@ -1895,7 +1975,7 @@
                                 <TextBlock FontSize="10.5"
                                            TextWrapping="Wrap"
                                            Foreground="#FF664D10"
-                                           Text="Bản V4: AI Learning LOCAL tự học từ Legend đã review, tên/THEO DN bạn sửa và các ứng viên bạn BỎ QUA. Positive Memory giúp nhận lại ký hiệu đã sửa; Negative Memory chặn lỗi lặp lại. Dữ liệu chỉ là fingerprint/rule, không lưu DWG."/>
+                                           Text="STEP21: tách riêng ỐNG và VAN/TB. Thiết bị dùng: Exact Block → Vector Fingerprint → ONNX Classifier (nếu có model) → Vision Lite → Pipe Context. ONNX là tùy chọn: thiếu model vẫn chạy bình thường."/>
                             </Border>
 
                         </StackPanel>

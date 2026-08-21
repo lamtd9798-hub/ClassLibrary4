@@ -303,6 +303,9 @@ namespace ClassLibrary4
             KhoiTaoTatCaTabOng();
             KhoiTaoTatCaTabVan();
             KhoiTaoTatCaTabThietBi();
+
+            // STEP21: chỉ kiểm tra trạng thái. Không bắt buộc phải có model ONNX.
+            UpdateOnnxStatusUi();
         }
 
         private WpfComboBox TimComboBox(string name)
@@ -40079,6 +40082,139 @@ namespace ClassLibrary4
             return true;
         }
 
+        private string GetSmartBlockIdentityKey(
+            Transaction tr,
+            BlockReference br)
+        {
+            if (tr == null ||
+                br == null)
+            {
+                return "";
+            }
+
+            string baseName =
+                GetShopStatBlockName(
+                    tr,
+                    br);
+
+            string baseKey =
+                NormalizeSmartSymbolKey(
+                    baseName);
+
+            if (string.IsNullOrWhiteSpace(
+                    baseKey))
+            {
+                return "";
+            }
+
+            string state =
+                GetSmartDynamicBlockStateKey(
+                    br);
+
+            return
+                string.IsNullOrWhiteSpace(
+                    state)
+                    ? baseKey
+                    : baseKey +
+                      "|STATE=" +
+                      state;
+        }
+
+        private string GetSmartDynamicBlockStateKey(
+            BlockReference br)
+        {
+            if (br == null ||
+                !br.IsDynamicBlock)
+            {
+                return "";
+            }
+
+            List<string> pieces =
+                new List<string>();
+
+            try
+            {
+                DynamicBlockReferencePropertyCollection props =
+                    br.DynamicBlockReferencePropertyCollection;
+
+                foreach (DynamicBlockReferenceProperty prop
+                    in props)
+                {
+                    if (prop == null)
+                        continue;
+
+                    string propertyName =
+                        NormalizeSmartSymbolKey(
+                            prop.PropertyName ?? "");
+
+                    if (string.IsNullOrWhiteSpace(
+                            propertyName))
+                    {
+                        continue;
+                    }
+
+                    string plainName =
+                        BoDauTiengViet(
+                            propertyName)
+                            .ToUpperInvariant();
+
+                    bool isStateProperty =
+                        plainName.Contains("VISIBILITY") ||
+                        plainName.Contains("LOOKUP") ||
+                        plainName.Contains("STATE") ||
+                        plainName.Contains("TYPE") ||
+                        plainName.Contains("KIEU") ||
+                        plainName.Contains("LOAI") ||
+                        plainName.Contains("TRANG THAI");
+
+                    if (!isStateProperty)
+                        continue;
+
+                    string value =
+                        "";
+
+                    try
+                    {
+                        value =
+                            Convert.ToString(
+                                prop.Value,
+                                CultureInfo.InvariantCulture) ?? "";
+                    }
+                    catch
+                    {
+                    }
+
+                    value =
+                        NormalizeSmartSymbolKey(
+                            value);
+
+                    if (!string.IsNullOrWhiteSpace(
+                            value))
+                    {
+                        pieces.Add(
+                            propertyName +
+                            "=" +
+                            value);
+                    }
+                }
+            }
+            catch
+            {
+            }
+
+            return
+                pieces.Count == 0
+                    ? ""
+                    : string.Join(
+                        ";",
+                        pieces
+                            .Distinct(
+                                StringComparer.OrdinalIgnoreCase)
+                            .OrderBy(
+                                x => x,
+                                StringComparer.OrdinalIgnoreCase));
+        }
+
         private string GetShopStatBlockName(
             Transaction tr,
             BlockReference br)
@@ -41071,9 +41207,14 @@ namespace ClassLibrary4
             public string SizeRule { get; set; } = "THEO_ONG";
 
             // BLOCK = nhận theo BlockDefinition.
-            // GEOMETRY = nhận theo dấu vân tay Line/Arc/Circle/Polyline đã EXPLODE.
+            // GEOMETRY = nhận theo dấu vân tay vector.
             public string MatchMode { get; set; } = "BLOCK";
             public string GeometryFingerprint { get; set; } = "";
+
+            // STEP19 - HYBRID VISION LITE:
+            // silhouette 16x16 x 4 góc xoay, độc lập màu/layer/scale.
+            // Đây là fallback kiểu Computer Vision, chưa cần Emgu/OpenCV DLL.
+            public string RasterSignature { get; set; } = "";
         }
 
         private class AiLearningMemoryEntry
@@ -41104,6 +41245,16 @@ namespace ClassLibrary4
             public SmartSymbolRule Rule { get; set; }
             public Point3d Center { get; set; }
             public double Score { get; set; }
+            public string Source { get; set; } = "GEOMETRY";
+            public MepSymbolClassifier.Prediction OnnxPrediction { get; set; } = null;
+        }
+
+        private class SmartVisionCandidateScore
+        {
+            public SmartSymbolRule Rule { get; set; }
+            public double RasterScore { get; set; } = double.MaxValue;
+            public double StructureScore { get; set; } = double.MaxValue;
+            public double CombinedScore { get; set; } = double.MaxValue;
         }
 
         private class SmartGeometryFingerprintData
@@ -41128,6 +41279,7 @@ namespace ClassLibrary4
             public string MatchMode { get; set; } = "BLOCK";
             public string BlockKey { get; set; } = "";
             public string GeometryFingerprint { get; set; } = "";
+            public string RasterSignature { get; set; } = "";
             public string SymbolSummary { get; set; } = "";
             public Point3d SymbolCenter { get; set; } = Point3d.Origin;
             public System.Drawing.Bitmap Preview { get; set; }
@@ -41214,6 +41366,7 @@ namespace ClassLibrary4
             public string MatchMode { get; set; } = "";
             public string BlockKey { get; set; } = "";
             public string GeometryFingerprint { get; set; } = "";
+            public string RasterSignature { get; set; } = "";
             public ObjectId SourceId { get; set; } = ObjectId.Null;
 
             // STEP 18 - theo dõi chỉnh sửa thật sự của người dùng.
@@ -41263,6 +41416,20 @@ namespace ClassLibrary4
 
         private ObjectId _lastSmartStatsTableId =
             ObjectId.Null;
+
+        // ============================================================
+        // STEP21A/B - ONNX SYMBOL CLASSIFIER
+        // ------------------------------------------------------------
+        // CPU-first. Nếu chưa có model/labels hoặc ONNX Runtime lỗi,
+        // toàn bộ plugin vẫn chạy bằng CAD Native + Vector + Vision Lite cũ.
+        // ============================================================
+        private MepSymbolClassifier _onnxSymbolClassifier = null;
+        private string _onnxLoadedModelPath = "";
+        private DateTime _onnxLoadedModelWriteUtc = DateTime.MinValue;
+        private string _onnxLastLoadError = "";
+
+        private const double OnnxDeviceMinConfidence = 0.80;
+        private const double OnnxDeviceMinMargin = 0.12;
 
         private string SmartSymbolLibraryPath
         {
@@ -43226,8 +43393,12 @@ namespace ClassLibrary4
                             "BLOCK";
 
                         row.BlockKey =
-                            NormalizeSmartSymbolKey(
-                                blockName);
+                            br != null
+                                ? GetSmartBlockIdentityKey(
+                                    tr,
+                                    br)
+                                : NormalizeSmartSymbolKey(
+                                    blockName);
 
                         // STEP18F:
                         // Một ký hiệu BLOCK được học theo 2 khóa:
@@ -43241,11 +43412,22 @@ namespace ClassLibrary4
                                     br)
                                 : "";
 
+                        string dynamicState =
+                            br != null
+                                ? GetSmartDynamicBlockStateKey(
+                                    br)
+                                : "";
+
                         row.SymbolSummary =
                             string.IsNullOrWhiteSpace(
                                 blockName)
                                 ? "BLOCK"
-                                : blockName;
+                                : blockName +
+                                  (string.IsNullOrWhiteSpace(
+                                       dynamicState)
+                                      ? ""
+                                      : " / STATE: " +
+                                        dynamicState);
 
                         if (br != null)
                         {
@@ -43402,6 +43584,20 @@ namespace ClassLibrary4
                                             p.Y),
                                     0.0);
                         }
+                    }
+
+                    // STEP19 - CV-Lite:
+                    // Ảnh vuông chỉ dùng làm visual fingerprint, không hiển thị.
+                    using (System.Drawing.Bitmap visionBitmap =
+                        CreateSmartLegendPreviewBitmap(
+                            tr,
+                            previewIds,
+                            96,
+                            96))
+                    {
+                        row.RasterSignature =
+                            BuildSmartRasterSignature(
+                                visionBitmap);
                     }
 
                     row.Preview =
@@ -43730,6 +43926,8 @@ namespace ClassLibrary4
                     new System.Windows.Forms.Form())
                 using (System.Windows.Forms.DataGridView grid =
                     new System.Windows.Forms.DataGridView())
+                using (System.Windows.Forms.Button addButton =
+                    new System.Windows.Forms.Button())
                 using (System.Windows.Forms.Button okButton =
                     new System.Windows.Forms.Button())
                 using (System.Windows.Forms.Button cancelButton =
@@ -43788,8 +43986,8 @@ namespace ClassLibrary4
                             95);
 
                     subTitle.Text =
-                        "Nếu tool ghép sai KÝ HIỆU ↔ TÊN: bấm CHỌN LẠI ở đúng dòng rồi quét lại chính ký hiệu đó trên CAD. " +
-                        "Tên có thể sửa trực tiếp; THEO DN có thể tick/bỏ tick.";
+                        "Nếu nhận sai: bấm SỬA để đổi TÊN/THEO DN, hoặc CHỌN LẠI để lấy lại ký hiệu trên CAD. " +
+                        "Thiếu ký hiệu trong bảng: bấm + THÊM KÝ HIỆU TỪ CAD.";
 
                     subTitle.Left =
                         18;
@@ -43979,6 +44177,27 @@ namespace ClassLibrary4
                     grid.Columns.Add(
                         reselectColumn);
 
+                    System.Windows.Forms.DataGridViewButtonColumn editColumn =
+                        new System.Windows.Forms.DataGridViewButtonColumn();
+
+                    editColumn.Name =
+                        "EDIT_INFO";
+
+                    editColumn.HeaderText =
+                        "SỬA";
+
+                    editColumn.Text =
+                        "SỬA";
+
+                    editColumn.UseColumnTextForButtonValue =
+                        true;
+
+                    editColumn.Width =
+                        72;
+
+                    grid.Columns.Add(
+                        editColumn);
+
                     System.Windows.Forms.DataGridViewTextBoxColumn nameColumn =
                         new System.Windows.Forms.DataGridViewTextBoxColumn();
 
@@ -44053,11 +44272,11 @@ namespace ClassLibrary4
                                 stt++,
                                 row.Preview,
                                 "CHỌN LẠI",
+                                "SỬA",
                                 row.DisplayName,
                                 row.FollowDn,
-                                row.MatchMode == "GEOMETRY"
-                                    ? "HÌNH EXPLODE"
-                                    : "BLOCK");
+                                GetSmartLegendMatchModeDisplay(
+                                    row.MatchMode));
 
                         grid.Rows[index].Tag =
                             row;
@@ -44140,6 +44359,40 @@ namespace ClassLibrary4
                                 return;
                             }
 
+                            SmartLegendAutoRow row =
+                                grid.Rows[e.RowIndex].Tag as SmartLegendAutoRow;
+
+                            if (row == null)
+                                return;
+
+                            if (string.Equals(
+                                    columnName,
+                                    "EDIT_INFO",
+                                    StringComparison.OrdinalIgnoreCase))
+                            {
+                                syncGridToRows();
+
+                                if (ShowSmartLegendRowEditDialog(
+                                        row,
+                                        false))
+                                {
+                                    grid.Rows[e.RowIndex]
+                                        .Cells["NAME"].Value =
+                                        row.DisplayName;
+
+                                    grid.Rows[e.RowIndex]
+                                        .Cells["FOLLOW_DN"].Value =
+                                        row.FollowDn;
+
+                                    grid.Rows[e.RowIndex]
+                                        .Cells["MODE"].Value =
+                                        GetSmartLegendMatchModeDisplay(
+                                            row.MatchMode);
+                                }
+
+                                return;
+                            }
+
                             if (!string.Equals(
                                     columnName,
                                     "RESELECT",
@@ -44147,12 +44400,6 @@ namespace ClassLibrary4
                             {
                                 return;
                             }
-
-                            SmartLegendAutoRow row =
-                                grid.Rows[e.RowIndex].Tag as SmartLegendAutoRow;
-
-                            if (row == null)
-                                return;
 
                             syncGridToRows();
 
@@ -44180,6 +44427,50 @@ namespace ClassLibrary4
                             }
                         };
 
+                    addButton.Text =
+                        "+ THÊM KÝ HIỆU TỪ CAD";
+
+                    addButton.Width =
+                        235;
+
+                    addButton.Height =
+                        40;
+
+                    addButton.Left =
+                        18;
+
+                    addButton.Top =
+                        654;
+
+                    addButton.Font =
+                        new System.Drawing.Font(
+                            "Segoe UI",
+                            10.0f,
+                            System.Drawing.FontStyle.Bold);
+
+                    addButton.BackColor =
+                        System.Drawing.Color.FromArgb(
+                            22,
+                            163,
+                            74);
+
+                    addButton.ForeColor =
+                        System.Drawing.Color.White;
+
+                    addButton.FlatStyle =
+                        System.Windows.Forms.FlatStyle.Flat;
+
+                    addButton.Click +=
+                        (s, e) =>
+                        {
+                            syncGridToRows();
+
+                            form.DialogResult =
+                                System.Windows.Forms.DialogResult.Yes;
+
+                            form.Close();
+                        };
+
                     okButton.Text =
                         "OK - QUÉT BẢN VẼ";
 
@@ -44190,7 +44481,7 @@ namespace ClassLibrary4
                         40;
 
                     okButton.Left =
-                        800;
+                        785;
 
                     okButton.Top =
                         654;
@@ -44250,6 +44541,9 @@ namespace ClassLibrary4
                         grid);
 
                     form.Controls.Add(
+                        addButton);
+
+                    form.Controls.Add(
                         okButton);
 
                     form.Controls.Add(
@@ -44283,6 +44577,24 @@ namespace ClassLibrary4
                         r =>
                             !remaining.Contains(
                                 r));
+
+                    if (result ==
+                        System.Windows.Forms.DialogResult.Yes)
+                    {
+                        _smartValveStage =
+                            "LEGEND_ADD_SYMBOL_FROM_CAD";
+
+                        if (CreateSmartLegendRowFromCad(
+                                doc,
+                                out SmartLegendAutoRow newRow) &&
+                            newRow != null)
+                        {
+                            rows.Add(
+                                newRow);
+                        }
+
+                        continue;
+                    }
 
                     if (result ==
                             System.Windows.Forms.DialogResult.Retry &&
@@ -44319,6 +44631,839 @@ namespace ClassLibrary4
             }
         }
 
+        private string GetSmartLegendMatchModeDisplay(
+            string matchMode)
+        {
+            if (string.Equals(
+                    matchMode,
+                    "GEOMETRY",
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                return "HÌNH EXPLODE";
+            }
+
+            if (string.Equals(
+                    matchMode,
+                    "POINT",
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                return "POINT";
+            }
+
+            if (string.Equals(
+                    matchMode,
+                    "GENERIC",
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                return "HÌNH GENERIC";
+            }
+
+            return "BLOCK";
+        }
+
+        private bool CreateSmartLegendRowFromCad(
+            Document doc,
+            out SmartLegendAutoRow row)
+        {
+            row =
+                new SmartLegendAutoRow
+                {
+                    DisplayName =
+                        "KÝ HIỆU MỚI",
+                    FollowDn =
+                        false
+                };
+
+            if (!ReselectSmartLegendSymbol(
+                    doc,
+                    row))
+            {
+                DisposeSmartLegendRowPreview(
+                    row);
+
+                row =
+                    null;
+
+                return false;
+            }
+
+            row.DisplayName =
+                "";
+
+            if (!ShowSmartLegendRowEditDialog(
+                    row,
+                    true))
+            {
+                DisposeSmartLegendRowPreview(
+                    row);
+
+                row =
+                    null;
+
+                return false;
+            }
+
+            return
+                !string.IsNullOrWhiteSpace(
+                    row.DisplayName);
+        }
+
+        private void DisposeSmartLegendRowPreview(
+            SmartLegendAutoRow row)
+        {
+            if (row?.Preview == null)
+                return;
+
+            try
+            {
+                row.Preview.Dispose();
+            }
+            catch
+            {
+            }
+
+            row.Preview =
+                null;
+        }
+
+        private bool ShowSmartLegendRowEditDialog(
+            SmartLegendAutoRow row,
+            bool isNew)
+        {
+            if (row == null)
+                return false;
+
+            using (System.Windows.Forms.Form form =
+                new System.Windows.Forms.Form())
+            using (System.Windows.Forms.PictureBox preview =
+                new System.Windows.Forms.PictureBox())
+            using (System.Windows.Forms.Label title =
+                new System.Windows.Forms.Label())
+            using (System.Windows.Forms.Label nameLabel =
+                new System.Windows.Forms.Label())
+            using (System.Windows.Forms.TextBox nameBox =
+                new System.Windows.Forms.TextBox())
+            using (System.Windows.Forms.CheckBox followDnBox =
+                new System.Windows.Forms.CheckBox())
+            using (System.Windows.Forms.Button readTextButton =
+                new System.Windows.Forms.Button())
+            using (System.Windows.Forms.Label modeLabel =
+                new System.Windows.Forms.Label())
+            using (System.Windows.Forms.Label hint =
+                new System.Windows.Forms.Label())
+            using (System.Windows.Forms.Button saveButton =
+                new System.Windows.Forms.Button())
+            using (System.Windows.Forms.Button cancelButton =
+                new System.Windows.Forms.Button())
+            {
+                form.Text =
+                    isNew
+                        ? "THÊM KÝ HIỆU / THIẾT BỊ"
+                        : "SỬA KÝ HIỆU / THIẾT BỊ";
+
+                form.StartPosition =
+                    System.Windows.Forms.FormStartPosition.CenterScreen;
+
+                form.Width =
+                    720;
+
+                form.Height =
+                    390;
+
+                form.MinimizeBox =
+                    false;
+
+                form.MaximizeBox =
+                    false;
+
+                form.BackColor =
+                    System.Drawing.Color.White;
+
+                title.Left =
+                    20;
+
+                title.Top =
+                    16;
+
+                title.Width =
+                    650;
+
+                title.Height =
+                    28;
+
+                title.Text =
+                    isNew
+                        ? "THÊM KÝ HIỆU MỚI VÀO THƯ VIỆN NHẬN DIỆN"
+                        : "SỬA THÔNG TIN KÝ HIỆU";
+
+                title.Font =
+                    new System.Drawing.Font(
+                        "Segoe UI",
+                        12.0f,
+                        System.Drawing.FontStyle.Bold);
+
+                title.ForeColor =
+                    System.Drawing.Color.FromArgb(
+                        35,
+                        55,
+                        85);
+
+                preview.Left =
+                    20;
+
+                preview.Top =
+                    60;
+
+                preview.Width =
+                    190;
+
+                preview.Height =
+                    115;
+
+                preview.BorderStyle =
+                    System.Windows.Forms.BorderStyle.FixedSingle;
+
+                preview.BackColor =
+                    System.Drawing.Color.FromArgb(
+                        31,
+                        42,
+                        52);
+
+                preview.SizeMode =
+                    System.Windows.Forms.PictureBoxSizeMode.Zoom;
+
+                if (row.Preview != null)
+                {
+                    try
+                    {
+                        preview.Image =
+                            new System.Drawing.Bitmap(
+                                row.Preview);
+                    }
+                    catch
+                    {
+                    }
+                }
+
+                nameLabel.Left =
+                    235;
+
+                nameLabel.Top =
+                    60;
+
+                nameLabel.Width =
+                    420;
+
+                nameLabel.Height =
+                    22;
+
+                nameLabel.Text =
+                    "TÊN THIẾT BỊ / VẬT TƯ:";
+
+                nameLabel.Font =
+                    new System.Drawing.Font(
+                        "Segoe UI",
+                        9.5f,
+                        System.Drawing.FontStyle.Bold);
+
+                nameBox.Left =
+                    235;
+
+                nameBox.Top =
+                    88;
+
+                // Chừa chỗ cho nút ĐỌC TEXT TRÊN CAD.
+                nameBox.Width =
+                    270;
+
+                nameBox.Height =
+                    32;
+
+                nameBox.Font =
+                    new System.Drawing.Font(
+                        "Segoe UI",
+                        10.5f);
+
+                nameBox.Text =
+                    string.Equals(
+                        row.DisplayName,
+                        "KÝ HIỆU MỚI",
+                        StringComparison.OrdinalIgnoreCase)
+                        ? ""
+                        : (row.DisplayName ?? "");
+
+                readTextButton.Left =
+                    515;
+
+                readTextButton.Top =
+                    86;
+
+                readTextButton.Width =
+                    150;
+
+                readTextButton.Height =
+                    34;
+
+                readTextButton.Text =
+                    "ĐỌC TEXT TRÊN CAD";
+
+                readTextButton.Font =
+                    new System.Drawing.Font(
+                        "Segoe UI",
+                        8.8f,
+                        System.Drawing.FontStyle.Bold);
+
+                readTextButton.BackColor =
+                    System.Drawing.Color.FromArgb(
+                        240,
+                        249,
+                        255);
+
+                readTextButton.ForeColor =
+                    System.Drawing.Color.FromArgb(
+                        3,
+                        105,
+                        161);
+
+                readTextButton.FlatStyle =
+                    System.Windows.Forms.FlatStyle.Flat;
+
+                readTextButton.FlatAppearance.BorderColor =
+                    System.Drawing.Color.FromArgb(
+                        125,
+                        211,
+                        252);
+
+                readTextButton.Click +=
+                    (s, e) =>
+                    {
+                        string pickedText =
+                            "";
+
+                        try
+                        {
+                            // Ẩn form để click trực tiếp vào AutoCAD.
+                            form.Hide();
+
+                            if (TryPickSmartLegendTextFromCad(
+                                    out pickedText) &&
+                                !string.IsNullOrWhiteSpace(
+                                    pickedText))
+                            {
+                                nameBox.Text =
+                                    NormalizeSmartDisplayName(
+                                        pickedText);
+                            }
+                        }
+                        finally
+                        {
+                            try
+                            {
+                                form.Show();
+                                form.Activate();
+                                form.BringToFront();
+
+                                nameBox.Focus();
+                                nameBox.SelectAll();
+                            }
+                            catch
+                            {
+                            }
+                        }
+                    };
+
+                followDnBox.Left =
+                    235;
+
+                followDnBox.Top =
+                    135;
+
+                followDnBox.Width =
+                    250;
+
+                followDnBox.Height =
+                    28;
+
+                followDnBox.Text =
+                    "LẤY SIZE THEO DN ỐNG";
+
+                followDnBox.Font =
+                    new System.Drawing.Font(
+                        "Segoe UI",
+                        9.5f,
+                        System.Drawing.FontStyle.Bold);
+
+                followDnBox.Checked =
+                    row.FollowDn;
+
+                modeLabel.Left =
+                    235;
+
+                modeLabel.Top =
+                    175;
+
+                modeLabel.Width =
+                    430;
+
+                modeLabel.Height =
+                    22;
+
+                modeLabel.Text =
+                    "NHẬN DẠNG: " +
+                    GetSmartLegendMatchModeDisplay(
+                        row.MatchMode);
+
+                modeLabel.ForeColor =
+                    System.Drawing.Color.FromArgb(
+                        70,
+                        90,
+                        115);
+
+                hint.Left =
+                    20;
+
+                hint.Top =
+                    220;
+
+                hint.Width =
+                    645;
+
+                hint.Height =
+                    68;
+
+                hint.Text =
+                    "Có thể GÕ TAY hoặc bấm ĐỌC TEXT TRÊN CAD để lấy nhanh tên từ bản vẽ. " +
+                    "Khi bấm THÊM VÀO THƯ VIỆN / LƯU THAY ĐỔI, mẫu được lưu NGAY vào thư viện + AI Learning Local. " +
+                    "Nếu là van/flow switch nằm trên ống thì tick THEO DN.";
+
+                hint.ForeColor =
+                    System.Drawing.Color.FromArgb(
+                        80,
+                        80,
+                        80);
+
+                saveButton.Text =
+                    isNew
+                        ? "THÊM VÀO THƯ VIỆN"
+                        : "LƯU THAY ĐỔI";
+
+                saveButton.Width =
+                    185;
+
+                saveButton.Height =
+                    40;
+
+                saveButton.Left =
+                    365;
+
+                saveButton.Top =
+                    300;
+
+                saveButton.BackColor =
+                    System.Drawing.Color.FromArgb(
+                        37,
+                        99,
+                        235);
+
+                saveButton.ForeColor =
+                    System.Drawing.Color.White;
+
+                saveButton.FlatStyle =
+                    System.Windows.Forms.FlatStyle.Flat;
+
+                saveButton.Font =
+                    new System.Drawing.Font(
+                        "Segoe UI",
+                        9.5f,
+                        System.Drawing.FontStyle.Bold);
+
+                saveButton.DialogResult =
+                    System.Windows.Forms.DialogResult.OK;
+
+                cancelButton.Text =
+                    "HỦY";
+
+                cancelButton.Width =
+                    110;
+
+                cancelButton.Height =
+                    40;
+
+                cancelButton.Left =
+                    560;
+
+                cancelButton.Top =
+                    300;
+
+                cancelButton.DialogResult =
+                    System.Windows.Forms.DialogResult.Cancel;
+
+                form.Controls.Add(
+                    title);
+
+                form.Controls.Add(
+                    preview);
+
+                form.Controls.Add(
+                    nameLabel);
+
+                form.Controls.Add(
+                    nameBox);
+
+                form.Controls.Add(
+                    readTextButton);
+
+                form.Controls.Add(
+                    followDnBox);
+
+                form.Controls.Add(
+                    modeLabel);
+
+                form.Controls.Add(
+                    hint);
+
+                form.Controls.Add(
+                    saveButton);
+
+                form.Controls.Add(
+                    cancelButton);
+
+                form.AcceptButton =
+                    saveButton;
+
+                form.CancelButton =
+                    cancelButton;
+
+                form.Shown +=
+                    (s, e) =>
+                    {
+                        nameBox.Focus();
+                        nameBox.SelectAll();
+                    };
+
+                if (form.ShowDialog() !=
+                    System.Windows.Forms.DialogResult.OK)
+                {
+                    return false;
+                }
+
+                string name =
+                    NormalizeSmartDisplayName(
+                        nameBox.Text);
+
+                if (string.IsNullOrWhiteSpace(
+                        name))
+                {
+                    System.Windows.Forms.MessageBox.Show(
+                        "Bạn chưa nhập TÊN THIẾT BỊ / VẬT TƯ.",
+                        "THƯ VIỆN KÝ HIỆU",
+                        System.Windows.Forms.MessageBoxButtons.OK,
+                        System.Windows.Forms.MessageBoxIcon.Warning);
+
+                    return false;
+                }
+
+                row.DisplayName =
+                    name;
+
+                row.FollowDn =
+                    followDnBox.Checked;
+
+                // STEP20B:
+                // Bấm LƯU/THÊM là học NGAY. Không phụ thuộc việc sau đó
+                // người dùng có bấm OK - QUÉT BẢN VẼ ở form Legend hay không.
+                PersistSmartLegendRowImmediately(
+                    row,
+                    isNew
+                        ? "MANUAL_SYMBOL_ADD"
+                        : "MANUAL_SYMBOL_EDIT");
+
+                return true;
+            }
+        }
+
+        private bool TryPickSmartLegendTextFromCad(
+            out string pickedText)
+        {
+            pickedText =
+                "";
+
+            Document doc =
+                Autodesk.AutoCAD.ApplicationServices.Core.Application
+                    .DocumentManager
+                    .MdiActiveDocument;
+
+            if (doc == null)
+                return false;
+
+            Editor ed =
+                doc.Editor;
+
+            Database db =
+                doc.Database;
+
+            try
+            {
+                Autodesk.AutoCAD.ApplicationServices.Core.Application
+                    .MainWindow
+                    .Focus();
+            }
+            catch
+            {
+            }
+
+            PromptEntityOptions peo =
+                new PromptEntityOptions(
+                    "\nChọn TEXT / MTEXT / ATTRIBUTE / MLEADER chứa TÊN THIẾT BỊ: ");
+
+            peo.SetRejectMessage(
+                "\nĐối tượng này không phải text. Hãy chọn TEXT, MTEXT, ATTRIBUTE hoặc MLEADER có chữ.");
+
+            peo.AddAllowedClass(
+                typeof(DBText),
+                true);
+
+            peo.AddAllowedClass(
+                typeof(MText),
+                true);
+
+            peo.AddAllowedClass(
+                typeof(AttributeReference),
+                true);
+
+            peo.AddAllowedClass(
+                typeof(MLeader),
+                true);
+
+            PromptEntityResult per =
+                ed.GetEntity(
+                    peo);
+
+            if (per.Status !=
+                PromptStatus.OK)
+            {
+                return false;
+            }
+
+            using (Transaction tr =
+                db.TransactionManager.StartTransaction())
+            {
+                Entity ent =
+                    tr.GetObject(
+                        per.ObjectId,
+                        OpenMode.ForRead,
+                        false) as Entity;
+
+                if (ent == null)
+                {
+                    tr.Commit();
+                    return false;
+                }
+
+                string raw =
+                    "";
+
+                if (ent is DBText dbText)
+                {
+                    raw =
+                        dbText.TextString ??
+                        "";
+                }
+                else if (ent is MText mText)
+                {
+                    raw =
+                        mText.Text ??
+                        "";
+                }
+                else if (ent is AttributeReference attribute)
+                {
+                    raw =
+                        attribute.TextString ??
+                        "";
+                }
+                else if (ent is MLeader leader)
+                {
+                    try
+                    {
+                        MText leaderText =
+                            leader.MText;
+
+                        if (leaderText != null)
+                        {
+                            raw =
+                                leaderText.Text ??
+                                "";
+                        }
+                    }
+                    catch
+                    {
+                    }
+                }
+
+                tr.Commit();
+
+                pickedText =
+                    CleanSmartCadPickedText(
+                        raw);
+            }
+
+            if (string.IsNullOrWhiteSpace(
+                    pickedText))
+            {
+                MessageBox.Show(
+                    "Text vừa chọn không có nội dung đọc được.",
+                    "ĐỌC TEXT TRÊN CAD");
+
+                return false;
+            }
+
+            return true;
+        }
+
+        private string CleanSmartCadPickedText(
+            string value)
+        {
+            string result =
+                value ??
+                "";
+
+            result =
+                result
+                    .Replace(
+                        "\\P",
+                        " ")
+                    .Replace(
+                        "\r",
+                        " ")
+                    .Replace(
+                        "\n",
+                        " ")
+                    .Replace(
+                        "\t",
+                        " ");
+
+            // Bỏ một số format code MText thường gặp nhưng giữ nguyên tiếng Việt.
+            result =
+                Regex.Replace(
+                    result,
+                    @"\\[ACFHQTW][^;]*;",
+                    "");
+
+            result =
+                Regex.Replace(
+                    result,
+                    @"\{|\}",
+                    "");
+
+            result =
+                Regex.Replace(
+                    result,
+                    @"\s+",
+                    " ");
+
+            return
+                result.Trim();
+        }
+
+        private void PersistSmartLegendRowImmediately(
+            SmartLegendAutoRow row,
+            string source)
+        {
+            if (row == null ||
+                string.IsNullOrWhiteSpace(
+                    row.DisplayName) ||
+                string.IsNullOrWhiteSpace(
+                    row.BlockKey))
+            {
+                return;
+            }
+
+            string sizeRule =
+                row.FollowDn
+                    ? "THEO_ONG"
+                    : "KHONG_SIZE";
+
+            List<SmartSymbolRule> library =
+                LoadSmartSymbolRules();
+
+            SmartSymbolRule primaryRule =
+                new SmartSymbolRule
+                {
+                    BlockKey =
+                        row.BlockKey,
+                    DisplayName =
+                        row.DisplayName,
+                    SizeRule =
+                        sizeRule,
+                    MatchMode =
+                        row.MatchMode,
+                    GeometryFingerprint =
+                        row.GeometryFingerprint ?? "",
+                    RasterSignature =
+                        row.RasterSignature ?? ""
+                };
+
+            UpsertSmartRuleList(
+                library,
+                primaryRule);
+
+            List<SmartSymbolRule> learnedRules =
+                new List<SmartSymbolRule>
+                {
+                    primaryRule
+                };
+
+            // BLOCK có thêm fallback theo hình học để lần sau tên block đổi
+            // nhưng hình ký hiệu giống thì vẫn còn cơ hội nhận đúng.
+            if (string.Equals(
+                    row.MatchMode,
+                    "BLOCK",
+                    StringComparison.OrdinalIgnoreCase) &&
+                !string.IsNullOrWhiteSpace(
+                    row.GeometryFingerprint))
+            {
+                SmartSymbolRule geometryRule =
+                    new SmartSymbolRule
+                    {
+                        BlockKey =
+                            "GEO_BLOCK_" +
+                            Convert.ToBase64String(
+                                Encoding.UTF8.GetBytes(
+                                    row.GeometryFingerprint)),
+                        DisplayName =
+                            row.DisplayName,
+                        SizeRule =
+                            sizeRule,
+                        MatchMode =
+                            "GEOMETRY",
+                        GeometryFingerprint =
+                            row.GeometryFingerprint,
+                        RasterSignature =
+                            row.RasterSignature ?? ""
+                    };
+
+                UpsertSmartRuleList(
+                    library,
+                    geometryRule);
+
+                learnedRules.Add(
+                    geometryRule);
+            }
+
+            SaveSmartSymbolRules(
+                library);
+
+            // Local AI Memory cũng ghi ngay.
+            LearnAiFromSymbolRules(
+                learnedRules,
+                string.IsNullOrWhiteSpace(
+                    source)
+                    ? "MANUAL_SYMBOL_EDIT"
+                    : source);
+
+            UpdateAiLearningStatusUi();
+        }
+
         private bool ReselectSmartLegendSymbol(
             Document doc,
             SmartLegendAutoRow row)
@@ -44349,9 +45494,12 @@ namespace ClassLibrary4
                 new PromptSelectionOptions();
 
             pso.MessageForAdding =
-                "\nQuét lại ĐÚNG KÝ HIỆU cho \"" +
-                row.DisplayName +
-                "\". Có thể chọn 1 BLOCK hoặc quét các nét EXPLODE của ký hiệu: ";
+                "\nChọn ĐÚNG KÝ HIỆU cho \"" +
+                (string.IsNullOrWhiteSpace(
+                     row.DisplayName)
+                    ? "KÝ HIỆU MỚI"
+                    : row.DisplayName) +
+                "\". Có thể chọn BLOCK, POINT hoặc quét các nét EXPLODE/HATCH/SOLID của ký hiệu: ";
 
             PromptSelectionResult psr =
                 ed.GetSelection(
@@ -44376,7 +45524,10 @@ namespace ClassLibrary4
                 ObjectId blockId =
                     ObjectId.Null;
 
-                List<ObjectId> geometryIds =
+                ObjectId pointId =
+                    ObjectId.Null;
+
+                List<ObjectId> graphicalIds =
                     new List<ObjectId>();
 
                 foreach (ObjectId id
@@ -44394,6 +45545,15 @@ namespace ClassLibrary4
                         continue;
                     }
 
+                    if (ent is DBText ||
+                        ent is MText)
+                    {
+                        continue;
+                    }
+
+                    graphicalIds.Add(
+                        id);
+
                     if (ent is BlockReference &&
                         blockId.IsNull)
                     {
@@ -44403,14 +45563,23 @@ namespace ClassLibrary4
                         continue;
                     }
 
-                    if (ent is Line ||
-                        ent is Arc ||
-                        ent is Circle ||
-                        ent is Polyline)
+                    if (ent is DBPoint &&
+                        pointId.IsNull)
                     {
-                        geometryIds.Add(
-                            id);
+                        pointId =
+                            id;
                     }
+                }
+
+                if (graphicalIds.Count == 0)
+                {
+                    tr.Commit();
+
+                    MessageBox.Show(
+                        "Vùng vừa chọn không có đối tượng đồ họa hợp lệ.",
+                        "CHỌN KÝ HIỆU");
+
+                    return false;
                 }
 
                 List<ObjectId> previewIds =
@@ -44432,8 +45601,12 @@ namespace ClassLibrary4
                             : "";
 
                     string blockKey =
-                        NormalizeSmartSymbolKey(
-                            blockName);
+                        br != null
+                            ? GetSmartBlockIdentityKey(
+                                tr,
+                                br)
+                            : NormalizeSmartSymbolKey(
+                                blockName);
 
                     if (string.IsNullOrWhiteSpace(
                             blockKey))
@@ -44449,10 +45622,22 @@ namespace ClassLibrary4
                         blockKey;
 
                     row.GeometryFingerprint =
-                        "";
+                        br != null
+                            ? BuildSmartBlockGeometryFingerprint(
+                                tr,
+                                br)
+                            : "";
 
                     row.SymbolSummary =
-                        blockName;
+                        blockName +
+                        (br != null &&
+                         !string.IsNullOrWhiteSpace(
+                             GetSmartDynamicBlockStateKey(
+                                 br))
+                            ? " / STATE: " +
+                              GetSmartDynamicBlockStateKey(
+                                  br)
+                            : "");
 
                     if (br != null)
                     {
@@ -44466,57 +45651,113 @@ namespace ClassLibrary4
                     previewIds.Add(
                         blockId);
                 }
-                else
+                else if (!pointId.IsNull &&
+                         graphicalIds.Count == 1)
                 {
-                    if (geometryIds.Count == 0)
+                    DBPoint point =
+                        tr.GetObject(
+                            pointId,
+                            OpenMode.ForRead,
+                            false) as DBPoint;
+
+                    if (point == null)
                     {
                         tr.Commit();
-
-                        MessageBox.Show(
-                            "Không thấy BLOCK hoặc nét LINE/ARC/CIRCLE/POLYLINE hợp lệ trong vùng vừa chọn.",
-                            "CHỌN LẠI KÝ HIỆU");
-
-                        return false;
-                    }
-
-                    string fingerprint =
-                        BuildSmartGeometryFingerprint(
-                            tr,
-                            geometryIds);
-
-                    if (string.IsNullOrWhiteSpace(
-                            fingerprint))
-                    {
-                        tr.Commit();
-
-                        MessageBox.Show(
-                            "Không tạo được dấu vân tay hình học. Hãy quét đúng các nét của ký hiệu, không quét text/khung bảng.",
-                            "CHỌN LẠI KÝ HIỆU");
-
                         return false;
                     }
 
                     row.MatchMode =
-                        "GEOMETRY";
-
-                    row.GeometryFingerprint =
-                        fingerprint;
+                        "POINT";
 
                     row.BlockKey =
-                        "GEO_" +
-                        Convert.ToBase64String(
-                            Encoding.UTF8.GetBytes(
-                                fingerprint));
+                        GetSmartPointSignature(
+                            point);
+
+                    row.GeometryFingerprint =
+                        "";
 
                     row.SymbolSummary =
-                        GetSmartGeometryFingerprintSummary(
-                            fingerprint);
+                        GetSmartPointSummary(
+                            point);
+
+                    row.SymbolCenter =
+                        new Point3d(
+                            point.Position.X,
+                            point.Position.Y,
+                            0.0);
+
+                    previewIds.Add(
+                        pointId);
+                }
+                else
+                {
+                    string fingerprint =
+                        BuildSmartGeometryFingerprint(
+                            tr,
+                            graphicalIds);
+
+                    if (!string.IsNullOrWhiteSpace(
+                            fingerprint))
+                    {
+                        row.MatchMode =
+                            "GEOMETRY";
+
+                        row.GeometryFingerprint =
+                            fingerprint;
+
+                        row.BlockKey =
+                            "GEO_" +
+                            Convert.ToBase64String(
+                                Encoding.UTF8.GetBytes(
+                                    fingerprint));
+
+                        row.SymbolSummary =
+                            GetSmartGeometryFingerprintSummary(
+                                fingerprint);
+                    }
+                    else
+                    {
+                        fingerprint =
+                            BuildSmartGenericLegendFingerprint(
+                                tr,
+                                graphicalIds);
+
+                        if (string.IsNullOrWhiteSpace(
+                                fingerprint))
+                        {
+                            tr.Commit();
+
+                            MessageBox.Show(
+                                "Không tạo được dấu vân tay cho ký hiệu. Hãy chọn riêng phần hình của ký hiệu, không chọn text/khung bảng.",
+                                "CHỌN KÝ HIỆU");
+
+                            return false;
+                        }
+
+                        row.MatchMode =
+                            "GENERIC";
+
+                        row.GeometryFingerprint =
+                            fingerprint;
+
+                        row.BlockKey =
+                            "GEN_" +
+                            Convert.ToBase64String(
+                                Encoding.UTF8.GetBytes(
+                                    fingerprint));
+
+                        row.SymbolSummary =
+                            "GENERIC / " +
+                            GetSmartGenericLegendSummary(
+                                tr,
+                                graphicalIds);
+                    }
 
                     List<Point3d> centers =
                         new List<Point3d>();
 
                     foreach (ObjectId id
-                        in geometryIds)
+                        in graphicalIds)
                     {
                         Entity ent =
                             tr.GetObject(
@@ -44550,16 +45791,14 @@ namespace ClassLibrary4
                         row.SymbolCenter =
                             new Point3d(
                                 centers.Average(
-                                    p =>
-                                        p.X),
+                                    p => p.X),
                                 centers.Average(
-                                    p =>
-                                        p.Y),
+                                    p => p.Y),
                                 0.0);
                     }
 
                     previewIds =
-                        geometryIds;
+                        graphicalIds;
                 }
 
                 if (row.Preview != null)
@@ -44571,6 +45810,21 @@ namespace ClassLibrary4
                     catch
                     {
                     }
+
+                    row.Preview =
+                        null;
+                }
+
+                using (System.Drawing.Bitmap visionBitmap =
+                    CreateSmartLegendPreviewBitmap(
+                        tr,
+                        previewIds,
+                        96,
+                        96))
+                {
+                    row.RasterSignature =
+                        BuildSmartRasterSignature(
+                            visionBitmap);
                 }
 
                 row.Preview =
@@ -44633,6 +45887,8 @@ namespace ClassLibrary4
                             row.BlockKey,
                         GeometryFingerprint =
                             row.GeometryFingerprint,
+                        RasterSignature =
+                            row.RasterSignature,
                         SymbolSummary =
                             row.SymbolSummary,
                         SymbolCenter =
@@ -44672,7 +45928,9 @@ namespace ClassLibrary4
                         MatchMode =
                             rule.MatchMode,
                         GeometryFingerprint =
-                            rule.GeometryFingerprint
+                            rule.GeometryFingerprint,
+                        RasterSignature =
+                            rule.RasterSignature
                     });
             }
 
@@ -44878,7 +46136,9 @@ namespace ClassLibrary4
                         MatchMode =
                             row.MatchMode,
                         GeometryFingerprint =
-                            row.GeometryFingerprint ?? ""
+                            row.GeometryFingerprint ?? "",
+                        RasterSignature =
+                            row.RasterSignature ?? ""
                     };
 
                 currentProjectRules.Add(
@@ -44912,7 +46172,9 @@ namespace ClassLibrary4
                             MatchMode =
                                 "GEOMETRY",
                             GeometryFingerprint =
-                                row.GeometryFingerprint
+                                row.GeometryFingerprint,
+                            RasterSignature =
+                                row.RasterSignature ?? ""
                         };
 
                     currentProjectRules.Add(
@@ -44970,7 +46232,9 @@ namespace ClassLibrary4
                             MatchMode =
                                 currentRule.MatchMode,
                             GeometryFingerprint =
-                                currentRule.GeometryFingerprint
+                                currentRule.GeometryFingerprint,
+                            RasterSignature =
+                                currentRule.RasterSignature
                         });
                 }
                 else
@@ -44986,6 +46250,9 @@ namespace ClassLibrary4
 
                     existing.GeometryFingerprint =
                         currentRule.GeometryFingerprint;
+
+                    existing.RasterSignature =
+                        currentRule.RasterSignature;
                 }
 
                 if (geometryFallbackRule != null)
@@ -45040,6 +46307,763 @@ namespace ClassLibrary4
                     null;
             }
         }
+
+        // ============================================================
+        // STEP19 - HYBRID VISION LITE
+        // ------------------------------------------------------------
+        // Mục tiêu: bổ sung một tầng nhận dạng bằng HÌNH ẢNH nhưng không kéo
+        // EmguCV/OpenCV native DLL vào AutoCAD ngay ở giai đoạn này.
+        //
+        // Flow:
+        // Exact BlockKey -> Vector Fingerprint -> Raster Silhouette -> Pipe Context.
+        // Raster được chuẩn hóa scale + vị trí và so cả 4 góc xoay 90 độ.
+        // ============================================================
+
+        private string BuildSmartRasterSignature(
+            System.Drawing.Bitmap bitmap)
+        {
+            if (bitmap == null ||
+                bitmap.Width <= 0 ||
+                bitmap.Height <= 0)
+            {
+                return "";
+            }
+
+            const int gridSize = 16;
+
+            byte[,] grid =
+                BuildSmartRasterGrid(
+                    bitmap,
+                    gridSize);
+
+            if (grid == null)
+                return "";
+
+            List<string> variants =
+                new List<string>();
+
+            byte[,] current = grid;
+
+            for (int rotation = 0;
+                rotation < 4;
+                rotation++)
+            {
+                byte[] flat =
+                    new byte[
+                        gridSize *
+                        gridSize];
+
+                int k = 0;
+
+                for (int y = 0;
+                    y < gridSize;
+                    y++)
+                {
+                    for (int x = 0;
+                        x < gridSize;
+                        x++)
+                    {
+                        flat[k++] =
+                            current[x, y];
+                    }
+                }
+
+                variants.Add(
+                    Convert.ToBase64String(
+                        flat));
+
+                current =
+                    RotateSmartRasterGrid90(
+                        current);
+            }
+
+            return
+                string.Join(
+                    ";",
+                    variants);
+        }
+
+        private byte[,] BuildSmartRasterGrid(
+            System.Drawing.Bitmap bitmap,
+            int gridSize)
+        {
+            if (bitmap == null ||
+                gridSize <= 0)
+            {
+                return null;
+            }
+
+            System.Drawing.Color background =
+                bitmap.GetPixel(
+                    0,
+                    0);
+
+            int width =
+                bitmap.Width;
+
+            int height =
+                bitmap.Height;
+
+            bool[,] foreground =
+                new bool[
+                    width,
+                    height];
+
+            int minX = width;
+            int minY = height;
+            int maxX = -1;
+            int maxY = -1;
+
+            for (int y = 0;
+                y < height;
+                y++)
+            {
+                for (int x = 0;
+                    x < width;
+                    x++)
+                {
+                    System.Drawing.Color c =
+                        bitmap.GetPixel(
+                            x,
+                            y);
+
+                    int dr = c.R - background.R;
+                    int dg = c.G - background.G;
+                    int db = c.B - background.B;
+
+                    double colorDistance =
+                        Math.Sqrt(
+                            dr * dr +
+                            dg * dg +
+                            db * db);
+
+                    bool isForeground =
+                        colorDistance >= 34.0;
+
+                    foreground[x, y] =
+                        isForeground;
+
+                    if (!isForeground)
+                        continue;
+
+                    minX = Math.Min(minX, x);
+                    minY = Math.Min(minY, y);
+                    maxX = Math.Max(maxX, x);
+                    maxY = Math.Max(maxY, y);
+                }
+            }
+
+            if (maxX < minX ||
+                maxY < minY)
+            {
+                return
+                    new byte[
+                        gridSize,
+                        gridSize];
+            }
+
+            int cropWidth =
+                Math.Max(
+                    1,
+                    maxX - minX + 1);
+
+            int cropHeight =
+                Math.Max(
+                    1,
+                    maxY - minY + 1);
+
+            int square =
+                Math.Max(
+                    cropWidth,
+                    cropHeight);
+
+            double centerX =
+                (minX + maxX) * 0.5;
+
+            double centerY =
+                (minY + maxY) * 0.5;
+
+            double left =
+                centerX - square * 0.5;
+
+            double top =
+                centerY - square * 0.5;
+
+            byte[,] result =
+                new byte[
+                    gridSize,
+                    gridSize];
+
+            for (int gy = 0;
+                gy < gridSize;
+                gy++)
+            {
+                for (int gx = 0;
+                    gx < gridSize;
+                    gx++)
+                {
+                    double x0 =
+                        left +
+                        square * gx / gridSize;
+
+                    double x1 =
+                        left +
+                        square * (gx + 1) / gridSize;
+
+                    double y0 =
+                        top +
+                        square * gy / gridSize;
+
+                    double y1 =
+                        top +
+                        square * (gy + 1) / gridSize;
+
+                    int ix0 =
+                        Math.Max(
+                            0,
+                            (int)Math.Floor(x0));
+
+                    int ix1 =
+                        Math.Min(
+                            width - 1,
+                            (int)Math.Ceiling(x1));
+
+                    int iy0 =
+                        Math.Max(
+                            0,
+                            (int)Math.Floor(y0));
+
+                    int iy1 =
+                        Math.Min(
+                            height - 1,
+                            (int)Math.Ceiling(y1));
+
+                    int count = 0;
+                    int total = 0;
+
+                    for (int py = iy0;
+                        py <= iy1;
+                        py++)
+                    {
+                        for (int px = ix0;
+                            px <= ix1;
+                            px++)
+                        {
+                            total++;
+
+                            if (foreground[px, py])
+                            {
+                                count++;
+                            }
+                        }
+                    }
+
+                    double occupancy =
+                        total > 0
+                            ? (double)count / total
+                            : 0.0;
+
+                    // Thin CAD strokes need amplification after downsampling.
+                    occupancy =
+                        Math.Min(
+                            1.0,
+                            occupancy * 3.2);
+
+                    result[gx, gy] =
+                        (byte)Math.Round(
+                            occupancy * 255.0);
+                }
+            }
+
+            return result;
+        }
+
+        private byte[,] RotateSmartRasterGrid90(
+            byte[,] source)
+        {
+            if (source == null)
+                return null;
+
+            int width =
+                source.GetLength(0);
+
+            int height =
+                source.GetLength(1);
+
+            byte[,] result =
+                new byte[
+                    height,
+                    width];
+
+            for (int y = 0;
+                y < height;
+                y++)
+            {
+                for (int x = 0;
+                    x < width;
+                    x++)
+                {
+                    result[
+                        height - 1 - y,
+                        x] =
+                        source[x, y];
+                }
+            }
+
+            return result;
+        }
+
+        private double CompareSmartRasterSignatures(
+            string a,
+            string b)
+        {
+            if (string.IsNullOrWhiteSpace(a) ||
+                string.IsNullOrWhiteSpace(b))
+            {
+                return double.MaxValue;
+            }
+
+            string[] variantsA =
+                a.Split(
+                    new char[] { ';' },
+                    StringSplitOptions.RemoveEmptyEntries);
+
+            string[] variantsB =
+                b.Split(
+                    new char[] { ';' },
+                    StringSplitOptions.RemoveEmptyEntries);
+
+            double best =
+                double.MaxValue;
+
+            foreach (string va in variantsA)
+            {
+                byte[] ba;
+
+                try
+                {
+                    ba =
+                        Convert.FromBase64String(
+                            va);
+                }
+                catch
+                {
+                    continue;
+                }
+
+                foreach (string vb in variantsB)
+                {
+                    byte[] bb;
+
+                    try
+                    {
+                        bb =
+                            Convert.FromBase64String(
+                                vb);
+                    }
+                    catch
+                    {
+                        continue;
+                    }
+
+                    int n =
+                        Math.Min(
+                            ba.Length,
+                            bb.Length);
+
+                    if (n <= 0)
+                        continue;
+
+                    double total = 0.0;
+
+                    for (int i = 0;
+                        i < n;
+                        i++)
+                    {
+                        total +=
+                            Math.Abs(
+                                ba[i] - bb[i]) /
+                            255.0;
+                    }
+
+                    double score =
+                        total / n;
+
+                    if (score < best)
+                    {
+                        best = score;
+                    }
+                }
+            }
+
+            return best;
+        }
+
+        private double CompareSmartGeometryStructureRelaxed(
+            string learned,
+            string candidate)
+        {
+            if (!TryParseSmartGeometryFingerprint(
+                    learned,
+                    out SmartGeometryFingerprintData a) ||
+                !TryParseSmartGeometryFingerprint(
+                    candidate,
+                    out SmartGeometryFingerprintData b))
+            {
+                return double.MaxValue;
+            }
+
+            double[] ca =
+                new double[]
+                {
+                    a.LineCount,
+                    a.ArcCount,
+                    a.CircleCount,
+                    a.PolylineCount
+                };
+
+            double[] cb =
+                new double[]
+                {
+                    b.LineCount,
+                    b.ArcCount,
+                    b.CircleCount,
+                    b.PolylineCount
+                };
+
+            double countDiff =
+                0.0;
+
+            double countBase =
+                0.0;
+
+            for (int i = 0;
+                i < ca.Length;
+                i++)
+            {
+                countDiff +=
+                    Math.Abs(
+                        ca[i] -
+                        cb[i]);
+
+                countBase +=
+                    Math.Max(
+                        ca[i],
+                        cb[i]);
+            }
+
+            double countScore =
+                countBase > 0.0
+                    ? countDiff /
+                      countBase
+                    : 0.0;
+
+            double topologyPenalty =
+                0.0;
+
+            if ((a.CircleCount > 0) !=
+                (b.CircleCount > 0))
+            {
+                topologyPenalty +=
+                    0.28;
+            }
+
+            if ((a.ArcCount > 0) !=
+                (b.ArcCount > 0))
+            {
+                topologyPenalty +=
+                    0.18;
+            }
+
+            int totalA =
+                a.LineCount +
+                a.ArcCount +
+                a.CircleCount +
+                a.PolylineCount;
+
+            int totalB =
+                b.LineCount +
+                b.ArcCount +
+                b.CircleCount +
+                b.PolylineCount;
+
+            double entityCountScore =
+                Math.Abs(
+                    totalA -
+                    totalB) /
+                Math.Max(
+                    1.0,
+                    Math.Max(
+                        totalA,
+                        totalB));
+
+            return
+                Math.Min(
+                    1.0,
+                    countScore *
+                        0.55 +
+                    entityCountScore *
+                        0.20 +
+                    topologyPenalty);
+        }
+
+        private string BuildSmartBlockRasterSignature(
+            Transaction tr,
+            BlockReference br)
+        {
+            if (tr == null ||
+                br == null)
+            {
+                return "";
+            }
+
+            try
+            {
+                using (System.Drawing.Bitmap bitmap =
+                    CreateSmartLegendPreviewBitmap(
+                        tr,
+                        new List<ObjectId>
+                        {
+                            br.ObjectId
+                        },
+                        96,
+                        96))
+                {
+                    return
+                        BuildSmartRasterSignature(
+                            bitmap);
+                }
+            }
+            catch
+            {
+                return "";
+            }
+        }
+
+        private bool TryMatchSmartBlockByRaster(
+            Transaction tr,
+            BlockReference br,
+            List<SmartSymbolRule> rasterRules,
+            out SmartSymbolRule bestRule,
+            out double bestScore,
+            out string candidateSignature)
+        {
+            bestRule =
+                null;
+
+            bestScore =
+                double.MaxValue;
+
+            candidateSignature =
+                "";
+
+            if (tr == null ||
+                br == null ||
+                rasterRules == null ||
+                rasterRules.Count == 0)
+            {
+                return false;
+            }
+
+            using (System.Drawing.Bitmap bitmap =
+                CreateSmartLegendPreviewBitmap(
+                    tr,
+                    new List<ObjectId>
+                    {
+                        br.ObjectId
+                    },
+                    96,
+                    96))
+            {
+                candidateSignature =
+                    BuildSmartRasterSignature(
+                        bitmap);
+            }
+
+            if (string.IsNullOrWhiteSpace(
+                    candidateSignature))
+            {
+                return false;
+            }
+
+            string candidateGeometry =
+                BuildSmartBlockGeometryFingerprint(
+                    tr,
+                    br);
+
+            List<SmartVisionCandidateScore> scores =
+                new List<SmartVisionCandidateScore>();
+
+            foreach (SmartSymbolRule rule
+                in rasterRules)
+            {
+                if (rule == null ||
+                    string.IsNullOrWhiteSpace(
+                        rule.RasterSignature) ||
+                    string.IsNullOrWhiteSpace(
+                        rule.DisplayName))
+                {
+                    continue;
+                }
+
+                double rasterScore =
+                    CompareSmartRasterSignatures(
+                        rule.RasterSignature,
+                        candidateSignature);
+
+                if (rasterScore >=
+                        double.MaxValue ||
+                    double.IsNaN(
+                        rasterScore) ||
+                    double.IsInfinity(
+                        rasterScore))
+                {
+                    continue;
+                }
+
+                double structureScore =
+                    double.MaxValue;
+
+                if (!string.IsNullOrWhiteSpace(
+                        candidateGeometry) &&
+                    !string.IsNullOrWhiteSpace(
+                        rule.GeometryFingerprint))
+                {
+                    structureScore =
+                        CompareSmartGeometryStructureRelaxed(
+                            rule.GeometryFingerprint,
+                            candidateGeometry);
+                }
+
+                // Hình học khác loại rõ rệt => không cho raster "cứ gần nhất là thắng".
+                if (structureScore <
+                        double.MaxValue &&
+                    structureScore >
+                        0.58)
+                {
+                    continue;
+                }
+
+                double combinedScore =
+                    structureScore <
+                        double.MaxValue
+                        ? rasterScore *
+                              0.72 +
+                          structureScore *
+                              0.28
+                        : rasterScore +
+                          0.018;
+
+                scores.Add(
+                    new SmartVisionCandidateScore
+                    {
+                        Rule =
+                            rule,
+                        RasterScore =
+                            rasterScore,
+                        StructureScore =
+                            structureScore,
+                        CombinedScore =
+                            combinedScore
+                    });
+            }
+
+            if (scores.Count == 0)
+                return false;
+
+            List<SmartVisionCandidateScore> ranked =
+                scores
+                    .GroupBy(
+                        x =>
+                            x.Rule.DisplayName,
+                        StringComparer.OrdinalIgnoreCase)
+                    .Select(
+                        g =>
+                            g.OrderBy(
+                                 x =>
+                                     x.CombinedScore)
+                             .ThenBy(
+                                 x =>
+                                     x.RasterScore)
+                             .First())
+                    .OrderBy(
+                        x =>
+                            x.CombinedScore)
+                    .ThenBy(
+                        x =>
+                            x.RasterScore)
+                    .ToList();
+
+            SmartVisionCandidateScore best =
+                ranked[0];
+
+            bestRule =
+                best.Rule;
+
+            bestScore =
+                best.RasterScore;
+
+            bool acceptableRaster =
+                best.RasterScore <=
+                0.115;
+
+            bool structureGood =
+                best.StructureScore >=
+                    double.MaxValue ||
+                best.StructureScore <=
+                    0.36;
+
+            if (!acceptableRaster ||
+                !structureGood ||
+                best.CombinedScore >
+                    0.165)
+            {
+                bestRule =
+                    null;
+
+                return false;
+            }
+
+            if (ranked.Count > 1)
+            {
+                SmartVisionCandidateScore second =
+                    ranked[1];
+
+                double combinedMargin =
+                    second.CombinedScore -
+                    best.CombinedScore;
+
+                double rasterMargin =
+                    second.RasterScore -
+                    best.RasterScore;
+
+                bool exceptional =
+                    best.RasterScore <=
+                        0.095 &&
+                    best.StructureScore <
+                        double.MaxValue &&
+                    best.StructureScore <=
+                        0.20 &&
+                    combinedMargin >=
+                        0.018;
+
+                if (combinedMargin <
+                        0.032 &&
+                    rasterMargin <
+                        0.030 &&
+                    !exceptional)
+                {
+                    // Mơ hồ: trả về UNKNOWN, không nhận bừa.
+                    bestRule =
+                        null;
+
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
 
         private System.Drawing.Bitmap CreateSmartLegendPreviewBitmap(
             Transaction tr,
@@ -47238,53 +49262,105 @@ namespace ClassLibrary4
                 return false;
             }
 
-            foreach (SmartSymbolRule rule
-                in geometryRules)
+            var ranked =
+                geometryRules
+                    .Where(
+                        r =>
+                            r != null &&
+                            !string.IsNullOrWhiteSpace(
+                                r.GeometryFingerprint) &&
+                            !string.IsNullOrWhiteSpace(
+                                r.DisplayName))
+                    .Select(
+                        r =>
+                            new
+                            {
+                                Rule =
+                                    r,
+                                Score =
+                                    CompareSmartGeometryFingerprints(
+                                        r.GeometryFingerprint,
+                                        candidateFingerprint)
+                            })
+                    .Where(
+                        x =>
+                            x.Score <
+                                double.MaxValue &&
+                            !double.IsNaN(
+                                x.Score) &&
+                            !double.IsInfinity(
+                                x.Score))
+                    .GroupBy(
+                        x =>
+                            x.Rule.DisplayName,
+                        StringComparer.OrdinalIgnoreCase)
+                    .Select(
+                        g =>
+                            g.OrderBy(
+                                 x =>
+                                     x.Score)
+                             .First())
+                    .OrderBy(
+                        x =>
+                            x.Score)
+                    .ToList();
+
+            if (ranked.Count == 0)
+                return false;
+
+            bestRule =
+                ranked[0].Rule;
+
+            bestScore =
+                ranked[0].Score;
+
+            if (bestScore >
+                0.060)
             {
-                if (rule == null ||
-                    string.IsNullOrWhiteSpace(
-                        rule.GeometryFingerprint))
-                {
-                    continue;
-                }
+                bestRule =
+                    null;
 
-                double score =
-                    CompareSmartGeometryFingerprints(
-                        rule.GeometryFingerprint,
-                        candidateFingerprint);
-
-                if (score <
-                    bestScore)
-                {
-                    bestScore =
-                        score;
-
-                    bestRule =
-                        rule;
-                }
+                return false;
             }
 
-            // Block fingerprint sạch hơn exploded-cluster ngoài mặt bằng,
-            // nên có thể dùng threshold chặt.
-            return
-                bestRule != null &&
-                bestScore <=
-                    0.075;
+            if (ranked.Count > 1 &&
+                ranked[1].Score -
+                    bestScore <
+                0.018)
+            {
+                bestRule =
+                    null;
+
+                return false;
+            }
+
+            return true;
         }
+
 
         private List<SmartGeometryMatch> FindSmartGeometryMatches(
             Database db,
             List<ObjectId> primitiveIds,
-            List<SmartSymbolRule> geometryRules)
+            List<SmartSymbolRule> geometryRules,
+            List<SmartSymbolRule> allRules)
         {
             List<SmartGeometryMatch> result =
                 new List<SmartGeometryMatch>();
 
+            bool hasVectorRules =
+                geometryRules != null &&
+                geometryRules.Count > 0;
+
+            bool hasOnnxRules =
+                allRules != null &&
+                allRules.Count > 0 &&
+                GetOnnxSymbolClassifier() != null;
+
             if (db == null ||
                 primitiveIds == null ||
                 primitiveIds.Count == 0 ||
-                geometryRules == null ||
-                geometryRules.Count == 0)
+                (!hasVectorRules &&
+                 !hasOnnxRules))
             {
                 return result;
             }
@@ -47468,7 +49544,8 @@ namespace ClassLibrary4
                         double.MaxValue;
 
                     foreach (SmartSymbolRule rule
-                        in geometryRules)
+                        in geometryRules ??
+                           new List<SmartSymbolRule>())
                     {
                         if (rule == null ||
                             string.IsNullOrWhiteSpace(
@@ -47491,12 +49568,37 @@ namespace ClassLibrary4
                         }
                     }
 
-                    // Ngưỡng khá chặt để hạn chế nhận nhầm.
+                    string source =
+                        "GEOMETRY";
+
+                    MepSymbolClassifier.Prediction onnxPrediction =
+                        null;
+
+                    // Vector chưa đủ chắc -> thử ONNX trên chính cluster EXPLODE.
                     if (bestRule == null ||
                         bestScore >
-                        0.10)
+                            0.10)
                     {
-                        continue;
+                        if (!TryMatchSmartGeometryClusterByOnnx(
+                                tr,
+                                ids,
+                                allRules,
+                                out bestRule,
+                                out onnxPrediction))
+                        {
+                            continue;
+                        }
+
+                        bestScore =
+                            1.0 -
+                            Math.Max(
+                                0.0,
+                                Math.Min(
+                                    1.0,
+                                    onnxPrediction?.Confidence ?? 0.0));
+
+                        source =
+                            "ONNX";
                     }
 
                     double x =
@@ -47520,7 +49622,11 @@ namespace ClassLibrary4
                                     y,
                                     0.0),
                             Score =
-                                bestScore
+                                bestScore,
+                            Source =
+                                source,
+                            OnnxPrediction =
+                                onnxPrediction
                         });
                 }
 
@@ -47632,14 +49738,13 @@ namespace ClassLibrary4
                 rules
                     .Where(
                         r =>
-                            !string.Equals(
+                            r != null &&
+                            string.Equals(
                                 r.MatchMode,
-                                "GEOMETRY",
+                                "BLOCK",
                                 StringComparison.OrdinalIgnoreCase) &&
-                            !string.Equals(
-                                r.MatchMode,
-                                "POINT",
-                                StringComparison.OrdinalIgnoreCase))
+                            !string.IsNullOrWhiteSpace(
+                                r.BlockKey))
                     .ToList();
 
             List<SmartSymbolRule> pointRules =
@@ -47666,15 +49771,38 @@ namespace ClassLibrary4
                                 r.GeometryFingerprint))
                     .ToList();
 
+            List<SmartSymbolRule> rasterRules =
+                rules
+                    .Where(
+                        r =>
+                            r != null &&
+                            !string.IsNullOrWhiteSpace(
+                                r.RasterSignature))
+                    .ToList();
+
+            // Chỉ dùng exact BlockKey khi key đó ứng với đúng MỘT nhãn.
+            // Nếu cùng Dynamic Block family có nhiều state/nhãn, để Geometry/Vision phân xử.
             Dictionary<string, SmartSymbolRule> ruleMap =
                 blockRules
                     .GroupBy(
                         r =>
                             r.BlockKey,
                         StringComparer.OrdinalIgnoreCase)
+                    .Where(
+                        g =>
+                            g.Select(
+                                 r =>
+                                     r.DisplayName)
+                             .Where(
+                                 n =>
+                                     !string.IsNullOrWhiteSpace(
+                                         n))
+                             .Distinct(
+                                 StringComparer.OrdinalIgnoreCase)
+                             .Count() == 1)
                     .Select(
                         g =>
-                            g.Last())
+                            g.First())
                     .ToDictionary(
                         r =>
                             r.BlockKey,
@@ -47708,6 +49836,21 @@ namespace ClassLibrary4
             // Nếu tên block khác nhưng hình giống Legend, lưu rule override ở đây.
             Dictionary<ObjectId, SmartSymbolRule> matchedBlockRuleOverrides =
                 new Dictionary<ObjectId, SmartSymbolRule>();
+
+            HashSet<ObjectId> matchedBlockByOnnx =
+                new HashSet<ObjectId>();
+
+            Dictionary<ObjectId, MepSymbolClassifier.Prediction> matchedBlockOnnxPredictions =
+                new Dictionary<ObjectId, MepSymbolClassifier.Prediction>();
+
+            HashSet<ObjectId> matchedBlockByRaster =
+                new HashSet<ObjectId>();
+
+            Dictionary<ObjectId, string> matchedBlockRasterSignatures =
+                new Dictionary<ObjectId, string>();
+
+            Dictionary<ObjectId, double> matchedBlockRasterScores =
+                new Dictionary<ObjectId, double>();
 
             List<ObjectId> unknownBlocks =
                 new List<ObjectId>();
@@ -47874,10 +50017,9 @@ namespace ClassLibrary4
                         }
 
                         string key =
-                            NormalizeSmartSymbolKey(
-                                GetShopStatBlockName(
-                                    tr,
-                                    br));
+                            GetSmartBlockIdentityKey(
+                                tr,
+                                br);
 
                         if (ruleMap.ContainsKey(
                                 key))
@@ -47903,6 +50045,64 @@ namespace ClassLibrary4
                                 matchedBlockRuleOverrides[
                                     br.ObjectId] =
                                     geometryRule;
+
+                                continue;
+                            }
+
+                            // STEP21B - ONNX CLASSIFIER:
+                            // Sau Exact Block + Vector Fingerprint, dùng model đã train
+                            // để phân loại hình ký hiệu. Model không có/lỗi => tự bỏ qua.
+                            if (TryMatchSmartBlockByOnnx(
+                                    tr,
+                                    br,
+                                    rules,
+                                    out SmartSymbolRule onnxRule,
+                                    out MepSymbolClassifier.Prediction onnxPrediction))
+                            {
+                                matchedBlocks.Add(
+                                    br.ObjectId);
+
+                                matchedBlockRuleOverrides[
+                                    br.ObjectId] =
+                                    onnxRule;
+
+                                matchedBlockByOnnx.Add(
+                                    br.ObjectId);
+
+                                matchedBlockOnnxPredictions[
+                                    br.ObjectId] =
+                                    onnxPrediction;
+
+                                continue;
+                            }
+
+                            // STEP19 - HYBRID VISION LITE FALLBACK:
+                            // nếu ONNX chưa có hoặc chưa đủ chắc, mới dùng silhouette cũ.
+                            if (TryMatchSmartBlockByRaster(
+                                    tr,
+                                    br,
+                                    rasterRules,
+                                    out SmartSymbolRule rasterRule,
+                                    out double rasterScore,
+                                    out string rasterSignature))
+                            {
+                                matchedBlocks.Add(
+                                    br.ObjectId);
+
+                                matchedBlockRuleOverrides[
+                                    br.ObjectId] =
+                                    rasterRule;
+
+                                matchedBlockByRaster.Add(
+                                    br.ObjectId);
+
+                                matchedBlockRasterSignatures[
+                                    br.ObjectId] =
+                                    rasterSignature;
+
+                                matchedBlockRasterScores[
+                                    br.ObjectId] =
+                                    rasterScore;
 
                                 continue;
                             }
@@ -48106,12 +50306,11 @@ namespace ClassLibrary4
                 "SCAN_MATCH_EXPLODED_GEOMETRY";
 
             List<SmartGeometryMatch> geometryMatches =
-                geometryRules.Count > 0
-                    ? FindSmartGeometryMatches(
-                        db,
-                        geometryPrimitiveIds,
-                        geometryRules)
-                    : new List<SmartGeometryMatch>();
+                FindSmartGeometryMatches(
+                    db,
+                    geometryPrimitiveIds,
+                    geometryRules,
+                    rules);
 
             _smartValveStage =
                 "SCAN_INFER_DN";
@@ -48135,20 +50334,35 @@ namespace ClassLibrary4
                     }
 
                     string blockKey =
-                        NormalizeSmartSymbolKey(
-                            GetShopStatBlockName(
-                                tr,
-                                br));
+                        GetSmartBlockIdentityKey(
+                            tr,
+                            br);
 
                     SmartSymbolRule rule =
                         null;
 
-                    bool geometryFallbackMatch =
+                    bool overrideMatch =
                         matchedBlockRuleOverrides.TryGetValue(
                             blockId,
                             out rule);
 
-                    if (!geometryFallbackMatch &&
+                    bool onnxFallbackMatch =
+                        overrideMatch &&
+                        matchedBlockByOnnx.Contains(
+                            blockId);
+
+                    bool rasterFallbackMatch =
+                        overrideMatch &&
+                        !onnxFallbackMatch &&
+                        matchedBlockByRaster.Contains(
+                            blockId);
+
+                    bool geometryFallbackMatch =
+                        overrideMatch &&
+                        !onnxFallbackMatch &&
+                        !rasterFallbackMatch;
+
+                    if (!overrideMatch &&
                         !ruleMap.TryGetValue(
                             blockKey,
                             out rule))
@@ -48163,7 +50377,9 @@ namespace ClassLibrary4
                         "OK";
 
                     string auditNote =
-                        "Đã nhận diện BLOCK.";
+                        rasterFallbackMatch
+                            ? "Đã nhận diện BLOCK bằng Hybrid Vision."
+                            : "Đã nhận diện BLOCK.";
 
                     if (string.Equals(
                             rule.SizeRule,
@@ -48248,14 +50464,48 @@ namespace ClassLibrary4
                             Size =
                                 size,
                             Source =
-                                geometryFallbackMatch
-                                    ? "BLOCK - HÌNH HỌC"
-                                    : "BLOCK",
+                                onnxFallbackMatch
+                                    ? "BLOCK - ONNX"
+                                    : rasterFallbackMatch
+                                        ? "BLOCK - VISION"
+                                        : geometryFallbackMatch
+                                            ? "BLOCK - HÌNH HỌC"
+                                            : "BLOCK",
                             Note =
-                                geometryFallbackMatch
-                                    ? "Tên block khác Legend nhưng geometry fingerprint khớp. " +
-                                      auditNote
-                                    : auditNote,
+                                onnxFallbackMatch &&
+                                matchedBlockOnnxPredictions.ContainsKey(blockId)
+                                    ? "ONNX: " +
+                                      matchedBlockOnnxPredictions[blockId].Label +
+                                      " | confidence=" +
+                                      matchedBlockOnnxPredictions[blockId].Confidence.ToString(
+                                          "P1",
+                                          CultureInfo.InvariantCulture) +
+                                      " | margin=" +
+                                      matchedBlockOnnxPredictions[blockId].Margin.ToString(
+                                          "P1",
+                                          CultureInfo.InvariantCulture) +
+                                      (string.IsNullOrWhiteSpace(
+                                           matchedBlockOnnxPredictions[blockId].SecondLabel)
+                                          ? ""
+                                          : " | #2=" +
+                                            matchedBlockOnnxPredictions[blockId].SecondLabel +
+                                            " " +
+                                            matchedBlockOnnxPredictions[blockId].SecondConfidence.ToString(
+                                                "P1",
+                                                CultureInfo.InvariantCulture)) +
+                                      ". " + auditNote
+                                    : rasterFallbackMatch
+                                        ? "Tên/vector/ONNX chưa chốt trực tiếp nhưng silhouette Vision Lite khớp Legend. Vision score=" +
+                                          (matchedBlockRasterScores.ContainsKey(blockId)
+                                              ? matchedBlockRasterScores[blockId].ToString(
+                                                  "0.000",
+                                                  CultureInfo.InvariantCulture)
+                                              : "-") +
+                                          ". " + auditNote
+                                        : geometryFallbackMatch
+                                            ? "Tên block khác Legend nhưng geometry fingerprint khớp. " +
+                                              auditNote
+                                            : auditNote,
                             Point =
                                 new Point3d(
                                     br.Position.X,
@@ -48267,17 +50517,32 @@ namespace ClassLibrary4
                                     "THEO_ONG",
                                     StringComparison.OrdinalIgnoreCase),
                             MatchMode =
-                                geometryFallbackMatch
-                                    ? "GEOMETRY"
-                                    : "BLOCK",
+                                onnxFallbackMatch
+                                    ? "BLOCK"
+                                    : rasterFallbackMatch
+                                        ? (string.IsNullOrWhiteSpace(rule.MatchMode)
+                                            ? "BLOCK"
+                                            : rule.MatchMode)
+                                        : geometryFallbackMatch
+                                            ? "GEOMETRY"
+                                            : "BLOCK",
                             BlockKey =
-                                geometryFallbackMatch
+                                overrideMatch
                                     ? blockKey
                                     : rule.BlockKey,
                             GeometryFingerprint =
-                                geometryFallbackMatch
-                                    ? (rule.GeometryFingerprint ?? "")
-                                    : "",
+                                BuildSmartBlockGeometryFingerprint(
+                                    tr,
+                                    br),
+                            RasterSignature =
+                                onnxFallbackMatch
+                                    ? BuildSmartBlockRasterSignature(
+                                        tr,
+                                        br)
+                                    : rasterFallbackMatch &&
+                                      matchedBlockRasterSignatures.ContainsKey(blockId)
+                                        ? matchedBlockRasterSignatures[blockId]
+                                        : (rule.RasterSignature ?? ""),
                             SourceId =
                                 blockId
                         });
@@ -48301,8 +50566,27 @@ namespace ClassLibrary4
                     string auditStatus =
                         "OK";
 
+                    bool geometryOnnxMatch =
+                        string.Equals(
+                            match.Source,
+                            "ONNX",
+                            StringComparison.OrdinalIgnoreCase);
+
                     string auditNote =
-                        "Đã nhận diện HÌNH EXPLODE.";
+                        geometryOnnxMatch &&
+                        match.OnnxPrediction != null
+                            ? "HÌNH EXPLODE được ONNX phân loại: " +
+                              match.OnnxPrediction.Label +
+                              " | confidence=" +
+                              match.OnnxPrediction.Confidence.ToString(
+                                  "P1",
+                                  CultureInfo.InvariantCulture) +
+                              " | margin=" +
+                              match.OnnxPrediction.Margin.ToString(
+                                  "P1",
+                                  CultureInfo.InvariantCulture) +
+                              "."
+                            : "Đã nhận diện HÌNH EXPLODE bằng vector fingerprint.";
 
                     if (string.Equals(
                             rule.SizeRule,
@@ -48384,7 +50668,9 @@ namespace ClassLibrary4
                             Size =
                                 size,
                             Source =
-                                "HÌNH EXPLODE",
+                                geometryOnnxMatch
+                                    ? "HÌNH EXPLODE - ONNX"
+                                    : "HÌNH EXPLODE",
                             Note =
                                 auditNote,
                             Point =
@@ -48479,8 +50765,17 @@ namespace ClassLibrary4
                             br);
 
                     string unknownBlockKey =
-                        NormalizeSmartSymbolKey(
-                            blockName);
+                        GetSmartBlockIdentityKey(
+                            tr,
+                            br);
+
+                    if (string.IsNullOrWhiteSpace(
+                            unknownBlockKey))
+                    {
+                        unknownBlockKey =
+                            NormalizeSmartSymbolKey(
+                                blockName);
+                    }
 
                     auditRows.Add(
                         new SmartAuditRow
@@ -48508,7 +50803,13 @@ namespace ClassLibrary4
                             BlockKey =
                                 unknownBlockKey,
                             GeometryFingerprint =
-                                "",
+                                BuildSmartBlockGeometryFingerprint(
+                                    tr,
+                                    br),
+                            RasterSignature =
+                                BuildSmartBlockRasterSignature(
+                                    tr,
+                                    br),
                             SourceId =
                                 blockId
                         });
@@ -51345,14 +53646,14 @@ namespace ClassLibrary4
                                 ? "THEO_ONG"
                                 : "KHONG_SIZE",
                         MatchMode =
-                            string.Equals(
-                                row.MatchMode,
-                                "GEOMETRY",
-                                StringComparison.OrdinalIgnoreCase)
-                                ? "GEOMETRY"
-                                : "BLOCK",
+                            string.IsNullOrWhiteSpace(
+                                row.MatchMode)
+                                ? "BLOCK"
+                                : row.MatchMode,
                         GeometryFingerprint =
-                            row.GeometryFingerprint ?? ""
+                            row.GeometryFingerprint ?? "",
+                        RasterSignature =
+                            row.RasterSignature ?? ""
                     };
 
                 UpsertSmartRuleList(
@@ -51437,6 +53738,9 @@ namespace ClassLibrary4
 
             existing.GeometryFingerprint =
                 updateRule.GeometryFingerprint;
+
+            existing.RasterSignature =
+                updateRule.RasterSignature;
         }
 
         private List<SmartValveStatRow> BuildSmartStatsFromAuditRows(
@@ -52498,6 +54802,12 @@ namespace ClassLibrary4
                                 parts[4])
                             : "";
 
+                    string rasterSignature =
+                        parts.Length >= 6
+                            ? DecodeSmartField(
+                                parts[5])
+                            : "";
+
                     if (string.IsNullOrWhiteSpace(
                             blockKey) ||
                         string.IsNullOrWhiteSpace(
@@ -52524,7 +54834,9 @@ namespace ClassLibrary4
                                     ? "BLOCK"
                                     : matchMode,
                             GeometryFingerprint =
-                                geometryFingerprint ?? ""
+                                geometryFingerprint ?? "",
+                            RasterSignature =
+                                rasterSignature ?? ""
                         });
                 }
             }
@@ -52580,7 +54892,10 @@ namespace ClassLibrary4
                                     x.MatchMode) +
                                 "|" +
                                 EncodeSmartField(
-                                    x.GeometryFingerprint))
+                                    x.GeometryFingerprint) +
+                                "|" +
+                                EncodeSmartField(
+                                    x.RasterSignature))
                         .ToList();
 
                 File.WriteAllLines(
@@ -56126,6 +58441,8 @@ namespace ClassLibrary4
                 CleanupEvents(_plineWatcherDocument);
 
             StopReview3DEscapeWatcher();
+
+            DisposeOnnxSymbolClassifier();
         }
 
         /// <summary>
@@ -57170,6 +59487,774 @@ namespace ClassLibrary4
             public double AverageConfidence { get; set; }
         }
 
+        private string OnnxAiModelFolder
+        {
+            get
+            {
+                try
+                {
+                    string baseFolder =
+                        Environment.GetFolderPath(
+                            Environment.SpecialFolder.ApplicationData);
+
+                    if (string.IsNullOrWhiteSpace(
+                            baseFolder))
+                    {
+                        baseFolder =
+                            Path.GetTempPath();
+                    }
+
+                    string folder =
+                        Path.Combine(
+                            baseFolder,
+                            "TDL_MEP",
+                            "AI",
+                            "models");
+
+                    if (!Directory.Exists(
+                            folder))
+                    {
+                        Directory.CreateDirectory(
+                            folder);
+                    }
+
+                    return folder;
+                }
+                catch
+                {
+                    return
+                        Path.Combine(
+                            Path.GetTempPath(),
+                            "TDL_MEP_AI_models");
+                }
+            }
+        }
+
+        private string OnnxDefaultModelPath =>
+            Path.Combine(
+                OnnxAiModelFolder,
+                "mep_symbol_classifier.onnx");
+
+        private string OnnxDefaultLabelsPath =>
+            Path.Combine(
+                OnnxAiModelFolder,
+                "mep_symbol_labels.txt");
+
+        private bool ResolveOnnxModelFiles(
+            out string modelPath,
+            out string labelsPath)
+        {
+            modelPath = "";
+            labelsPath = "";
+
+            try
+            {
+                if (File.Exists(
+                        OnnxDefaultModelPath) &&
+                    File.Exists(
+                        OnnxDefaultLabelsPath))
+                {
+                    modelPath =
+                        OnnxDefaultModelPath;
+
+                    labelsPath =
+                        OnnxDefaultLabelsPath;
+
+                    return true;
+                }
+            }
+            catch
+            {
+            }
+
+            // Fallback: cho phép deploy model ngay cạnh DLL plugin.
+            try
+            {
+                string pluginFolder =
+                    Path.GetDirectoryName(
+                        Assembly.GetExecutingAssembly()
+                            .Location) ??
+                    "";
+
+                string[] modelCandidates =
+                {
+                    Path.Combine(
+                        pluginFolder,
+                        "AI",
+                        "models",
+                        "mep_symbol_classifier.onnx"),
+                    Path.Combine(
+                        pluginFolder,
+                        "mep_symbol_classifier.onnx")
+                };
+
+                foreach (string candidate
+                    in modelCandidates)
+                {
+                    if (!File.Exists(
+                            candidate))
+                    {
+                        continue;
+                    }
+
+                    string folder =
+                        Path.GetDirectoryName(
+                            candidate) ??
+                        pluginFolder;
+
+                    string[] labelCandidates =
+                    {
+                        Path.Combine(
+                            folder,
+                            "mep_symbol_labels.txt"),
+                        Path.ChangeExtension(
+                            candidate,
+                            ".txt"),
+                        Path.Combine(
+                            folder,
+                            "labels.txt")
+                    };
+
+                    string labels =
+                        labelCandidates.FirstOrDefault(
+                            File.Exists);
+
+                    if (string.IsNullOrWhiteSpace(
+                            labels))
+                    {
+                        continue;
+                    }
+
+                    modelPath =
+                        candidate;
+
+                    labelsPath =
+                        labels;
+
+                    return true;
+                }
+            }
+            catch
+            {
+            }
+
+            return false;
+        }
+
+        private MepSymbolClassifier GetOnnxSymbolClassifier(
+            bool forceReload = false)
+        {
+            if (!ResolveOnnxModelFiles(
+                    out string modelPath,
+                    out string labelsPath))
+            {
+                DisposeOnnxSymbolClassifier();
+                _onnxLastLoadError = "";
+                return null;
+            }
+
+            DateTime writeUtc =
+                DateTime.MinValue;
+
+            try
+            {
+                writeUtc =
+                    File.GetLastWriteTimeUtc(
+                        modelPath);
+            }
+            catch
+            {
+            }
+
+            if (!forceReload &&
+                _onnxSymbolClassifier != null &&
+                string.Equals(
+                    _onnxLoadedModelPath,
+                    modelPath,
+                    StringComparison.OrdinalIgnoreCase) &&
+                _onnxLoadedModelWriteUtc ==
+                    writeUtc)
+            {
+                return
+                    _onnxSymbolClassifier;
+            }
+
+            DisposeOnnxSymbolClassifier();
+
+            try
+            {
+                _onnxSymbolClassifier =
+                    new MepSymbolClassifier(
+                        modelPath,
+                        labelsPath);
+
+                _onnxLoadedModelPath =
+                    modelPath;
+
+                _onnxLoadedModelWriteUtc =
+                    writeUtc;
+
+                _onnxLastLoadError =
+                    "";
+
+                return
+                    _onnxSymbolClassifier;
+            }
+            catch (System.Exception ex)
+            {
+                _onnxLastLoadError =
+                    ex.GetType().Name +
+                    ": " +
+                    ex.Message;
+
+                DisposeOnnxSymbolClassifier();
+
+                return null;
+            }
+        }
+
+        private void DisposeOnnxSymbolClassifier()
+        {
+            try
+            {
+                _onnxSymbolClassifier?.Dispose();
+            }
+            catch
+            {
+            }
+
+            _onnxSymbolClassifier =
+                null;
+
+            _onnxLoadedModelPath =
+                "";
+
+            _onnxLoadedModelWriteUtc =
+                DateTime.MinValue;
+        }
+
+        private void UpdateOnnxStatusUi()
+        {
+            try
+            {
+                if (TxtOnnxStatus == null)
+                    return;
+
+                if (!ResolveOnnxModelFiles(
+                        out string modelPath,
+                        out string labelsPath))
+                {
+                    TxtOnnxStatus.Text =
+                        "ONNX: CHƯA CÓ MODEL  •  CAD/Vector/Vision cũ vẫn hoạt động";
+
+                    TxtOnnxStatus.Foreground =
+                        new System.Windows.Media.SolidColorBrush(
+                            System.Windows.Media.Color.FromRgb(
+                                146,
+                                64,
+                                14));
+
+                    return;
+                }
+
+                MepSymbolClassifier classifier =
+                    GetOnnxSymbolClassifier();
+
+                if (classifier == null)
+                {
+                    TxtOnnxStatus.Text =
+                        "ONNX: LỖI LOAD  •  " +
+                        (_onnxLastLoadError ?? "Unknown");
+
+                    TxtOnnxStatus.Foreground =
+                        new System.Windows.Media.SolidColorBrush(
+                            System.Windows.Media.Color.FromRgb(
+                                185,
+                                28,
+                                28));
+
+                    return;
+                }
+
+                TxtOnnxStatus.Text =
+                    "ONNX: SẴN SÀNG  •  " +
+                    classifier.ClassCount +
+                    " class  •  " +
+                    classifier.InputWidth +
+                    "×" +
+                    classifier.InputHeight +
+                    " " +
+                    classifier.InputLayout;
+
+                TxtOnnxStatus.Foreground =
+                    new System.Windows.Media.SolidColorBrush(
+                        System.Windows.Media.Color.FromRgb(
+                            21,
+                            128,
+                            61));
+            }
+            catch
+            {
+            }
+        }
+
+        private void BtnOnnxLoadModel_Click(
+            object sender,
+            RoutedEventArgs e)
+        {
+            try
+            {
+                Microsoft.Win32.OpenFileDialog modelDialog =
+                    new Microsoft.Win32.OpenFileDialog
+                    {
+                        Title =
+                            "Chọn model phân loại ký hiệu MEP (.onnx)",
+                        Filter =
+                            "ONNX model (*.onnx)|*.onnx|All files (*.*)|*.*",
+                        CheckFileExists =
+                            true,
+                        Multiselect =
+                            false
+                    };
+
+                bool? selected =
+                    modelDialog.ShowDialog();
+
+                if (selected != true)
+                    return;
+
+                string selectedModel =
+                    modelDialog.FileName;
+
+                string modelFolder =
+                    Path.GetDirectoryName(
+                        selectedModel) ??
+                    "";
+
+                string[] candidateLabels =
+                {
+                    Path.Combine(
+                        modelFolder,
+                        "mep_symbol_labels.txt"),
+                    Path.ChangeExtension(
+                        selectedModel,
+                        ".txt"),
+                    Path.Combine(
+                        modelFolder,
+                        "labels.txt")
+                };
+
+                string selectedLabels =
+                    candidateLabels.FirstOrDefault(
+                        File.Exists) ??
+                    "";
+
+                if (string.IsNullOrWhiteSpace(
+                        selectedLabels))
+                {
+                    Microsoft.Win32.OpenFileDialog labelsDialog =
+                        new Microsoft.Win32.OpenFileDialog
+                        {
+                            Title =
+                                "Chọn file labels của model (mỗi dòng = 1 class)",
+                            Filter =
+                                "Text labels (*.txt)|*.txt|All files (*.*)|*.*",
+                            CheckFileExists =
+                                true,
+                            Multiselect =
+                                false
+                        };
+
+                    bool? labelsSelected =
+                        labelsDialog.ShowDialog();
+
+                    if (labelsSelected != true)
+                    {
+                        MessageBox.Show(
+                            "Chưa chọn labels nên chưa thể nạp model ONNX.",
+                            "ONNX AI");
+                        return;
+                    }
+
+                    selectedLabels =
+                        labelsDialog.FileName;
+                }
+
+                Directory.CreateDirectory(
+                    OnnxAiModelFolder);
+
+                CopyFileIfDifferent(
+                    selectedModel,
+                    OnnxDefaultModelPath);
+
+                CopyFileIfDifferent(
+                    selectedLabels,
+                    OnnxDefaultLabelsPath);
+
+                MepSymbolClassifier classifier =
+                    GetOnnxSymbolClassifier(
+                        true);
+
+                UpdateOnnxStatusUi();
+
+                if (classifier == null)
+                {
+                    MessageBox.Show(
+                        "Đã copy model nhưng ONNX Runtime chưa load được.\n\n" +
+                        (_onnxLastLoadError ?? "Unknown") +
+                        "\n\nPlugin vẫn chạy bằng CAD Native/Vector/Vision cũ.",
+                        "ONNX AI");
+                    return;
+                }
+
+                MessageBox.Show(
+                    "Đã nạp model ONNX thành công.\n\n" +
+                    "Classes: " + classifier.ClassCount + "\n" +
+                    "Input: " + classifier.InputWidth + "×" + classifier.InputHeight + " " + classifier.InputLayout + "\n\n" +
+                    "ONNX sẽ được dùng sau Exact Block + Vector, trước Vision Lite.",
+                    "ONNX AI");
+            }
+            catch (System.Exception ex)
+            {
+                MessageBox.Show(
+                    "Không nạp được model ONNX:\n" +
+                    ex.Message,
+                    "ONNX AI");
+            }
+        }
+
+        private void CopyFileIfDifferent(
+            string source,
+            string destination)
+        {
+            if (string.IsNullOrWhiteSpace(
+                    source) ||
+                string.IsNullOrWhiteSpace(
+                    destination))
+            {
+                return;
+            }
+
+            string sourceFull =
+                Path.GetFullPath(
+                    source);
+
+            string destinationFull =
+                Path.GetFullPath(
+                    destination);
+
+            if (string.Equals(
+                    sourceFull,
+                    destinationFull,
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
+
+            string folder =
+                Path.GetDirectoryName(
+                    destinationFull) ??
+                "";
+
+            if (!string.IsNullOrWhiteSpace(
+                    folder))
+            {
+                Directory.CreateDirectory(
+                    folder);
+            }
+
+            File.Copy(
+                sourceFull,
+                destinationFull,
+                true);
+        }
+
+        private bool TryResolveOnnxPredictionToRule(
+            MepSymbolClassifier.Prediction prediction,
+            List<SmartSymbolRule> rules,
+            out SmartSymbolRule bestRule)
+        {
+            bestRule =
+                null;
+
+            if (prediction == null ||
+                !prediction.Success ||
+                rules == null ||
+                rules.Count == 0)
+            {
+                return false;
+            }
+
+            if (prediction.Confidence <
+                    OnnxDeviceMinConfidence ||
+                prediction.Margin <
+                    OnnxDeviceMinMargin)
+            {
+                return false;
+            }
+
+            string predictedName =
+                GetOnnxDisplayLabel(
+                    prediction.Label);
+
+            string predictedKey =
+                NormalizeOnnxDisplayKey(
+                    predictedName);
+
+            if (string.IsNullOrWhiteSpace(
+                    predictedKey))
+            {
+                return false;
+            }
+
+            List<SmartSymbolRule> labelMatches =
+                rules
+                    .Where(
+                        r =>
+                            r != null &&
+                            !string.IsNullOrWhiteSpace(
+                                r.DisplayName) &&
+                            string.Equals(
+                                NormalizeOnnxDisplayKey(
+                                    r.DisplayName),
+                                predictedKey,
+                                StringComparison.OrdinalIgnoreCase))
+                    .OrderBy(
+                        r =>
+                            string.Equals(
+                                r.MatchMode,
+                                "BLOCK",
+                                StringComparison.OrdinalIgnoreCase)
+                                ? 0
+                                : string.Equals(
+                                      r.MatchMode,
+                                      "GEOMETRY",
+                                      StringComparison.OrdinalIgnoreCase)
+                                    ? 1
+                                    : 2)
+                    .ToList();
+
+            if (labelMatches.Count == 0)
+            {
+                return false;
+            }
+
+            bestRule =
+                labelMatches[0];
+
+            return true;
+        }
+
+        private bool TryMatchSmartGeometryClusterByOnnx(
+            Transaction tr,
+            List<ObjectId> ids,
+            List<SmartSymbolRule> rules,
+            out SmartSymbolRule bestRule,
+            out MepSymbolClassifier.Prediction prediction)
+        {
+            bestRule =
+                null;
+
+            prediction =
+                null;
+
+            if (tr == null ||
+                ids == null ||
+                ids.Count == 0 ||
+                rules == null ||
+                rules.Count == 0)
+            {
+                return false;
+            }
+
+            MepSymbolClassifier classifier =
+                GetOnnxSymbolClassifier();
+
+            if (classifier == null)
+                return false;
+
+            using (System.Drawing.Bitmap bitmap =
+                CreateSmartLegendPreviewBitmap(
+                    tr,
+                    ids,
+                    128,
+                    128))
+            {
+                prediction =
+                    classifier.Predict(
+                        bitmap);
+            }
+
+            return
+                TryResolveOnnxPredictionToRule(
+                    prediction,
+                    rules,
+                    out bestRule);
+        }
+
+        private bool TryMatchSmartBlockByOnnx(
+            Transaction tr,
+            BlockReference br,
+            List<SmartSymbolRule> rules,
+            out SmartSymbolRule bestRule,
+            out MepSymbolClassifier.Prediction prediction)
+        {
+            bestRule =
+                null;
+
+            prediction =
+                null;
+
+            if (tr == null ||
+                br == null ||
+                rules == null ||
+                rules.Count == 0)
+            {
+                return false;
+            }
+
+            MepSymbolClassifier classifier =
+                GetOnnxSymbolClassifier();
+
+            if (classifier == null)
+                return false;
+
+            using (System.Drawing.Bitmap bitmap =
+                CreateSmartLegendPreviewBitmap(
+                    tr,
+                    new List<ObjectId>
+                    {
+                        br.ObjectId
+                    },
+                    128,
+                    128))
+            {
+                prediction =
+                    classifier.Predict(
+                        bitmap);
+            }
+
+            return
+                TryResolveOnnxPredictionToRule(
+                    prediction,
+                    rules,
+                    out bestRule);
+        }
+
+
+        private string GetOnnxDisplayLabel(
+            string rawLabel)
+        {
+            string value =
+                (rawLabel ?? "")
+                    .Trim();
+
+            // Cho phép labels file dạng:
+            // FLOW_SWITCH|CÔNG TẮC DÒNG CHẢY KÈM GIÁM SÁT
+            int separator =
+                value.IndexOf('|');
+
+            if (separator >= 0 &&
+                separator <
+                    value.Length - 1)
+            {
+                value =
+                    value.Substring(
+                            separator + 1)
+                        .Trim();
+            }
+
+            return value;
+        }
+
+        private string NormalizeOnnxDisplayKey(
+            string value)
+        {
+            string normalized =
+                NormalizeSmartDisplayName(
+                    value ?? "");
+
+            normalized =
+                BoDauTiengViet(
+                    normalized)
+                    .ToUpperInvariant();
+
+            normalized =
+                Regex.Replace(
+                    normalized,
+                    @"[^A-Z0-9]+",
+                    " ");
+
+            normalized =
+                Regex.Replace(
+                    normalized,
+                    @"\s+",
+                    " ")
+                    .Trim();
+
+            return normalized;
+        }
+
+        private void BtnAiDeviceOnly_Click(
+            object sender,
+            RoutedEventArgs e)
+        {
+            try
+            {
+                UpdateAiLearningStatusUi();
+                UpdateOnnxStatusUi();
+
+                Document doc =
+                    Autodesk.AutoCAD.ApplicationServices.Core.Application
+                        .DocumentManager
+                        .MdiActiveDocument;
+
+                if (doc == null)
+                    return;
+
+                ThongKeThietBiVanThongMinh(
+                    doc);
+            }
+            catch (System.Exception ex)
+            {
+                HandleSmartValveFatalSafe(
+                    "BtnAiDeviceOnly_Click",
+                    ex);
+            }
+        }
+
+        private void BtnAiReopenDeviceAudit_Click(
+            object sender,
+            RoutedEventArgs e)
+        {
+            Document doc =
+                Autodesk.AutoCAD.ApplicationServices.Core.Application
+                    .DocumentManager
+                    .MdiActiveDocument;
+
+            if (doc == null)
+                return;
+
+            ReopenLastSmartAuditSession(
+                doc);
+        }
+
+        private void BtnAiReopenLegend_Click(
+            object sender,
+            RoutedEventArgs e)
+        {
+            Document doc =
+                Autodesk.AutoCAD.ApplicationServices.Core.Application
+                    .DocumentManager
+                    .MdiActiveDocument;
+
+            if (doc == null)
+                return;
+
+            ReopenLastSmartLegendSession(
+                doc);
+        }
+
         private void BtnAiAutoTakeoff_Click(
             object sender,
             RoutedEventArgs e)
@@ -57226,9 +60311,9 @@ namespace ClassLibrary4
                     "• Đường nhận diện: TDL_AI_PIPE_DN...\n" +
                     "• Đoạn chưa chắc chắn: TDL_AI_PIPE_CHECK.\n" +
                     "• Chạy lại sẽ xóa output AI PIPE cũ rồi dựng lại.\n" +
-                    "• V2 tự loại REVCLOUD/đám mây và các curve không giống đường ống.\n" +
-                    "• Sau bước ống có thể chạy tiếp VAN / THIẾT BỊ ngay trong cùng workflow.\n\n" +
-                    "Tiếp tục?",
+                    "• Tự loại REVCLOUD/đám mây và các curve không giống đường ống.\n" +
+                    "• Nhận diện VAN / THIẾT BỊ đã tách thành nút riêng trong tab AI.\n\n" +
+                    "Tiếp tục nhận diện ĐƯỜNG ỐNG?",
                     "AI BÓC TÁCH MEP",
                     MessageBoxButton.YesNo,
                     MessageBoxImage.Information);
@@ -57297,22 +60382,9 @@ namespace ClassLibrary4
                     run.Stats);
             }
 
-            MessageBoxResult continueDevice =
-                MessageBox.Show(
-                    "BƯỚC 1 - ĐƯỜNG ỐNG đã xong.\n\n" +
-                    "Tiếp tục BƯỚC 2 - VAN / THIẾT BỊ?\n\n" +
-                    "Tool sẽ dùng workflow Legend thông minh hiện tại:\n" +
-                    "quét bảng ký hiệu → review → quét mặt bằng → kiểm tra sót → thống kê.",
-                    "AI BÓC TÁCH MEP - BƯỚC 2",
-                    MessageBoxButton.YesNo,
-                    MessageBoxImage.Question);
-
-            if (continueDevice ==
-                MessageBoxResult.Yes)
-            {
-                ThongKeThietBiVanThongMinh(
-                    doc);
-            }
+            ed.WriteMessage(
+                "\n[AI PIPE] Hoàn tất nhận diện đường ống. " +
+                "Muốn nhận diện thiết bị, bấm nút AI NHẬN DIỆN VAN / THIẾT BỊ riêng.");
         }
 
         private AiPipeTakeoffRunResult AnalyzeAndDrawAiPipeTakeoff(
