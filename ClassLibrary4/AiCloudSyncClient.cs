@@ -1,9 +1,8 @@
-﻿#nullable disable
+﻿#nullable enable
 using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
-using System.Linq;
 using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Text;
@@ -38,9 +37,7 @@ namespace ClassLibrary4
             VoterId = (VoterId ?? "").Trim();
 
             if (string.IsNullOrWhiteSpace(VoterId))
-            {
                 VoterId = Guid.NewGuid().ToString("N");
-            }
         }
     }
 
@@ -152,6 +149,12 @@ namespace ClassLibrary4
                 WriteIndented = true
             };
 
+        // STEP27A:
+        // 1) FileGate bảo vệ config/state/pending queue khi nhiều luồng cùng đọc/ghi.
+        // 2) SyncGate ngăn hai lượt SyncAsync chạy chồng nhau.
+        private static readonly object FileGate = new object();
+        private static readonly SemaphoreSlim SyncGate = new SemaphoreSlim(1, 1);
+
         public string BaseFolder { get; }
         public string ConfigPath { get; }
         public string PendingQueuePath { get; }
@@ -164,9 +167,7 @@ namespace ClassLibrary4
                     Environment.SpecialFolder.ApplicationData);
 
             if (string.IsNullOrWhiteSpace(appData))
-            {
                 appData = Path.GetTempPath();
-            }
 
             BaseFolder = Path.Combine(
                 appData,
@@ -190,95 +191,115 @@ namespace ClassLibrary4
 
         public AiCloudConfig LoadConfig()
         {
-            try
+            lock (FileGate)
             {
-                if (!File.Exists(ConfigPath))
+                try
                 {
-                    AiCloudConfig fresh = new AiCloudConfig();
-                    fresh.Normalize();
-                    return fresh;
+                    if (!File.Exists(ConfigPath))
+                    {
+                        AiCloudConfig fresh = new AiCloudConfig();
+                        fresh.Normalize();
+                        return fresh;
+                    }
+
+                    AiCloudConfig config =
+                        JsonSerializer.Deserialize<AiCloudConfig>(
+                            File.ReadAllText(
+                                ConfigPath,
+                                Encoding.UTF8),
+                            JsonOptions) ??
+                        new AiCloudConfig();
+
+                    config.Normalize();
+                    return config;
                 }
-
-                AiCloudConfig config =
-                    JsonSerializer.Deserialize<AiCloudConfig>(
-                        File.ReadAllText(
-                            ConfigPath,
-                            Encoding.UTF8),
-                        JsonOptions) ??
-                    new AiCloudConfig();
-
-                config.Normalize();
-                return config;
-            }
-            catch
-            {
-                AiCloudConfig fallback = new AiCloudConfig();
-                fallback.Normalize();
-                return fallback;
+                catch
+                {
+                    AiCloudConfig fallback = new AiCloudConfig();
+                    fallback.Normalize();
+                    return fallback;
+                }
             }
         }
 
-        public void SaveConfig(AiCloudConfig config)
+        public void SaveConfig(AiCloudConfig? config)
         {
             if (config == null)
                 return;
 
             config.Normalize();
-            Directory.CreateDirectory(BaseFolder);
 
-            File.WriteAllText(
-                ConfigPath,
-                JsonSerializer.Serialize(
-                    config,
-                    JsonOptions),
-                Encoding.UTF8);
+            lock (FileGate)
+            {
+                try
+                {
+                    Directory.CreateDirectory(BaseFolder);
+
+                    WriteAllTextAtomic(
+                        ConfigPath,
+                        JsonSerializer.Serialize(
+                            config,
+                            JsonOptions));
+                }
+                catch
+                {
+                }
+            }
         }
 
         public AiCloudLocalState LoadState()
         {
-            try
+            lock (FileGate)
             {
-                if (!File.Exists(StatePath))
-                    return new AiCloudLocalState();
+                try
+                {
+                    if (!File.Exists(StatePath))
+                        return new AiCloudLocalState();
 
-                return
-                    JsonSerializer.Deserialize<AiCloudLocalState>(
-                        File.ReadAllText(
-                            StatePath,
-                            Encoding.UTF8),
-                        JsonOptions) ??
-                    new AiCloudLocalState();
-            }
-            catch
-            {
-                return new AiCloudLocalState();
+                    return
+                        JsonSerializer.Deserialize<AiCloudLocalState>(
+                            File.ReadAllText(
+                                StatePath,
+                                Encoding.UTF8),
+                            JsonOptions) ??
+                        new AiCloudLocalState();
+                }
+                catch
+                {
+                    return new AiCloudLocalState();
+                }
             }
         }
 
-        public void SaveState(AiCloudLocalState state)
+        public void SaveState(AiCloudLocalState? state)
         {
-            try
+            lock (FileGate)
             {
-                Directory.CreateDirectory(BaseFolder);
+                try
+                {
+                    Directory.CreateDirectory(BaseFolder);
 
-                File.WriteAllText(
-                    StatePath,
-                    JsonSerializer.Serialize(
-                        state ?? new AiCloudLocalState(),
-                        JsonOptions),
-                    Encoding.UTF8);
-            }
-            catch
-            {
+                    WriteAllTextAtomic(
+                        StatePath,
+                        JsonSerializer.Serialize(
+                            state ?? new AiCloudLocalState(),
+                            JsonOptions));
+                }
+                catch
+                {
+                }
             }
         }
 
         public int GetPendingCount()
         {
-            return LoadPendingVotes().Count;
+            lock (FileGate)
+            {
+                return LoadPendingVotesNoLock().Count;
+            }
         }
 
-        public void EnqueueVote(AiCloudVote vote)
+        public void EnqueueVote(AiCloudVote? vote)
         {
             if (vote == null ||
                 string.IsNullOrWhiteSpace(vote.Signature))
@@ -287,6 +308,11 @@ namespace ClassLibrary4
             }
 
             vote.Signature = vote.Signature.Trim();
+            vote.MatchMode =
+                string.IsNullOrWhiteSpace(vote.MatchMode)
+                    ? "BLOCK"
+                    : vote.MatchMode.Trim();
+
             vote.Decision =
                 string.Equals(
                     vote.Decision,
@@ -305,30 +331,32 @@ namespace ClassLibrary4
                     ? DateTime.UtcNow.ToString(
                         "O",
                         CultureInfo.InvariantCulture)
-                    : vote.ClientUpdatedUtc;
+                    : vote.ClientUpdatedUtc.Trim();
 
-            List<AiCloudVote> votes = LoadPendingVotes();
+            lock (FileGate)
+            {
+                List<AiCloudVote> votes =
+                    LoadPendingVotesNoLock();
 
-            // Mỗi voter chỉ có 1 phiếu hiện tại/signature.
-            // User sửa lại thì pending cũ bị thay thế, không spam confirmations.
-            votes.RemoveAll(
-                x =>
-                    x != null &&
-                    string.Equals(
-                        x.Signature,
-                        vote.Signature,
-                        StringComparison.OrdinalIgnoreCase) &&
-                    string.Equals(
-                        x.Scope,
-                        vote.Scope,
-                        StringComparison.OrdinalIgnoreCase));
+                // Mỗi voter chỉ giữ bản pending mới nhất của 1 signature/scope.
+                votes.RemoveAll(
+                    x =>
+                        string.Equals(
+                            x.Signature,
+                            vote.Signature,
+                            StringComparison.OrdinalIgnoreCase) &&
+                        string.Equals(
+                            x.Scope,
+                            vote.Scope,
+                            StringComparison.OrdinalIgnoreCase));
 
-            votes.Add(vote);
-            SavePendingVotes(votes);
+                votes.Add(vote);
+                SavePendingVotesNoLock(votes);
+            }
         }
 
         public async Task<Tuple<bool, string>> TestConnectionAsync(
-            AiCloudConfig config,
+            AiCloudConfig? config,
             CancellationToken cancellationToken = default)
         {
             if (config == null)
@@ -358,7 +386,8 @@ namespace ClassLibrary4
                             p_company_code = config.CompanyCode,
                             p_sync_key = config.CompanySyncKey
                         },
-                        cancellationToken);
+                        cancellationToken)
+                    .ConfigureAwait(false);
 
                 bool ok =
                     response
@@ -373,6 +402,13 @@ namespace ClassLibrary4
                         ? "Kết nối AI Cloud thành công."
                         : "Cloud trả về FALSE. Kiểm tra Company Code / Sync Key.");
             }
+            catch (OperationCanceledException)
+                when (cancellationToken.IsCancellationRequested)
+            {
+                return Tuple.Create(
+                    false,
+                    "Đã hủy kiểm tra kết nối AI Cloud.");
+            }
             catch (Exception ex)
             {
                 return Tuple.Create(
@@ -384,80 +420,117 @@ namespace ClassLibrary4
         public async Task<AiCloudSyncResult> SyncAsync(
             CancellationToken cancellationToken = default)
         {
-            AiCloudConfig config = LoadConfig();
-
-            if (!config.IsConfigured)
-            {
-                return new AiCloudSyncResult
-                {
-                    Success = false,
-                    Message = "AI Cloud chưa được cấu hình.",
-                    PendingAfterSync = GetPendingCount()
-                };
-            }
-
-            List<AiCloudVote> pending = LoadPendingVotes();
-            int uploaded = 0;
+            await SyncGate
+                .WaitAsync(cancellationToken)
+                .ConfigureAwait(false);
 
             try
             {
-                if (pending.Count > 0)
-                {
-                    await PostRpcAsync(
-                        config,
-                        "ai_upsert_votes_batch",
-                        new
-                        {
-                            p_company_code = config.CompanyCode,
-                            p_sync_key = config.CompanySyncKey,
-                            p_voter_id = config.VoterId,
-                            p_votes = pending
-                        },
-                        cancellationToken);
+                AiCloudConfig config = LoadConfig();
 
-                    uploaded = pending.Count;
-                    SavePendingVotes(new List<AiCloudVote>());
+                if (!config.IsConfigured)
+                {
+                    return new AiCloudSyncResult
+                    {
+                        Success = false,
+                        Message = "AI Cloud chưa được cấu hình.",
+                        PendingAfterSync = GetPendingCount()
+                    };
                 }
 
-                string consensusJson =
-                    await PostRpcAsync(
-                        config,
-                        "ai_get_consensus",
-                        new
-                        {
-                            p_company_code = config.CompanyCode,
-                            p_sync_key = config.CompanySyncKey
-                        },
-                        cancellationToken);
+                List<AiCloudVote> pendingSnapshot;
 
-                List<AiCloudConsensusRow> rows =
-                    JsonSerializer.Deserialize<List<AiCloudConsensusRow>>(
-                        consensusJson,
-                        JsonOptions) ??
-                    new List<AiCloudConsensusRow>();
-
-                return new AiCloudSyncResult
+                lock (FileGate)
                 {
-                    Success = true,
-                    Message = "Đồng bộ AI Cloud thành công.",
-                    Uploaded = uploaded,
-                    PendingAfterSync = GetPendingCount(),
-                    ConsensusRows = rows
-                };
+                    pendingSnapshot =
+                        LoadPendingVotesNoLock();
+                }
+
+                int uploaded = 0;
+
+                try
+                {
+                    if (pendingSnapshot.Count > 0)
+                    {
+                        await PostRpcAsync(
+                                config,
+                                "ai_upsert_votes_batch",
+                                new
+                                {
+                                    p_company_code = config.CompanyCode,
+                                    p_sync_key = config.CompanySyncKey,
+                                    p_voter_id = config.VoterId,
+                                    p_votes = pendingSnapshot
+                                },
+                                cancellationToken)
+                            .ConfigureAwait(false);
+
+                        uploaded = pendingSnapshot.Count;
+
+                        // QUAN TRỌNG:
+                        // Không được SavePendingVotes(empty) như bản cũ.
+                        // Trong lúc request đang chạy, user có thể vừa sửa/học thêm ký hiệu.
+                        // Chỉ xóa đúng những vote đã upload; vote mới phát sinh phải được giữ lại.
+                        RemoveUploadedSnapshot(
+                            pendingSnapshot);
+                    }
+
+                    string consensusJson =
+                        await PostRpcAsync(
+                                config,
+                                "ai_get_consensus",
+                                new
+                                {
+                                    p_company_code = config.CompanyCode,
+                                    p_sync_key = config.CompanySyncKey
+                                },
+                                cancellationToken)
+                            .ConfigureAwait(false);
+
+                    List<AiCloudConsensusRow> rows =
+                        JsonSerializer.Deserialize<List<AiCloudConsensusRow>>(
+                            consensusJson,
+                            JsonOptions) ??
+                        new List<AiCloudConsensusRow>();
+
+                    return new AiCloudSyncResult
+                    {
+                        Success = true,
+                        Message = "Đồng bộ AI Cloud thành công.",
+                        Uploaded = uploaded,
+                        PendingAfterSync = GetPendingCount(),
+                        ConsensusRows = rows
+                    };
+                }
+                catch (OperationCanceledException)
+                    when (cancellationToken.IsCancellationRequested)
+                {
+                    return new AiCloudSyncResult
+                    {
+                        Success = false,
+                        Message = "Đã hủy đồng bộ AI Cloud.",
+                        Uploaded = uploaded,
+                        PendingAfterSync = GetPendingCount()
+                    };
+                }
+                catch (Exception ex)
+                {
+                    return new AiCloudSyncResult
+                    {
+                        Success = false,
+                        Message = ex.Message,
+                        Uploaded = uploaded,
+                        PendingAfterSync = GetPendingCount()
+                    };
+                }
             }
-            catch (Exception ex)
+            finally
             {
-                return new AiCloudSyncResult
-                {
-                    Success = false,
-                    Message = ex.Message,
-                    Uploaded = uploaded,
-                    PendingAfterSync = GetPendingCount()
-                };
+                SyncGate.Release();
             }
         }
 
-        private List<AiCloudVote> LoadPendingVotes()
+        private List<AiCloudVote> LoadPendingVotesNoLock()
         {
             try
             {
@@ -478,22 +551,67 @@ namespace ClassLibrary4
             }
         }
 
-        private void SavePendingVotes(List<AiCloudVote> votes)
+        private void SavePendingVotesNoLock(
+            List<AiCloudVote>? votes)
         {
             try
             {
                 Directory.CreateDirectory(BaseFolder);
 
-                File.WriteAllText(
+                WriteAllTextAtomic(
                     PendingQueuePath,
                     JsonSerializer.Serialize(
                         votes ?? new List<AiCloudVote>(),
-                        JsonOptions),
-                    Encoding.UTF8);
+                        JsonOptions));
             }
             catch
             {
             }
+        }
+
+        private void RemoveUploadedSnapshot(
+            IReadOnlyCollection<AiCloudVote> uploadedSnapshot)
+        {
+            if (uploadedSnapshot.Count == 0)
+                return;
+
+            HashSet<string> uploadedKeys =
+                new HashSet<string>(
+                    StringComparer.OrdinalIgnoreCase);
+
+            foreach (AiCloudVote vote
+                in uploadedSnapshot)
+            {
+                uploadedKeys.Add(
+                    BuildVoteVersionKey(
+                        vote));
+            }
+
+            lock (FileGate)
+            {
+                List<AiCloudVote> current =
+                    LoadPendingVotesNoLock();
+
+                current.RemoveAll(
+                    vote =>
+                        uploadedKeys.Contains(
+                            BuildVoteVersionKey(
+                                vote)));
+
+                SavePendingVotesNoLock(
+                    current);
+            }
+        }
+
+        private static string BuildVoteVersionKey(
+            AiCloudVote vote)
+        {
+            return
+                (vote.Scope ?? "").Trim() +
+                "\u001F" +
+                (vote.Signature ?? "").Trim() +
+                "\u001F" +
+                (vote.ClientUpdatedUtc ?? "").Trim();
         }
 
         private async Task<string> PostRpcAsync(
@@ -512,62 +630,105 @@ namespace ClassLibrary4
                     body,
                     JsonOptions);
 
-            using (HttpRequestMessage request =
+            using HttpRequestMessage request =
                 new HttpRequestMessage(
                     HttpMethod.Post,
-                    url))
+                    url);
+
+            request.Headers.TryAddWithoutValidation(
+                "apikey",
+                config.PublishableKey);
+
+            // Legacy anon key là JWT nên có thể dùng Bearer.
+            // Publishable key sb_publishable_* chỉ gửi ở header apikey.
+            if (config.PublishableKey.StartsWith(
+                    "eyJ",
+                    StringComparison.Ordinal))
             {
-                request.Headers.TryAddWithoutValidation(
-                    "apikey",
-                    config.PublishableKey);
+                request.Headers.Authorization =
+                    new AuthenticationHeaderValue(
+                        "Bearer",
+                        config.PublishableKey);
+            }
 
-                // Legacy anon key là JWT nên có thể dùng Bearer.
-                // Publishable key mới sb_publishable_* KHÔNG gửi làm Bearer.
-                if (config.PublishableKey.StartsWith(
-                        "eyJ",
-                        StringComparison.Ordinal))
-                {
-                    request.Headers.Authorization =
-                        new AuthenticationHeaderValue(
-                            "Bearer",
-                            config.PublishableKey);
-                }
+            request.Headers.TryAddWithoutValidation(
+                "Accept",
+                "application/json");
 
-                request.Headers.TryAddWithoutValidation(
-                    "Accept",
+            request.Content =
+                new StringContent(
+                    json,
+                    Encoding.UTF8,
                     "application/json");
 
-                request.Content =
-                    new StringContent(
-                        json,
-                        Encoding.UTF8,
-                        "application/json");
-
-                using (HttpResponseMessage response =
-                    await Http.SendAsync(
+            using HttpResponseMessage response =
+                await Http
+                    .SendAsync(
                         request,
-                        cancellationToken))
+                        HttpCompletionOption.ResponseHeadersRead,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+
+            string responseText =
+                await response.Content
+                    .ReadAsStringAsync(
+                        cancellationToken)
+                    .ConfigureAwait(false);
+
+            if (!response.IsSuccessStatusCode)
+            {
+                throw new InvalidOperationException(
+                    "Supabase RPC " +
+                    rpcName +
+                    " lỗi " +
+                    ((int)response.StatusCode)
+                        .ToString(
+                            CultureInfo.InvariantCulture) +
+                    " " +
+                    (response.ReasonPhrase ?? "") +
+                    "\n" +
+                    responseText);
+            }
+
+            return responseText;
+        }
+
+        private static void WriteAllTextAtomic(
+            string path,
+            string content)
+        {
+            string? folder =
+                Path.GetDirectoryName(path);
+
+            if (!string.IsNullOrWhiteSpace(folder))
+                Directory.CreateDirectory(folder);
+
+            string tempPath =
+                path +
+                ".tmp." +
+                Guid.NewGuid().ToString("N");
+
+            try
+            {
+                File.WriteAllText(
+                    tempPath,
+                    content ?? "",
+                    new UTF8Encoding(false));
+
+                File.Move(
+                    tempPath,
+                    path,
+                    true);
+            }
+            finally
+            {
+                try
                 {
-                    string responseText =
-                        await response.Content.ReadAsStringAsync(
-                            cancellationToken);
-
-                    if (!response.IsSuccessStatusCode)
-                    {
-                        throw new InvalidOperationException(
-                            "Supabase RPC " +
-                            rpcName +
-                            " lỗi " +
-                            ((int)response.StatusCode)
-                                .ToString(
-                                    CultureInfo.InvariantCulture) +
-                            " " +
-                            response.ReasonPhrase +
-                            "\n" +
-                            responseText);
-                    }
-
-                    return responseText;
+                    if (File.Exists(tempPath))
+                        File.Delete(tempPath);
+                }
+                catch
+                {
                 }
             }
         }
