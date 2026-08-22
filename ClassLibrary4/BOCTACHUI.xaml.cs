@@ -312,6 +312,9 @@ namespace ClassLibrary4
 
             // STEP21D: Dataset cũng chỉ đọc local summary khi mở Palette.
             UpdateAiDatasetStatusUi();
+
+            // STEP21F: chỉ đọc trạng thái export local, không chạy training.
+            UpdateAiTrainingStatusUi();
         }
 
         private WpfComboBox TimComboBox(string name)
@@ -41456,6 +41459,16 @@ namespace ClassLibrary4
         private AiDatasetCloudSummary _lastAiDatasetCloudSummary =
             new AiDatasetCloudSummary();
 
+        // ============================================================
+        // STEP21F - ONNX TRAINING EXPORT
+        // Chỉ export Approved Dataset. Train chạy ngoài AutoCAD.
+        // ============================================================
+        private AiOnnxTrainingExportClient _aiTrainingExportClient = null;
+        private bool _aiTrainingExportBusy = false;
+        private string _lastAiTrainingExportFolder = "";
+        private int _lastAiTrainingSampleCount = 0;
+        private int _lastAiTrainingClassCount = 0;
+
         private string SmartSymbolLibraryPath
         {
             get
@@ -42360,6 +42373,446 @@ namespace ClassLibrary4
             }
         }
 
+        private AiOnnxTrainingExportClient GetAiTrainingExportClient()
+        {
+            if (_aiTrainingExportClient == null)
+            {
+                _aiTrainingExportClient =
+                    new AiOnnxTrainingExportClient();
+            }
+
+            return
+                _aiTrainingExportClient;
+        }
+
+        private void UpdateAiTrainingStatusUi()
+        {
+            try
+            {
+                if (TxtAiTrainingStatus == null)
+                    return;
+
+                if (string.IsNullOrWhiteSpace(
+                        _lastAiTrainingExportFolder))
+                {
+                    TxtAiTrainingStatus.Text =
+                        "ONNX TRAINING: CHƯA XUẤT BỘ TRAIN";
+
+                    TxtAiTrainingStatus.Foreground =
+                        new System.Windows.Media.SolidColorBrush(
+                            System.Windows.Media.Color.FromRgb(
+                                15,
+                                118,
+                                110));
+
+                    return;
+                }
+
+                TxtAiTrainingStatus.Text =
+                    "ONNX TRAINING: " +
+                    _lastAiTrainingSampleCount +
+                    " mẫu • " +
+                    _lastAiTrainingClassCount +
+                    " class • ĐÃ XUẤT";
+
+                TxtAiTrainingStatus.Foreground =
+                    new System.Windows.Media.SolidColorBrush(
+                        System.Windows.Media.Color.FromRgb(
+                            4,
+                            120,
+                            87));
+            }
+            catch
+            {
+            }
+        }
+
+        private async void BtnAiTrainingExport_Click(
+            object sender,
+            RoutedEventArgs e)
+        {
+            if (_aiTrainingExportBusy)
+                return;
+
+            AiCloudConfig config =
+                GetAiCloudClient()
+                    .LoadConfig();
+
+            if (!config.IsConfigured)
+            {
+                MessageBox.Show(
+                    "AI Cloud chưa được cấu hình.\n\n" +
+                    "Bấm CẤU HÌNH CLOUD trước.",
+                    "ONNX TRAINING");
+
+                return;
+            }
+
+            string adminKey =
+                PromptAiTrainingAdminKey();
+
+            if (string.IsNullOrWhiteSpace(
+                    adminKey))
+            {
+                return;
+            }
+
+            _aiTrainingExportBusy =
+                true;
+
+            try
+            {
+                if (BtnAiTrainingExport != null)
+                {
+                    BtnAiTrainingExport.IsEnabled =
+                        false;
+
+                    BtnAiTrainingExport.Content =
+                        "ĐANG XUẤT...";
+                }
+
+                if (TxtAiTrainingStatus != null)
+                {
+                    TxtAiTrainingStatus.Text =
+                        "ONNX TRAINING: đang tải Approved Dataset...";
+                }
+
+                AiTrainingExportResult result =
+                    await GetAiTrainingExportClient()
+                        .ExportApprovedDatasetAsync(
+                            config,
+                            adminKey);
+
+                if (!result.Success &&
+                    result.SampleCount == 0)
+                {
+                    MessageBox.Show(
+                        "Chưa xuất được bộ train:\n\n" +
+                        result.Message,
+                        "ONNX TRAINING");
+
+                    return;
+                }
+
+                _lastAiTrainingExportFolder =
+                    result.ExportFolder ?? "";
+
+                _lastAiTrainingSampleCount =
+                    result.SampleCount;
+
+                _lastAiTrainingClassCount =
+                    result.ClassCount;
+
+                UpdateAiTrainingStatusUi();
+
+                string warning =
+                    "";
+
+                if (result.ClassCount < 2)
+                {
+                    warning =
+                        "\n\n⚠ Hiện chỉ có " +
+                        result.ClassCount +
+                        " class. Script train sẽ chưa tạo classifier có ý nghĩa.";
+                }
+                else
+                {
+                    List<string> lowClasses =
+                        result.ClassCounts
+                            .Where(
+                                kv =>
+                                    kv.Value < 20)
+                            .OrderBy(
+                                kv =>
+                                    kv.Key)
+                            .Select(
+                                kv =>
+                                    kv.Key +
+                                    "=" +
+                                    kv.Value)
+                            .ToList();
+
+                    if (lowClasses.Count > 0)
+                    {
+                        warning =
+                            "\n\n⚠ Class dưới 20 mẫu:\n" +
+                            string.Join(
+                                ", ",
+                                lowClasses);
+                    }
+                }
+
+                MessageBox.Show(
+                    "ĐÃ XUẤT BỘ TRAIN\n\n" +
+                    "Samples: " +
+                    result.SampleCount +
+                    "\n" +
+                    "Classes: " +
+                    result.ClassCount +
+                    "\n" +
+                    "Ảnh lỗi: " +
+                    result.Failed +
+                    "\n\n" +
+                    "Folder:\n" +
+                    result.ExportFolder +
+                    (string.IsNullOrWhiteSpace(
+                         result.ZipPath)
+                        ? ""
+                        : "\n\nZIP:\n" +
+                          result.ZipPath) +
+                    warning +
+                    "\n\nBước tiếp theo: copy 3 file training của STEP21F vào folder rồi chạy RUN_TRAIN_ONNX.bat.",
+                    "ONNX TRAINING");
+            }
+            catch (System.Exception ex)
+            {
+                MessageBox.Show(
+                    "Không xuất được Training Pack:\n" +
+                    ex.Message +
+                    "\n\nKiểm tra Edge Function ai-training-export + Admin Key.",
+                    "ONNX TRAINING");
+            }
+            finally
+            {
+                _aiTrainingExportBusy =
+                    false;
+
+                if (BtnAiTrainingExport != null)
+                {
+                    BtnAiTrainingExport.IsEnabled =
+                        true;
+
+                    BtnAiTrainingExport.Content =
+                        "XUẤT BỘ TRAIN";
+                }
+
+                UpdateAiTrainingStatusUi();
+            }
+        }
+
+        private void BtnAiTrainingOpenFolder_Click(
+            object sender,
+            RoutedEventArgs e)
+        {
+            try
+            {
+                string folder =
+                    !string.IsNullOrWhiteSpace(
+                        _lastAiTrainingExportFolder)
+                        ? _lastAiTrainingExportFolder
+                        : GetAiTrainingExportClient()
+                            .DefaultTrainingRoot;
+
+                Directory.CreateDirectory(
+                    folder);
+
+                System.Diagnostics.Process.Start(
+                    new System.Diagnostics.ProcessStartInfo
+                    {
+                        FileName =
+                            "explorer.exe",
+                        Arguments =
+                            "\"" +
+                            folder +
+                            "\"",
+                        UseShellExecute =
+                            true
+                    });
+            }
+            catch (System.Exception ex)
+            {
+                MessageBox.Show(
+                    "Không mở được thư mục train:\n" +
+                    ex.Message,
+                    "ONNX TRAINING");
+            }
+        }
+
+        private string PromptAiTrainingAdminKey()
+        {
+            using (System.Windows.Forms.Form form =
+                new System.Windows.Forms.Form())
+            using (System.Windows.Forms.Label title =
+                new System.Windows.Forms.Label())
+            using (System.Windows.Forms.Label hint =
+                new System.Windows.Forms.Label())
+            using (System.Windows.Forms.TextBox keyBox =
+                new System.Windows.Forms.TextBox())
+            using (System.Windows.Forms.Button okButton =
+                new System.Windows.Forms.Button())
+            using (System.Windows.Forms.Button cancelButton =
+                new System.Windows.Forms.Button())
+            {
+                form.Text =
+                    "ADMIN KEY - XUẤT BỘ TRAIN";
+
+                form.StartPosition =
+                    System.Windows.Forms.FormStartPosition.CenterScreen;
+
+                form.Width =
+                    610;
+
+                form.Height =
+                    280;
+
+                form.MinimizeBox =
+                    false;
+
+                form.MaximizeBox =
+                    false;
+
+                form.BackColor =
+                    System.Drawing.Color.White;
+
+                title.Left =
+                    22;
+
+                title.Top =
+                    18;
+
+                title.Width =
+                    545;
+
+                title.Height =
+                    30;
+
+                title.Text =
+                    "XÁC NHẬN QUYỀN ADMIN DATASET";
+
+                title.Font =
+                    new System.Drawing.Font(
+                        "Segoe UI",
+                        11.5f,
+                        System.Drawing.FontStyle.Bold);
+
+                title.ForeColor =
+                    System.Drawing.Color.FromArgb(
+                        15,
+                        118,
+                        110);
+
+                hint.Left =
+                    22;
+
+                hint.Top =
+                    60;
+
+                hint.Width =
+                    545;
+
+                hint.Height =
+                    45;
+
+                hint.Text =
+                    "Nhập Company Admin Key. Key chỉ dùng cho lần export này và không lưu vào cấu hình plugin.";
+
+                keyBox.Left =
+                    22;
+
+                keyBox.Top =
+                    112;
+
+                keyBox.Width =
+                    545;
+
+                keyBox.Height =
+                    30;
+
+                keyBox.UseSystemPasswordChar =
+                    true;
+
+                keyBox.Font =
+                    new System.Drawing.Font(
+                        "Segoe UI",
+                        10.5f);
+
+                okButton.Text =
+                    "XUẤT BỘ TRAIN";
+
+                okButton.Left =
+                    325;
+
+                okButton.Top =
+                    175;
+
+                okButton.Width =
+                    140;
+
+                okButton.Height =
+                    38;
+
+                okButton.BackColor =
+                    System.Drawing.Color.FromArgb(
+                        5,
+                        150,
+                        105);
+
+                okButton.ForeColor =
+                    System.Drawing.Color.White;
+
+                okButton.FlatStyle =
+                    System.Windows.Forms.FlatStyle.Flat;
+
+                okButton.DialogResult =
+                    System.Windows.Forms.DialogResult.OK;
+
+                cancelButton.Text =
+                    "HỦY";
+
+                cancelButton.Left =
+                    475;
+
+                cancelButton.Top =
+                    175;
+
+                cancelButton.Width =
+                    92;
+
+                cancelButton.Height =
+                    38;
+
+                cancelButton.DialogResult =
+                    System.Windows.Forms.DialogResult.Cancel;
+
+                form.Controls.Add(
+                    title);
+
+                form.Controls.Add(
+                    hint);
+
+                form.Controls.Add(
+                    keyBox);
+
+                form.Controls.Add(
+                    okButton);
+
+                form.Controls.Add(
+                    cancelButton);
+
+                form.AcceptButton =
+                    okButton;
+
+                form.CancelButton =
+                    cancelButton;
+
+                form.Shown +=
+                    (s, e) =>
+                    {
+                        keyBox.Focus();
+                    };
+
+                if (form.ShowDialog() !=
+                    System.Windows.Forms.DialogResult.OK)
+                {
+                    return "";
+                }
+
+                return
+                    (keyBox.Text ?? "")
+                        .Trim();
+            }
+        }
+
         private AiDatasetManager GetAiDatasetManager()
         {
             if (_aiDatasetManager == null)
@@ -42371,6 +42824,125 @@ namespace ClassLibrary4
             return
                 _aiDatasetManager;
         }
+
+        private void CaptureReviewedLegendRowsIntoDataset(
+            List<SmartLegendAutoRow> rows,
+            bool showSummary)
+        {
+            if (rows == null ||
+                rows.Count == 0)
+            {
+                return;
+            }
+
+            try
+            {
+                AiDatasetManager manager =
+                    GetAiDatasetManager();
+
+                AiDatasetLocalSummary before =
+                    manager.GetLocalSummary();
+
+                int attempted =
+                    0;
+
+                foreach (SmartLegendAutoRow row
+                    in rows)
+                {
+                    if (row == null ||
+                        row.Preview == null ||
+                        string.IsNullOrWhiteSpace(
+                            row.DisplayName))
+                    {
+                        continue;
+                    }
+
+                    string signature =
+                        GetAiLearningSignature(
+                            row.MatchMode,
+                            row.BlockKey,
+                            row.GeometryFingerprint);
+
+                    if (string.IsNullOrWhiteSpace(
+                            signature))
+                    {
+                        continue;
+                    }
+
+                    AiDatasetSample sample =
+                        manager.CaptureSample(
+                            row.Preview,
+                            signature,
+                            row.MatchMode,
+                            row.BlockKey,
+                            row.GeometryFingerprint,
+                            row.DisplayName,
+                            row.FollowDn,
+                            "POSITIVE",
+                            "LEGEND_REVIEW_ACCEPTED",
+                            "");
+
+                    if (sample != null)
+                    {
+                        attempted++;
+                    }
+                }
+
+                AiDatasetLocalSummary after =
+                    manager.GetLocalSummary();
+
+                int newSamples =
+                    Math.Max(
+                        0,
+                        after.Total -
+                        before.Total);
+
+                int duplicates =
+                    Math.Max(
+                        0,
+                        attempted -
+                        newSamples);
+
+                UpdateAiDatasetStatusUi();
+
+                if (showSummary &&
+                    attempted > 0)
+                {
+                    MessageBox.Show(
+                        "ĐÃ HỌC TOÀN BỘ BẢNG LEGEND\\n\\n" +
+                        "Ký hiệu hợp lệ: " +
+                        attempted +
+                        "\\n" +
+                        "Mẫu Dataset mới: " +
+                        newSamples +
+                        "\\n" +
+                        "Trùng hash / đã có: " +
+                        duplicates +
+                        "\\n" +
+                        "Chờ Cloud: " +
+                        after.Pending +
+                        "\\n\\n" +
+                        "Các mẫu hợp lệ đã được lưu Local AI Memory + AI Dataset.\\n" +
+                        "Tiếp theo tool sẽ quét bản vẽ để thống kê.",
+                        "AI DATASET - LEGEND");
+                }
+            }
+            catch (System.Exception ex)
+            {
+                try
+                {
+                    MessageBox.Show(
+                        "Đã lưu Legend vào thư viện nhưng chưa tạo đủ Dataset:\\n" +
+                        ex.Message +
+                        "\\n\\nBạn vẫn có thể tiếp tục quét bản vẽ.",
+                        "AI DATASET - LEGEND");
+                }
+                catch
+                {
+                }
+            }
+        }
+
 
         private void CaptureAiDatasetFromLegendRow(
             SmartLegendAutoRow row,
@@ -42646,6 +43218,74 @@ namespace ClassLibrary4
             RoutedEventArgs e)
         {
             ShowAiDatasetManagerDialog();
+        }
+
+        private async void BtnAiDatasetCloudReview_Click(
+            object sender,
+            RoutedEventArgs e)
+        {
+            AiCloudConfig config =
+                GetAiCloudClient()
+                    .LoadConfig();
+
+            if (!config.IsConfigured)
+            {
+                MessageBox.Show(
+                    "AI Cloud chưa được cấu hình.\n\n" +
+                    "Bấm CẤU HÌNH CLOUD trước.",
+                    "AI DATASET CLOUD");
+
+                return;
+            }
+
+            try
+            {
+                if (BtnAiDatasetCloudReview != null)
+                {
+                    BtnAiDatasetCloudReview.IsEnabled =
+                        false;
+
+                    BtnAiDatasetCloudReview.Content =
+                        "ĐANG MỞ...";
+                }
+
+                AiDatasetCloudAdminClient client =
+                    new AiDatasetCloudAdminClient();
+
+                using (AiDatasetCloudReviewForm form =
+                    new AiDatasetCloudReviewForm(
+                        config,
+                        client))
+                {
+                    form.ShowDialog();
+                }
+
+                _lastAiDatasetCloudSummary =
+                    await GetAiDatasetManager()
+                        .GetCloudSummaryAsync(
+                            config);
+
+                UpdateAiDatasetStatusUi();
+            }
+            catch (System.Exception ex)
+            {
+                MessageBox.Show(
+                    "Không mở được Cloud Dataset Manager:\n" +
+                    ex.Message +
+                    "\n\nKiểm tra STEP21E SQL + Edge Function ai-dataset-admin.",
+                    "AI DATASET CLOUD");
+            }
+            finally
+            {
+                if (BtnAiDatasetCloudReview != null)
+                {
+                    BtnAiDatasetCloudReview.IsEnabled =
+                        true;
+
+                    BtnAiDatasetCloudReview.Content =
+                        "DUYỆT CLOUD";
+                }
+            }
         }
 
         private void ShowAiDatasetManagerDialog()
@@ -47040,8 +47680,10 @@ namespace ClassLibrary4
             if (row == null ||
                 string.IsNullOrWhiteSpace(
                     row.DisplayName) ||
-                string.IsNullOrWhiteSpace(
-                    row.BlockKey))
+                (string.IsNullOrWhiteSpace(
+                     row.BlockKey) &&
+                 string.IsNullOrWhiteSpace(
+                     row.GeometryFingerprint)))
             {
                 return;
             }
@@ -47952,6 +48594,14 @@ namespace ClassLibrary4
             LearnAiFromSymbolRules(
                 currentProjectRules,
                 "LEGEND_DUAL_FINGERPRINT");
+
+            // STEP21F1 - LEGEND -> DATASET:
+            // Sau khi người dùng đã review và bấm OK - QUÉT BẢN VẼ,
+            // TOÀN BỘ dòng Legend hợp lệ trở thành Positive training sample.
+            // CaptureSample dùng SHA256 nên quét lại cùng ký hiệu không tạo ảnh rác.
+            CaptureReviewedLegendRowsIntoDataset(
+                rows,
+                true);
 
             // Quan trọng:
             // lần quét hiện tại chỉ dùng đúng Legend của dự án vừa quét,
