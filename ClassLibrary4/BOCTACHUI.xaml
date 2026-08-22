@@ -1723,7 +1723,7 @@
                                        FontWeight="Bold" FontSize="15"
                                        Foreground="#FF0078D7" Margin="0,0,0,6"/>
                             <TextBlock TextWrapping="Wrap" Foreground="#FF555555" FontSize="11" Margin="0,0,0,14"
-                                       Text="Áp dụng cho toàn bộ hệ thống FF / ACMV / CTN. Chỉ thống kê layer do tool tạo (FF_ / ACMV_ / CTN_)."/>
+                                       Text="Áp dụng cho FF / ACMV / CTN và kết quả AI. Nếu vùng chọn có TDL_AI_PIPE_DN... thì bảng ống tự ưu tiên AI overlay để tránh đếm trùng nét gốc."/>
 
                             <Button Content="THỐNG KÊ ỐNG" Height="42" FontSize="14" FontWeight="Bold"
                                     Background="#FF0078D7" Foreground="White" Margin="0,0,0,10" Cursor="Hand"
@@ -1731,7 +1731,7 @@
                                 <Button.ToolTip>
                                     <ToolTip>
                                         <TextBlock MaxWidth="280" TextWrapping="Wrap"
-                                                   Text="THỐNG KÊ ỐNG: Quét chọn vùng chứa đường ống. Tính tổng chiều dài theo Layer, sắp xếp theo Hệ thống rồi Kích thước. Đơn vị: mét. Chỉ layer FF_/ACMV_/CTN_."/>
+                                                   Text="THỐNG KÊ ỐNG: dùng chung CAD + AI. Nếu vùng chọn có TDL_AI_PIPE_DN... thì ưu tiên AI overlay và bỏ nét gốc trùng; nếu không có AI thì giữ thống kê FF_/ACMV_/CTN_/SHOP/TRỤC ĐỨNG như cũ."/>
                                     </ToolTip>
                                 </Button.ToolTip>
                             </Button>
@@ -1743,7 +1743,7 @@
                                 <Button.ToolTip>
                                     <ToolTip>
                                         <TextBlock MaxWidth="280" TextWrapping="Wrap"
-                                                   Text="THỐNG KÊ THIẾT BỊ + VAN: Giữ nguyên chức năng cũ. Quét chọn vùng và thống kê thiết bị/van theo dữ liệu Layer hiện có."/>
+                                                   Text="THỐNG KÊ THIẾT BỊ + VAN: dùng chung kết quả AI. Nếu đã có phiên AI gần nhất thì xuất lại ngay bảng đã review; nếu chưa có thì chạy nhận diện thông minh để tạo dữ liệu thống kê."/>
                                     </ToolTip>
                                 </Button.ToolTip>
                             </Button>
@@ -1755,7 +1755,7 @@
                                 <Button.ToolTip>
                                     <ToolTip>
                                         <TextBlock MaxWidth="310" TextWrapping="Wrap"
-                                                   Text="NHẬN DIỆN THÔNG MINH: Học ký hiệu từ bảng LEGEND, lưu thư viện, quét mặt bằng và tự suy DN theo tuyến ống đi qua/gần tâm ký hiệu. Hoàn toàn tách riêng khỏi nút THỐNG KÊ THIẾT BỊ + VAN."/>
+                                                   Text="NHẬN DIỆN THÔNG MINH: học ký hiệu từ LEGEND, lưu Memory/Cloud, quét mặt bằng và tự suy DN. Kết quả được dùng chung với nút THỐNG KÊ THIẾT BỊ + VAN trong tab 6."/>
                                     </ToolTip>
                                 </Button.ToolTip>
                             </Button>

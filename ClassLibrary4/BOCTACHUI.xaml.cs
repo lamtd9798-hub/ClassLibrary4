@@ -40697,7 +40697,7 @@ namespace ClassLibrary4
                     {
                         new TypedValue(
                             (int)DxfCode.Start,
-                            "LINE,LWPOLYLINE,ARC,INSERT")
+                            "LINE,LWPOLYLINE,POLYLINE,ARC,INSERT")
                     };
 
                 SelectionFilter filter =
@@ -40733,6 +40733,54 @@ namespace ClassLibrary4
                 int shopCenterCount = 0;
                 int normalPipeCount = 0;
                 int verticalRiserCount = 0;
+                int aiPipeOverlayCount = 0;
+
+                // STEP25 - UNIFIED PIPE STATISTICS:
+                // Nếu vùng chọn có overlay TDL_AI_PIPE_DN... thì dùng AI overlay
+                // làm nguồn chiều dài ngang DUY NHẤT. Nhờ vậy không cộng trùng
+                // giữa nét gốc và nét AI vẽ đè lên cùng tuyến.
+                bool useAiPipeOverlay = false;
+
+                using (Transaction detectTr =
+                    db.TransactionManager.StartTransaction())
+                {
+                    foreach (SelectedObject so in psr.Value)
+                    {
+                        if (so == null ||
+                            so.ObjectId.IsNull ||
+                            !so.ObjectId.IsValid ||
+                            so.ObjectId.IsErased)
+                        {
+                            continue;
+                        }
+
+                        Entity detectEnt = null;
+
+                        try
+                        {
+                            detectEnt =
+                                detectTr.GetObject(
+                                    so.ObjectId,
+                                    OpenMode.ForRead,
+                                    false) as Entity;
+                        }
+                        catch
+                        {
+                            continue;
+                        }
+
+                        if (detectEnt is Curve &&
+                            !detectEnt.IsErased &&
+                            IsAiRecognizedPipeStatLayer(
+                                detectEnt.Layer))
+                        {
+                            useAiPipeOverlay = true;
+                            break;
+                        }
+                    }
+
+                    detectTr.Commit();
+                }
 
                 using (Transaction tr =
                     db.TransactionManager.StartTransaction())
@@ -40778,10 +40826,26 @@ namespace ClassLibrary4
                                 continue;
                             }
 
-                            if (!dictChieuDaiDung.ContainsKey(riserLayer))
-                                dictChieuDaiDung[riserLayer] = 0.0;
+                            string outputRiserLayer =
+                                riserLayer;
 
-                            dictChieuDaiDung[riserLayer] +=
+                            // Khi đang thống kê theo AI overlay, gom trục đứng về
+                            // cùng TDL_AI_PIPE_DN... nếu đọc được DN từ layer gốc.
+                            // Như vậy một DN chỉ có một dòng NGANG + ĐỨNG + TỔNG.
+                            if (useAiPipeOverlay &&
+                                TryParseAiPipeSizeText(
+                                    riserLayer,
+                                    out string riserAiSize))
+                            {
+                                outputRiserLayer =
+                                    GetAiPipeLayerName(
+                                        riserAiSize);
+                            }
+
+                            if (!dictChieuDaiDung.ContainsKey(outputRiserLayer))
+                                dictChieuDaiDung[outputRiserLayer] = 0.0;
+
+                            dictChieuDaiDung[outputRiserLayer] +=
                                 riser.HeightMeters * 1000.0;
 
                             verticalRiserCount++;
@@ -40801,7 +40865,36 @@ namespace ClassLibrary4
                         if (string.IsNullOrWhiteSpace(layer))
                             continue;
 
-                        // Chỉ thống kê layer do tool tạo.
+                        bool isAiRecognizedPipe =
+                            IsAiRecognizedPipeStatLayer(
+                                layer);
+
+                        // Nếu selection có AI overlay thì chỉ lấy chính overlay AI
+                        // cho phần ống ngang. Nét gốc / SHOP nằm phía dưới bị bỏ qua
+                        // để tránh nhân đôi chiều dài. Trục đứng vẫn được cộng ở trên.
+                        if (useAiPipeOverlay)
+                        {
+                            if (!isAiRecognizedPipe)
+                                continue;
+
+                            double aiLength =
+                                LayChieuDaiCurveThongKe(
+                                    curve);
+
+                            if (aiLength <= 1e-9)
+                                continue;
+
+                            if (!dictChieuDaiNgang.ContainsKey(layer))
+                                dictChieuDaiNgang[layer] = 0.0;
+
+                            dictChieuDaiNgang[layer] +=
+                                aiLength;
+
+                            aiPipeOverlayCount++;
+                            continue;
+                        }
+
+                        // Không có AI overlay -> giữ nguyên workflow CAD/tool cũ.
                         if (!LaLayerCuaTool(layer))
                             continue;
 
@@ -40876,6 +40969,7 @@ namespace ClassLibrary4
                     MessageBox.Show(
                         "Không tìm thấy ống hợp lệ trong vùng chọn.\n\n" +
                         "Hỗ trợ:\n" +
+                        "• AI PIPE: TDL_AI_PIPE_DN... được ưu tiên nếu có trong vùng chọn.\n" +
                         "• Ống thường: LINE / POLYLINE / ARC trên layer ống của tool.\n" +
                         "• Ống SHOP: tự lấy đường tâm FF_SHOP_TAM_DN... " +
                         "để không bị nhân đôi chiều dài.\n" +
@@ -40931,6 +41025,12 @@ namespace ClassLibrary4
                         statisticLayer;
 
                     if (heThongSort.StartsWith(
+                            AiPipeLayerPrefix,
+                            StringComparison.OrdinalIgnoreCase))
+                    {
+                        heThongSort = "AI_PIPE";
+                    }
+                    else if (heThongSort.StartsWith(
                             "FF_SHOP_",
                             StringComparison.OrdinalIgnoreCase))
                     {
@@ -40981,6 +41081,9 @@ namespace ClassLibrary4
                             // Các layer ống thường vẫn giữ nguyên logic cũ.
                             M2 =
                                 (statisticLayer.StartsWith(
+                                     AiPipeLayerPrefix,
+                                     StringComparison.OrdinalIgnoreCase) ||
+                                 statisticLayer.StartsWith(
                                      "FF_SHOP_",
                                      StringComparison.OrdinalIgnoreCase) ||
                                  statisticLayer.StartsWith(
@@ -41017,7 +41120,9 @@ namespace ClassLibrary4
                 }
 
                 ed.WriteMessage(
-                    $"\n[THỐNG KÊ ỐNG + TRỤC ĐỨNG] " +
+                    $"\n[THỐNG KÊ ỐNG + AI + TRỤC ĐỨNG] " +
+                    $"Nguồn={(useAiPipeOverlay ? "AI OVERLAY" : "CAD/TOOL")} | " +
+                    $"AI={aiPipeOverlayCount} entity | " +
                     $"Ống thường={normalPipeCount} entity | " +
                     $"SHOP tâm={shopCenterCount} entity | " +
                     $"Trục đứng={verticalRiserCount} block | " +
@@ -41283,6 +41388,9 @@ namespace ClassLibrary4
             // không bị xuất hiện lại ở lần quét sau.
             public string GeometryFingerprint { get; set; } = "";
             public List<ObjectId> ObjectIds { get; set; } = new List<ObjectId>();
+
+            // STEP24B: bbox thật của cluster EXPLODE để NMS theo IoU.
+            public SmartNmsBox DetectionBox { get; set; } = null;
         }
 
         private class SmartVisionCandidateScore
@@ -41385,6 +41493,38 @@ namespace ClassLibrary4
             public int SoLuong { get; set; }
         }
 
+        // ============================================================
+        // STEP24B - CAD SPATIAL NMS
+        // Bounding box thuần dữ liệu dùng để gom các detection chồng nhau
+        // mà không đưa logic NMS vào MepSymbolClassifier.
+        // ============================================================
+        private class SmartNmsBox
+        {
+            public double MinX { get; set; }
+            public double MinY { get; set; }
+            public double MaxX { get; set; }
+            public double MaxY { get; set; }
+
+            public bool IsValid
+            {
+                get
+                {
+                    return
+                        !double.IsNaN(MinX) &&
+                        !double.IsNaN(MinY) &&
+                        !double.IsNaN(MaxX) &&
+                        !double.IsNaN(MaxY) &&
+                        MaxX >= MinX &&
+                        MaxY >= MinY;
+                }
+            }
+
+            public double Width => Math.Max(0.0, MaxX - MinX);
+            public double Height => Math.Max(0.0, MaxY - MinY);
+            public double Area => Width * Height;
+            public double Diagonal => Math.Sqrt(Width * Width + Height * Height);
+        }
+
         private class SmartAuditRow
         {
             public string Status { get; set; } = "OK";
@@ -41416,6 +41556,11 @@ namespace ClassLibrary4
             // Handle ổn định theo DWG để BỎ QUA một ứng viên thì lần quét sau
             // không đưa chính instance đó trở lại bảng kiểm tra.
             public string InstanceHandleKey { get; set; } = "";
+
+            // STEP24B - NMS metadata. Không serialize; nếu mở session cũ thì
+            // NMS tự fallback về khoảng cách tâm như trước.
+            public SmartNmsBox DetectionBox { get; set; } = null;
+            public double DetectionConfidence { get; set; } = 0.0;
         }
 
         private class SmartAuditIgnoreEntry
@@ -41455,6 +41600,9 @@ namespace ClassLibrary4
         // Nhờ vậy sau khi đã xuất bảng thống kê vẫn mở lại bảng kiểm tra để rà soát tiếp.
         private List<SmartAuditRow> _lastSmartAuditRows =
             new List<SmartAuditRow>();
+
+        // STEP24B: số detection bị NMS gộp ở lần rà soát gần nhất.
+        private int _lastSmartNmsSuppressedCount = 0;
 
         private List<string> _lastSmartLegendZero =
             new List<string>();
@@ -46712,9 +46860,11 @@ namespace ClassLibrary4
             object sender,
             RoutedEventArgs e)
         {
-            // NÚT CŨ:
-            // Giữ nguyên chức năng thống kê thiết bị + van theo cách cũ.
-            // Không gọi workflow nhận diện thông minh nữa.
+            // STEP25 - UNIFIED STATISTICS:
+            // Nút THỐNG KÊ bên tab 6 dùng chung dữ liệu với AI VAN / THIẾT BỊ.
+            // - Nếu đã có phiên AI gần nhất: xuất lại ngay bảng AI đã review.
+            // - Nếu chưa có: chạy workflow nhận diện thông minh để tạo dữ liệu.
+            // Không còn tách thành một nút layer-only độc lập như trước.
             try
             {
                 Document doc =
@@ -46725,7 +46875,29 @@ namespace ClassLibrary4
                 if (doc == null)
                     return;
 
-                ThongKeThietBiVanCu(
+                if (_lastSmartAuditRows != null &&
+                    _lastSmartAuditRows.Count > 0)
+                {
+                    List<SmartValveStatRow> aiStats =
+                        BuildSmartStatsFromAuditRows(
+                            _lastSmartAuditRows);
+
+                    if (aiStats.Count > 0)
+                    {
+                        XuatBangThongKeVanThongMinh(
+                            aiStats);
+
+                        doc.Editor.WriteMessage(
+                            "\n[THỐNG KÊ TB+VAN] Dùng kết quả AI gần nhất " +
+                            $"({_lastSmartAuditRows.Count} dòng audit, {aiStats.Count} chủng loại).");
+
+                        return;
+                    }
+                }
+
+                // Chưa có kết quả AI trong phiên hiện tại -> chạy luôn engine AI.
+                // Engine sẽ reuse Legend/Memory nếu đã có, không bắt học lại vô ích.
+                ThongKeThietBiVanThongMinh(
                     doc);
             }
             catch (System.Exception ex)
@@ -46733,7 +46905,7 @@ namespace ClassLibrary4
                 try
                 {
                     MessageBox.Show(
-                        "Lỗi THỐNG KÊ THIẾT BỊ + VAN:\n" +
+                        "Lỗi THỐNG KÊ THIẾT BỊ + VAN (AI tích hợp):\n" +
                         ex.Message,
                         "THỐNG KÊ THIẾT BỊ + VAN");
                 }
@@ -54350,7 +54522,12 @@ namespace ClassLibrary4
                             ObjectIds =
                                 ids != null
                                     ? ids.ToList()
-                                    : new List<ObjectId>()
+                                    : new List<ObjectId>(),
+                            DetectionBox =
+                                BuildSmartNmsBoxFromPrimitives(
+                                    cluster,
+                                    new Point3d(x, y, 0.0),
+                                    70.0)
                         });
                 }
 
@@ -55082,7 +55259,14 @@ namespace ClassLibrary4
                             InstanceHandleKey =
                                 pointInstanceHandleKey,
                             SourceId =
-                                pointId
+                                pointId,
+                            DetectionBox =
+                                BuildSmartNmsBoxFromCenter(
+                                    point.Position,
+                                    55.0,
+                                    55.0),
+                            DetectionConfidence =
+                                1.0
                         });
                 }
 
@@ -55358,7 +55542,21 @@ namespace ClassLibrary4
                                         ? matchedBlockRasterSignatures[blockId]
                                         : (rule.RasterSignature ?? ""),
                             SourceId =
-                                blockId
+                                blockId,
+                            DetectionBox =
+                                BuildSmartNmsBoxFromEntity(
+                                    br,
+                                    br.Position,
+                                    90.0),
+                            DetectionConfidence =
+                                onnxFallbackMatch &&
+                                matchedBlockOnnxPredictions.ContainsKey(blockId)
+                                    ? matchedBlockOnnxPredictions[blockId].Confidence
+                                    : rasterFallbackMatch
+                                        ? 0.70
+                                        : geometryFallbackMatch
+                                            ? 0.88
+                                            : 1.0
                         });
                 }
 
@@ -55529,7 +55727,20 @@ namespace ClassLibrary4
                             GeometryFingerprint =
                                 recognizedGeometryFingerprint,
                             InstanceHandleKey =
-                                recognizedGeometryHandleKey
+                                recognizedGeometryHandleKey,
+                            DetectionBox =
+                                match.DetectionBox ??
+                                BuildSmartNmsBoxFromCenter(
+                                    match.Center,
+                                    80.0,
+                                    80.0),
+                            DetectionConfidence =
+                                geometryOnnxMatch &&
+                                match.OnnxPrediction != null
+                                    ? match.OnnxPrediction.Confidence
+                                    : Math.Max(
+                                        0.0,
+                                        Math.Min(1.0, 1.0 - match.Score))
                         });
                 }
 
@@ -55672,7 +55883,14 @@ namespace ClassLibrary4
                             SourceId =
                                 blockId,
                             InstanceHandleKey =
-                                unknownBlockHandleKey
+                                unknownBlockHandleKey,
+                            DetectionBox =
+                                BuildSmartNmsBoxFromEntity(
+                                    br,
+                                    br.Position,
+                                    90.0),
+                            DetectionConfidence =
+                                0.15
                         });
                 }
 
@@ -55779,7 +55997,14 @@ namespace ClassLibrary4
                             SourceId =
                                 pointId,
                             InstanceHandleKey =
-                                pointHandleKey
+                                pointHandleKey,
+                            DetectionBox =
+                                BuildSmartNmsBoxFromCenter(
+                                    point.Position,
+                                    55.0,
+                                    55.0),
+                            DetectionConfidence =
+                                0.10
                         });
                 }
 
@@ -55900,7 +56125,14 @@ namespace ClassLibrary4
                             GeometryFingerprint =
                                 unknownFingerprint ?? "",
                             InstanceHandleKey =
-                                unknownGeometryHandleKey
+                                unknownGeometryHandleKey,
+                            DetectionBox =
+                                BuildSmartNmsBoxFromCenter(
+                                    cluster.Center,
+                                    Math.Max(35.0, cluster.Width * 0.5),
+                                    Math.Max(35.0, cluster.Height * 0.5)),
+                            DetectionConfidence =
+                                0.10
                         });
                 }
 
@@ -56432,60 +56664,568 @@ namespace ClassLibrary4
             return false;
         }
 
+        // ============================================================
+        // STEP24B - CAD SPATIAL NMS
+        // ------------------------------------------------------------
+        // Mục tiêu:
+        //   - BLOCK / VECTOR / ONNX / VISION cùng nhìn một thiết bị -> 1 dòng.
+        //   - Ưu tiên nguồn đáng tin cậy, không để fallback đè Exact/Legend.
+        //   - Spatial grid để tránh O(N^2) khi có rất nhiều candidate.
+        //   - Nếu hai nhãn khác nhau nhưng đều là detection mạnh thì KHÔNG
+        //     tự xóa; giữ lại để người dùng thấy conflict thay vì đoán bừa.
+        // ============================================================
         private List<SmartAuditRow> DeduplicateSmartAuditRows(
             List<SmartAuditRow> rows)
         {
-            List<SmartAuditRow> result =
-                new List<SmartAuditRow>();
+            List<SmartAuditRow> input =
+                (rows ?? new List<SmartAuditRow>())
+                    .Where(r => r != null)
+                    .ToList();
 
-            if (rows == null)
-                return result;
-
-            foreach (SmartAuditRow row
-                in rows)
+            if (input.Count <= 1)
             {
-                if (row == null)
+                _lastSmartNmsSuppressedCount = 0;
+                return input;
+            }
+
+            const double cellSize = 320.0;
+
+            List<SmartAuditRow> ranked =
+                input
+                    .OrderByDescending(GetSmartNmsPriority)
+                    .ThenByDescending(r => r.DetectionConfidence)
+                    .ToList();
+
+            Dictionary<string, List<SmartAuditRow>> grid =
+                new Dictionary<string, List<SmartAuditRow>>(
+                    StringComparer.Ordinal);
+
+            HashSet<SmartAuditRow> kept =
+                new HashSet<SmartAuditRow>();
+
+            foreach (SmartAuditRow candidate in ranked)
+            {
+                SmartNmsBox box =
+                    candidate.DetectionBox ??
+                    BuildSmartNmsBoxFromCenter(
+                        candidate.Point,
+                        GetSmartNmsFallbackHalfSize(candidate),
+                        GetSmartNmsFallbackHalfSize(candidate));
+
+                List<string> cells =
+                    GetSmartNmsGridCells(
+                        box,
+                        candidate.Point,
+                        cellSize);
+
+                HashSet<SmartAuditRow> nearby =
+                    new HashSet<SmartAuditRow>();
+
+                foreach (string cell in cells)
+                {
+                    if (!grid.TryGetValue(
+                            cell,
+                            out List<SmartAuditRow> bucket))
+                    {
+                        continue;
+                    }
+
+                    foreach (SmartAuditRow existing in bucket)
+                    {
+                        if (existing != null)
+                            nearby.Add(existing);
+                    }
+                }
+
+                bool suppressed = false;
+
+                foreach (SmartAuditRow existing in nearby)
+                {
+                    if (AreSmartNmsDuplicates(
+                            existing,
+                            candidate))
+                    {
+                        suppressed = true;
+                        break;
+                    }
+                }
+
+                if (suppressed)
                     continue;
 
-                SmartAuditRow duplicate =
-                    result.FirstOrDefault(
-                        r =>
-                            string.Equals(
-                                r.Status,
-                                row.Status,
-                                StringComparison.OrdinalIgnoreCase) &&
-                            PlanDistance(
-                                r.Point,
-                                row.Point) <=
-                            100.0);
+                kept.Add(candidate);
+                candidate.DetectionBox = box;
 
-                if (duplicate == null)
+                foreach (string cell in cells)
+                {
+                    if (!grid.TryGetValue(
+                            cell,
+                            out List<SmartAuditRow> bucket))
+                    {
+                        bucket = new List<SmartAuditRow>();
+                        grid[cell] = bucket;
+                    }
+
+                    bucket.Add(candidate);
+                }
+            }
+
+            // Giữ thứ tự hiển thị gốc để UI không nhảy lung tung sau NMS.
+            List<SmartAuditRow> result =
+                input
+                    .Where(r => kept.Contains(r))
+                    .ToList();
+
+            _lastSmartNmsSuppressedCount =
+                Math.Max(
+                    0,
+                    input.Count - result.Count);
+
+            return result;
+        }
+
+        private static double GetSmartNmsPriority(
+            SmartAuditRow row)
+        {
+            if (row == null)
+                return 0.0;
+
+            double score = 0.0;
+
+            if (row.UserEdited)
+                score += 2000.0;
+
+            bool missing =
+                string.Equals(
+                    row.Status,
+                    "MISSING",
+                    StringComparison.OrdinalIgnoreCase);
+
+            if (!missing)
+                score += 1000.0;
+
+            string source =
+                (row.Source ?? "").ToUpperInvariant();
+
+            if (source.Contains("THÊM THỦ CÔNG"))
+                score += 1200.0;
+            else if (source == "BLOCK")
+                score += 1100.0;
+            else if (source.Contains("BLOCK - HÌNH HỌC"))
+                score += 1000.0;
+            else if (source == "HÌNH EXPLODE")
+                score += 960.0;
+            else if (source.Contains("BLOCK - ONNX"))
+                score += 900.0;
+            else if (source.Contains("HÌNH EXPLODE - ONNX"))
+                score += 880.0;
+            else if (source.Contains("BLOCK - VISION"))
+                score += 820.0;
+            else if (source == "POINT")
+                score += 780.0;
+            else if (source.Contains("CHƯA HỌC"))
+                score += 100.0;
+            else
+                score += 500.0;
+
+            if (string.Equals(
+                    row.Status,
+                    "OK",
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                score += 80.0;
+            }
+
+            score +=
+                Math.Max(
+                    0.0,
+                    Math.Min(1.0, row.DetectionConfidence)) * 50.0;
+
+            return score;
+        }
+
+        private bool AreSmartNmsDuplicates(
+            SmartAuditRow winner,
+            SmartAuditRow candidate)
+        {
+            if (winner == null || candidate == null)
+                return false;
+
+            if (!winner.SourceId.IsNull &&
+                !candidate.SourceId.IsNull &&
+                winner.SourceId == candidate.SourceId)
+            {
+                return true;
+            }
+
+            if (!string.IsNullOrWhiteSpace(winner.InstanceHandleKey) &&
+                !string.IsNullOrWhiteSpace(candidate.InstanceHandleKey) &&
+                AreSmartAuditHandleKeysSameInstance(
+                    winner.InstanceHandleKey,
+                    candidate.InstanceHandleKey))
+            {
+                return true;
+            }
+
+            SmartNmsBox a =
+                winner.DetectionBox ??
+                BuildSmartNmsBoxFromCenter(
+                    winner.Point,
+                    GetSmartNmsFallbackHalfSize(winner),
+                    GetSmartNmsFallbackHalfSize(winner));
+
+            SmartNmsBox b =
+                candidate.DetectionBox ??
+                BuildSmartNmsBoxFromCenter(
+                    candidate.Point,
+                    GetSmartNmsFallbackHalfSize(candidate),
+                    GetSmartNmsFallbackHalfSize(candidate));
+
+            double iou =
+                GetSmartNmsIoU(a, b);
+
+            double containment =
+                GetSmartNmsContainment(a, b);
+
+            double centerDistance =
+                PlanDistance(
+                    winner.Point,
+                    candidate.Point);
+
+            bool sameLabel =
+                !string.IsNullOrWhiteSpace(winner.Name) &&
+                !string.IsNullOrWhiteSpace(candidate.Name) &&
+                string.Equals(
+                    NormalizeSmartDisplayName(winner.Name),
+                    NormalizeSmartDisplayName(candidate.Name),
+                    StringComparison.OrdinalIgnoreCase);
+
+            bool winnerMissing =
+                string.Equals(
+                    winner.Status,
+                    "MISSING",
+                    StringComparison.OrdinalIgnoreCase);
+
+            bool candidateMissing =
+                string.Equals(
+                    candidate.Status,
+                    "MISSING",
+                    StringComparison.OrdinalIgnoreCase);
+
+            bool anyFallback =
+                IsSmartNmsFallbackSource(winner.Source) ||
+                IsSmartNmsFallbackSource(candidate.Source);
+
+            // Một detection đã nhận được loại và một detection "CHƯA HỌC"
+            // cùng hộp => giữ detection đã nhận, bỏ candidate đỏ trùng.
+            if (winnerMissing != candidateMissing)
+            {
+                return
+                    iou >= 0.25 ||
+                    containment >= 0.65 ||
+                    centerDistance <= 75.0;
+            }
+
+            // Cùng nhãn: NMS tiêu chuẩn mềm hơn.
+            if (sameLabel)
+            {
+                return
+                    iou >= 0.32 ||
+                    containment >= 0.70 ||
+                    (centerDistance <= 65.0 &&
+                     SmartNmsBoxesOverlapExpanded(a, b, 35.0));
+            }
+
+            // Khác nhãn: chỉ suppress khi overlap rất mạnh và ít nhất một bên
+            // là fallback. Hai detection mạnh khác nhãn được giữ để review conflict.
+            if (anyFallback)
+            {
+                return
+                    iou >= 0.72 ||
+                    containment >= 0.90 ||
+                    (centerDistance <= 35.0 &&
+                     SmartNmsBoxesOverlapExpanded(a, b, 12.0));
+            }
+
+            return false;
+        }
+
+        private static bool IsSmartNmsFallbackSource(
+            string source)
+        {
+            string s =
+                (source ?? "").ToUpperInvariant();
+
+            return
+                s.Contains("ONNX") ||
+                s.Contains("VISION") ||
+                s.Contains("HÌNH HỌC") ||
+                s.Contains("EXPLODE") ||
+                s.Contains("CHƯA HỌC");
+        }
+
+        private static double GetSmartNmsFallbackHalfSize(
+            SmartAuditRow row)
+        {
+            string source =
+                (row?.Source ?? "").ToUpperInvariant();
+
+            if (source.Contains("POINT"))
+                return 55.0;
+
+            if (source.Contains("BLOCK"))
+                return 90.0;
+
+            if (source.Contains("EXPLODE") ||
+                source.Contains("HÌNH"))
+            {
+                return 80.0;
+            }
+
+            return 75.0;
+        }
+
+        private static SmartNmsBox BuildSmartNmsBoxFromCenter(
+            Point3d center,
+            double halfWidth,
+            double halfHeight)
+        {
+            halfWidth =
+                Math.Max(1.0, Math.Abs(halfWidth));
+
+            halfHeight =
+                Math.Max(1.0, Math.Abs(halfHeight));
+
+            return
+                new SmartNmsBox
+                {
+                    MinX = center.X - halfWidth,
+                    MinY = center.Y - halfHeight,
+                    MaxX = center.X + halfWidth,
+                    MaxY = center.Y + halfHeight
+                };
+        }
+
+        private static SmartNmsBox BuildSmartNmsBoxFromEntity(
+            Entity entity,
+            Point3d fallbackCenter,
+            double fallbackHalfSize)
+        {
+            if (entity != null)
+            {
+                try
+                {
+                    Extents3d ex = entity.GeometricExtents;
+
+                    SmartNmsBox box =
+                        new SmartNmsBox
+                        {
+                            MinX = Math.Min(ex.MinPoint.X, ex.MaxPoint.X),
+                            MinY = Math.Min(ex.MinPoint.Y, ex.MaxPoint.Y),
+                            MaxX = Math.Max(ex.MinPoint.X, ex.MaxPoint.X),
+                            MaxY = Math.Max(ex.MinPoint.Y, ex.MaxPoint.Y)
+                        };
+
+                    if (box.IsValid &&
+                        box.Width >= 1.0 &&
+                        box.Height >= 1.0)
+                    {
+                        return box;
+                    }
+                }
+                catch
+                {
+                }
+            }
+
+            return
+                BuildSmartNmsBoxFromCenter(
+                    fallbackCenter,
+                    fallbackHalfSize,
+                    fallbackHalfSize);
+        }
+
+        private static SmartNmsBox BuildSmartNmsBoxFromPrimitives(
+            IEnumerable<SmartGeometryPrimitive> primitives,
+            Point3d fallbackCenter,
+            double fallbackHalfSize)
+        {
+            List<SmartGeometryPrimitive> list =
+                (primitives ?? Enumerable.Empty<SmartGeometryPrimitive>())
+                    .Where(p => p != null)
+                    .ToList();
+
+            if (list.Count == 0)
+            {
+                return
+                    BuildSmartNmsBoxFromCenter(
+                        fallbackCenter,
+                        fallbackHalfSize,
+                        fallbackHalfSize);
+            }
+
+            try
+            {
+                SmartNmsBox box =
+                    new SmartNmsBox
+                    {
+                        MinX = list.Min(p => p.Extents.MinPoint.X),
+                        MinY = list.Min(p => p.Extents.MinPoint.Y),
+                        MaxX = list.Max(p => p.Extents.MaxPoint.X),
+                        MaxY = list.Max(p => p.Extents.MaxPoint.Y)
+                    };
+
+                if (box.IsValid)
+                    return box;
+            }
+            catch
+            {
+            }
+
+            return
+                BuildSmartNmsBoxFromCenter(
+                    fallbackCenter,
+                    fallbackHalfSize,
+                    fallbackHalfSize);
+        }
+
+        private static double GetSmartNmsIoU(
+            SmartNmsBox a,
+            SmartNmsBox b)
+        {
+            if (a == null || b == null ||
+                !a.IsValid || !b.IsValid)
+            {
+                return 0.0;
+            }
+
+            double ix =
+                Math.Max(
+                    0.0,
+                    Math.Min(a.MaxX, b.MaxX) -
+                    Math.Max(a.MinX, b.MinX));
+
+            double iy =
+                Math.Max(
+                    0.0,
+                    Math.Min(a.MaxY, b.MaxY) -
+                    Math.Max(a.MinY, b.MinY));
+
+            double intersection = ix * iy;
+
+            if (intersection <= 0.0)
+                return 0.0;
+
+            double union =
+                a.Area + b.Area - intersection;
+
+            return
+                union > 1e-9
+                    ? intersection / union
+                    : 0.0;
+        }
+
+        private static double GetSmartNmsContainment(
+            SmartNmsBox a,
+            SmartNmsBox b)
+        {
+            if (a == null || b == null ||
+                !a.IsValid || !b.IsValid)
+            {
+                return 0.0;
+            }
+
+            double ix =
+                Math.Max(
+                    0.0,
+                    Math.Min(a.MaxX, b.MaxX) -
+                    Math.Max(a.MinX, b.MinX));
+
+            double iy =
+                Math.Max(
+                    0.0,
+                    Math.Min(a.MaxY, b.MaxY) -
+                    Math.Max(a.MinY, b.MinY));
+
+            double intersection = ix * iy;
+            double minArea = Math.Min(a.Area, b.Area);
+
+            return
+                minArea > 1e-9
+                    ? intersection / minArea
+                    : 0.0;
+        }
+
+        private static bool SmartNmsBoxesOverlapExpanded(
+            SmartNmsBox a,
+            SmartNmsBox b,
+            double gap)
+        {
+            if (a == null || b == null)
+                return false;
+
+            gap = Math.Max(0.0, gap);
+
+            return
+                a.MinX <= b.MaxX + gap &&
+                a.MaxX >= b.MinX - gap &&
+                a.MinY <= b.MaxY + gap &&
+                a.MaxY >= b.MinY - gap;
+        }
+
+        private static List<string> GetSmartNmsGridCells(
+            SmartNmsBox box,
+            Point3d center,
+            double cellSize)
+        {
+            List<string> result =
+                new List<string>();
+
+            cellSize = Math.Max(50.0, cellSize);
+
+            SmartNmsBox useBox =
+                box != null && box.IsValid
+                    ? box
+                    : BuildSmartNmsBoxFromCenter(
+                        center,
+                        75.0,
+                        75.0);
+
+            int minX =
+                (int)Math.Floor(useBox.MinX / cellSize) - 1;
+            int maxX =
+                (int)Math.Floor(useBox.MaxX / cellSize) + 1;
+            int minY =
+                (int)Math.Floor(useBox.MinY / cellSize) - 1;
+            int maxY =
+                (int)Math.Floor(useBox.MaxY / cellSize) + 1;
+
+            // Ký hiệu hợp lệ đã được giới hạn kích thước từ detector;
+            // guard thêm để bbox dị thường không làm nổ số cell.
+            if (maxX - minX > 12)
+            {
+                int cx =
+                    (int)Math.Floor(center.X / cellSize);
+                minX = cx - 2;
+                maxX = cx + 2;
+            }
+
+            if (maxY - minY > 12)
+            {
+                int cy =
+                    (int)Math.Floor(center.Y / cellSize);
+                minY = cy - 2;
+                maxY = cy + 2;
+            }
+
+            for (int x = minX; x <= maxX; x++)
+            {
+                for (int y = minY; y <= maxY; y++)
                 {
                     result.Add(
-                        row);
-                }
-                else
-                {
-                    // Nếu trùng vị trí, ưu tiên thông tin BLOCK rõ hơn hình học.
-                    if (row.Source.StartsWith(
-                            "BLOCK",
-                            StringComparison.OrdinalIgnoreCase) &&
-                        !duplicate.Source.StartsWith(
-                            "BLOCK",
-                            StringComparison.OrdinalIgnoreCase))
-                    {
-                        duplicate.Name =
-                            row.Name;
-
-                        duplicate.Size =
-                            row.Size;
-
-                        duplicate.Source =
-                            row.Source;
-
-                        duplicate.Note =
-                            row.Note;
-                    }
+                        x.ToString(CultureInfo.InvariantCulture) +
+                        ":" +
+                        y.ToString(CultureInfo.InvariantCulture));
                 }
             }
 
@@ -57474,6 +58214,8 @@ namespace ClassLibrary4
                             CultureInfo.InvariantCulture) +
                         "%    |    LEGEND 0: " +
                         legendZero.Count +
+                        "    |    NMS GỘP TRÙNG: " +
+                        _lastSmartNmsSuppressedCount +
                         "\r\nBỎ QUA nhầm: bấm HOÀN TÁC. Muốn thêm lại mục cũ / thêm thủ công: bấm + THÊM THIẾT BỊ.";
 
                     bottomPanel.Dock =
@@ -71109,6 +71851,35 @@ namespace ClassLibrary4
                     StringComparison.OrdinalIgnoreCase);
         }
 
+        // STEP25 - chỉ các layer AI đã chốt DN mới được dùng làm nguồn thống kê.
+        // CHECK / INFO cũng bắt đầu bằng TDL_AI_PIPE_ nhưng không phải khối lượng thật.
+        private static bool IsAiRecognizedPipeStatLayer(
+            string layer)
+        {
+            if (string.IsNullOrWhiteSpace(layer) ||
+                !layer.StartsWith(
+                    AiPipeLayerPrefix,
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            if (layer.Equals(
+                    AiPipeCheckLayer,
+                    StringComparison.OrdinalIgnoreCase) ||
+                layer.Equals(
+                    AiPipeInfoLayer,
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            return
+                !string.IsNullOrWhiteSpace(
+                    ExtractAiPipeSizeFromLayer(
+                        layer));
+        }
+
         private void DeleteOldAiPipeOutput(
             Transaction tr,
             BlockTableRecord space)
@@ -71532,139 +72303,84 @@ namespace ClassLibrary4
                 return;
             }
 
-            Editor ed = doc.Editor;
-            Database db = doc.Database;
+            // STEP25 - UNIFIED TABLE:
+            // Không tạo một kiểu bảng AI riêng nữa. Chuyển kết quả AI PIPE
+            // sang đúng cấu trúc BẢNG THỐNG KÊ KHỐI LƯỢNG ỐNG của tab 6.
+            // Nhờ vậy các nút thống kê/tìm đối tượng dùng chung một format.
+            List<ThongKeOng> data =
+                new List<ThongKeOng>();
 
-            PromptPointResult ppr =
-                ed.GetPoint(
-                    "\nChọn vị trí đặt BẢNG AI THỐNG KÊ ĐƯỜNG ỐNG: ");
+            foreach (AiPipeTakeoffStatRow row
+                in rows)
+            {
+                if (row == null ||
+                    string.IsNullOrWhiteSpace(
+                        row.Size) ||
+                    row.LengthMeters <= 0.0)
+                {
+                    continue;
+                }
 
-            if (ppr.Status != PromptStatus.OK)
+                string layerName =
+                    GetAiPipeLayerName(
+                        row.Size);
+
+                double sizeSort =
+                    SmartSizeSortValue(
+                        row.Size);
+
+                data.Add(
+                    new ThongKeOng
+                    {
+                        TenLayer = layerName,
+                        ChieuDaiNgang =
+                            Math.Round(
+                                row.LengthMeters,
+                                2),
+                        ChieuDaiDung = 0.0,
+                        SoLuong =
+                            Math.Round(
+                                row.LengthMeters,
+                                2),
+                        M2 = 0.0,
+                        HeThongSort = "AI_PIPE",
+                        KichThuocSort =
+                            sizeSort
+                    });
+            }
+
+            data =
+                data
+                    .OrderByDescending(
+                        x => x.KichThuocSort)
+                    .ThenBy(
+                        x => x.TenLayer)
+                    .ToList();
+
+            for (int i = 0;
+                i < data.Count;
+                i++)
+            {
+                data[i].STT =
+                    i + 1;
+            }
+
+            if (data.Count == 0)
                 return;
 
+            // STEP25A - FIX eLockViolation:
+            // Nút AI chạy từ Palette/WPF modeless nên khi xuất bảng về DWG
+            // phải khóa Document trước khi XuatBangRaCad tạo Table/Transaction.
+            // Không đưa LockDocument vào XuatBangRaCad vì hàm đó còn được gọi
+            // từ BtnThongKeOng_Click khi Document đã được lock sẵn.
             using (doc.LockDocument())
-            using (Transaction tr =
-                db.TransactionManager.StartTransaction())
             {
-                BlockTableRecord space =
-                    (BlockTableRecord)tr.GetObject(
-                        db.CurrentSpaceId,
-                        OpenMode.ForWrite);
-
-                Table table = new Table();
-                table.SetDatabaseDefaults(db);
-                table.TableStyle = db.Tablestyle;
-                table.SetSize(rows.Count + 2, 5);
-                table.Position = ppr.Value;
-
-                double sf = 9.0;
-
-                for (int r = 0;
-                    r < table.Rows.Count;
-                    r++)
-                {
-                    table.Rows[r].Height =
-                        (r == 0 ? 400.0 : 300.0) * sf;
-
-                    for (int c = 0;
-                        c < 5;
-                        c++)
-                    {
-                        table.Cells[r, c].TextStyleId =
-                            db.Textstyle;
-
-                        table.Cells[r, c].TextHeight =
-                            125.0 * sf;
-                    }
-                }
-
-                table.Columns[0].Width = 750.0 * sf;
-                table.Columns[1].Width = 1500.0 * sf;
-                table.Columns[2].Width = 1900.0 * sf;
-                table.Columns[3].Width = 1500.0 * sf;
-                table.Columns[4].Width = 1400.0 * sf;
-
-                try
-                {
-                    table.MergeCells(
-                        CellRange.Create(
-                            table,
-                            0,
-                            0,
-                            0,
-                            4));
-                }
-                catch
-                {
-                }
-
-                table.Cells[0, 0].TextString =
-                    "AI - BẢNG THỐNG KÊ ĐƯỜNG ỐNG";
-
-                table.Cells[0, 0].Alignment =
-                    CellAlignment.MiddleCenter;
-
-                string[] headers =
-                    new string[]
-                    {
-                        "STT",
-                        "SIZE",
-                        "CHIỀU DÀI (m)",
-                        "SỐ ĐOẠN",
-                        "TIN CẬY"
-                    };
-
-                for (int c = 0;
-                    c < headers.Length;
-                    c++)
-                {
-                    table.Cells[1, c].TextString =
-                        headers[c];
-
-                    table.Cells[1, c].Alignment =
-                        CellAlignment.MiddleCenter;
-                }
-
-                for (int i = 0;
-                    i < rows.Count;
-                    i++)
-                {
-                    AiPipeTakeoffStatRow row = rows[i];
-                    int r = i + 2;
-
-                    table.Cells[r, 0].TextString =
-                        (i + 1).ToString();
-
-                    table.Cells[r, 1].TextString =
-                        row.Size;
-
-                    table.Cells[r, 2].TextString =
-                        row.LengthMeters.ToString(
-                            "0.00",
-                            CultureInfo.InvariantCulture);
-
-                    table.Cells[r, 3].TextString =
-                        row.SegmentCount.ToString();
-
-                    table.Cells[r, 4].TextString =
-                        (row.AverageConfidence * 100.0).ToString(
-                            "0.0",
-                            CultureInfo.InvariantCulture) +
-                        "%";
-
-                    for (int c = 0;
-                        c < 5;
-                        c++)
-                    {
-                        table.Cells[r, c].Alignment =
-                            CellAlignment.MiddleCenter;
-                    }
-                }
-
-                space.AppendEntity(table);
-                tr.AddNewlyCreatedDBObject(table, true);
-                table.GenerateLayout();
-                tr.Commit();
+                XuatBangRaCad(
+                    data,
+                    "BẢNG THỐNG KÊ KHỐI LƯỢNG ỐNG - AI",
+                    "SỐ LƯỢNG (m)",
+                    true,
+                    true);
             }
         }
 
