@@ -49,6 +49,12 @@ namespace ClassLibrary4
         private readonly bool _isNchw;
         private bool _disposed;
 
+        // STEP24-SYMBOL-PERF:
+        // LUT 0..255 cho phép chuyển cường độ CAD -> grayscale mà không gọi
+        // Math.Pow cho từng pixel trong vòng lặp nóng. Khởi tạo đúng 1 lần.
+        private static readonly byte[] MonochromeLookup =
+            BuildMonochromeLookup();
+
         public string ModelPath { get; }
         public string LabelsPath { get; }
         public int ClassCount => _labels.Count;
@@ -226,103 +232,109 @@ namespace ClassLibrary4
                 using (IDisposableReadOnlyCollection<DisposableNamedOnnxValue> outputs =
                     _session.Run(inputs))
                 {
-                        DisposableNamedOnnxValue output =
-                            outputs.FirstOrDefault(
-                                x =>
-                                    string.Equals(
-                                        x.Name,
-                                        _outputName,
-                                        StringComparison.Ordinal)) ??
-                            outputs.FirstOrDefault();
+                    DisposableNamedOnnxValue output =
+                        outputs.FirstOrDefault(
+                            x =>
+                                string.Equals(
+                                    x.Name,
+                                    _outputName,
+                                    StringComparison.Ordinal)) ??
+                        outputs.FirstOrDefault();
 
-                        if (output == null)
-                        {
-                            result.Message =
-                                "Model ONNX không trả output.";
-                            return result;
-                        }
-
-                        Tensor<float> outputTensor =
-                            output.AsTensor<float>();
-
-                        float[] raw =
-                            outputTensor
-                                .ToArray();
-
-                        if (raw == null ||
-                            raw.Length == 0)
-                        {
-                            result.Message =
-                                "Output tensor của model đang trống.";
-                            return result;
-                        }
-
-                        if (raw.Length !=
-                            _labels.Count)
-                        {
-                            result.Message =
-                                "Số class output (" +
-                                raw.Length.ToString(CultureInfo.InvariantCulture) +
-                                ") không khớp số labels (" +
-                                _labels.Count.ToString(CultureInfo.InvariantCulture) +
-                                ").";
-                            return result;
-                        }
-
-                        double[] probabilities =
-                            ConvertToProbabilities(
-                                raw);
-
-                        int[] ranked =
-                            Enumerable
-                                .Range(
-                                    0,
-                                    probabilities.Length)
-                                .OrderByDescending(
-                                    i => probabilities[i])
-                                .Take(2)
-                                .ToArray();
-
-                        if (ranked.Length == 0)
-                        {
-                            result.Message =
-                                "Không lấy được class từ model.";
-                            return result;
-                        }
-
-                        int bestIndex =
-                            ranked[0];
-
-                        int secondIndex =
-                            ranked.Length > 1
-                                ? ranked[1]
-                                : bestIndex;
-
-                        result.Success =
-                            true;
-
-                        result.Label =
-                            _labels[bestIndex];
-
-                        result.Confidence =
-                            probabilities[bestIndex];
-
-                        result.SecondLabel =
-                            ranked.Length > 1
-                                ? _labels[secondIndex]
-                                : "";
-
-                        result.SecondConfidence =
-                            ranked.Length > 1
-                                ? probabilities[secondIndex]
-                                : 0.0;
-
+                    if (output == null)
+                    {
                         result.Message =
-                            "OK";
-
+                            "Model ONNX không trả output.";
                         return result;
                     }
+
+                    Tensor<float> outputTensor =
+                        output.AsTensor<float>();
+
+                    float[] raw =
+                        outputTensor
+                            .ToArray();
+
+                    if (raw == null ||
+                        raw.Length == 0)
+                    {
+                        result.Message =
+                            "Output tensor của model đang trống.";
+                        return result;
+                    }
+
+                    if (raw.Length !=
+                        _labels.Count)
+                    {
+                        result.Message =
+                            "Số class output (" +
+                            raw.Length.ToString(CultureInfo.InvariantCulture) +
+                            ") không khớp số labels (" +
+                            _labels.Count.ToString(CultureInfo.InvariantCulture) +
+                            ").";
+                        return result;
+                    }
+
+                    double[] probabilities =
+                        ConvertToProbabilities(
+                            raw);
+
+                    if (probabilities.Length == 0)
+                    {
+                        result.Message =
+                            "Không lấy được class từ model.";
+                        return result;
+                    }
+
+                    // Hot path: tìm Top-2 bằng 1 vòng for, không LINQ/OrderBy.
+                    int bestIndex = 0;
+                    int secondIndex = -1;
+                    double bestProbability = probabilities[0];
+                    double secondProbability = double.NegativeInfinity;
+
+                    for (int i = 1; i < probabilities.Length; i++)
+                    {
+                        double p = probabilities[i];
+
+                        if (p > bestProbability)
+                        {
+                            secondIndex = bestIndex;
+                            secondProbability = bestProbability;
+                            bestIndex = i;
+                            bestProbability = p;
+                        }
+                        else if (p > secondProbability)
+                        {
+                            secondIndex = i;
+                            secondProbability = p;
+                        }
+                    }
+
+                    result.Success =
+                        true;
+
+                    result.Label =
+                        _labels[bestIndex];
+
+                    result.Confidence =
+                        probabilities[bestIndex];
+
+                    result.SecondLabel =
+                        secondIndex >= 0
+                            ? _labels[secondIndex]
+                            : "";
+
+                    result.SecondConfidence =
+                        secondIndex >= 0
+                            ? probabilities[secondIndex]
+                            : 0.0;
+
+                    result.Message =
+                        "OK";
+
+                    return result;
                 }
+            }
             catch (Exception ex)
             {
                 result.Message =
@@ -334,7 +346,7 @@ namespace ClassLibrary4
             }
         }
 
-        private DenseTensor<float> BuildInputTensor(
+        private unsafe DenseTensor<float> BuildInputTensor(
             Bitmap source)
         {
             using (Bitmap normalized =
@@ -379,76 +391,88 @@ namespace ClassLibrary4
 
                 try
                 {
+                    byte* scan0 =
+                        (byte*)data.Scan0.ToPointer();
+
                     int stride =
-                        Math.Abs(
-                            data.Stride);
+                        data.Stride;
 
-                    byte[] bytes =
-                        new byte[
-                            stride *
-                            normalized.Height];
+                    Span<float> destination =
+                        tensor.Buffer.Span;
 
-                    Marshal.Copy(
-                        data.Scan0,
-                        bytes,
-                        0,
-                        bytes.Length);
+                    int planeSize =
+                        _inputWidth *
+                        _inputHeight;
 
                     for (int y = 0;
                         y < _inputHeight;
                         y++)
                     {
-                        int row =
-                            y * stride;
+                        byte* row =
+                            GetTopDownRowPointer(
+                                scan0,
+                                stride,
+                                _inputHeight,
+                                y);
+
+                        int pixelRowBase =
+                            y * _inputWidth;
 
                         for (int x = 0;
                             x < _inputWidth;
                             x++)
                         {
-                            int i =
-                                row +
+                            int pixelOffset =
                                 x * 3;
 
-                            byte b = bytes[i + 0];
-                            byte g = bytes[i + 1];
-                            byte r = bytes[i + 2];
-
+                            // RenderNormalizedMonochrome đã đảm bảo B=G=R.
+                            // Đọc trực tiếp một channel, không cần Max() lại.
                             float signal =
-                                Math.Max(
-                                    r,
-                                    Math.Max(
-                                        g,
-                                        b)) /
+                                row[pixelOffset] /
                                 255.0f;
 
-                            // normalized image is grayscale already.
-                            // Write same channel value for color-independent symbols.
+                            int pixelIndex =
+                                pixelRowBase + x;
+
                             if (_isNchw)
                             {
                                 if (_inputChannels == 1)
                                 {
-                                    tensor[0, 0, y, x] =
+                                    destination[pixelIndex] =
                                         signal;
                                 }
                                 else
                                 {
-                                    tensor[0, 0, y, x] = signal;
-                                    tensor[0, 1, y, x] = signal;
-                                    tensor[0, 2, y, x] = signal;
+                                    destination[pixelIndex] =
+                                        signal;
+
+                                    destination[
+                                        planeSize +
+                                        pixelIndex] =
+                                        signal;
+
+                                    destination[
+                                        planeSize * 2 +
+                                        pixelIndex] =
+                                        signal;
                                 }
                             }
                             else
                             {
-                                if (_inputChannels == 1)
+                                int baseIndex =
+                                    pixelIndex *
+                                    _inputChannels;
+
+                                destination[baseIndex] =
+                                    signal;
+
+                                if (_inputChannels == 3)
                                 {
-                                    tensor[0, y, x, 0] =
+                                    destination[baseIndex + 1] =
                                         signal;
-                                }
-                                else
-                                {
-                                    tensor[0, y, x, 0] = signal;
-                                    tensor[0, y, x, 1] = signal;
-                                    tensor[0, y, x, 2] = signal;
+
+                                    destination[baseIndex + 2] =
+                                        signal;
                                 }
                             }
                         }
@@ -464,7 +488,7 @@ namespace ClassLibrary4
             }
         }
 
-        private static Bitmap RenderNormalizedMonochrome(
+        private static unsafe Bitmap RenderNormalizedMonochrome(
             Bitmap source,
             int width,
             int height)
@@ -526,9 +550,9 @@ namespace ClassLibrary4
                         drawHeight));
             }
 
-            // Convert CAD dark-background + any symbol color to a color-independent
-            // grayscale foreground. This preprocessing should also be used when
-            // exporting/training the ONNX classifier dataset.
+            // STEP24-SYMBOL-PERF:
+            // Không Marshal.Copy sang byte[] managed nữa. Đọc/ghi trực tiếp vùng
+            // LockBits và dùng LUT để tránh Math.Pow trên từng pixel.
             Rectangle rect =
                 new Rectangle(
                     0,
@@ -544,78 +568,48 @@ namespace ClassLibrary4
 
             try
             {
+                byte* scan0 =
+                    (byte*)data.Scan0.ToPointer();
+
                 int stride =
-                    Math.Abs(
-                        data.Stride);
-
-                byte[] bytes =
-                    new byte[
-                        stride *
-                        canvas.Height];
-
-                Marshal.Copy(
-                    data.Scan0,
-                    bytes,
-                    0,
-                    bytes.Length);
+                    data.Stride;
 
                 for (int yy = 0;
                     yy < canvas.Height;
                     yy++)
                 {
-                    int row =
-                        yy * stride;
+                    byte* row =
+                        GetTopDownRowPointer(
+                            scan0,
+                            stride,
+                            canvas.Height,
+                            yy);
 
                     for (int xx = 0;
                         xx < canvas.Width;
                         xx++)
                     {
                         int i =
-                            row +
                             xx * 3;
 
-                        int max =
-                            Math.Max(
-                                bytes[i + 0],
-                                Math.Max(
-                                    bytes[i + 1],
-                                    bytes[i + 2]));
+                        byte b = row[i + 0];
+                        byte g = row[i + 1];
+                        byte r = row[i + 2];
 
-                        // AutoCAD preview background is around 31/42/52.
-                        // Anything above ~55 is treated as symbol energy.
-                        double normalized =
-                            (max - 55.0) /
-                            200.0;
-
-                        normalized =
-                            Math.Max(
-                                0.0,
-                                Math.Min(
-                                    1.0,
-                                    normalized));
-
-                        // Mild contrast curve: preserve thin anti-aliased CAD strokes.
-                        normalized =
-                            Math.Pow(
-                                normalized,
-                                0.75);
+                        byte max = b;
+                        if (g > max)
+                            max = g;
+                        if (r > max)
+                            max = r;
 
                         byte gray =
-                            (byte)Math.Round(
-                                normalized *
-                                255.0);
+                            MonochromeLookup[max];
 
-                        bytes[i + 0] = gray;
-                        bytes[i + 1] = gray;
-                        bytes[i + 2] = gray;
+                        row[i + 0] = gray;
+                        row[i + 1] = gray;
+                        row[i + 2] = gray;
                     }
                 }
-
-                Marshal.Copy(
-                    bytes,
-                    0,
-                    data.Scan0,
-                    bytes.Length);
             }
             finally
             {
@@ -626,23 +620,96 @@ namespace ClassLibrary4
             return canvas;
         }
 
+        private static byte[] BuildMonochromeLookup()
+        {
+            byte[] lookup =
+                new byte[256];
+
+            for (int i = 0; i < lookup.Length; i++)
+            {
+                double normalized =
+                    (i - 55.0) /
+                    200.0;
+
+                if (normalized < 0.0)
+                    normalized = 0.0;
+                else if (normalized > 1.0)
+                    normalized = 1.0;
+
+                // Giữ đúng contrast curve của STEP21.
+                normalized =
+                    Math.Pow(
+                        normalized,
+                        0.75);
+
+                lookup[i] =
+                    (byte)Math.Round(
+                        normalized *
+                        255.0);
+            }
+
+            return lookup;
+        }
+
+        private static unsafe byte* GetTopDownRowPointer(
+            byte* scan0,
+            int stride,
+            int height,
+            int y)
+        {
+            if (stride >= 0)
+            {
+                return
+                    scan0 +
+                    y * stride;
+            }
+
+            // Một số Bitmap có bottom-up layout. Chuẩn hóa về y=0 là hàng trên
+            // để tensor không vô tình bị lật dọc.
+            return
+                scan0 +
+                (height - 1 - y) * stride;
+        }
+
         private static double[] ConvertToProbabilities(
             float[] raw)
         {
+            if (raw == null ||
+                raw.Length == 0)
+            {
+                return
+                    Array.Empty<double>();
+            }
+
             double[] values =
-                raw
-                    .Select(
-                        x => (double)x)
-                    .ToArray();
+                new double[raw.Length];
 
-            bool allInProbabilityRange =
-                values.All(
-                    x =>
-                        x >= -1e-6 &&
-                        x <= 1.000001);
+            double sum = 0.0;
+            double max = double.NegativeInfinity;
+            bool allInProbabilityRange = true;
 
-            double sum =
-                values.Sum();
+            // Một vòng duy nhất: copy float->double + sum + max + range check.
+            for (int i = 0; i < raw.Length; i++)
+            {
+                double value =
+                    raw[i];
+
+                values[i] =
+                    value;
+
+                sum +=
+                    value;
+
+                if (value > max)
+                    max = value;
+
+                if (value < -1e-6 ||
+                    value > 1.000001)
+                {
+                    allInProbabilityRange =
+                        false;
+                }
+            }
 
             bool looksLikeProbability =
                 allInProbabilityRange &&
@@ -654,49 +721,76 @@ namespace ClassLibrary4
                 if (sum <= 1e-12)
                     return values;
 
-                return
-                    values
-                        .Select(
-                            x =>
-                                Math.Max(0.0, x) /
-                                sum)
-                        .ToArray();
+                double inverseSum =
+                    1.0 / sum;
+
+                for (int i = 0;
+                    i < values.Length;
+                    i++)
+                {
+                    double value =
+                        values[i];
+
+                    values[i] =
+                        (value > 0.0
+                            ? value
+                            : 0.0) *
+                        inverseSum;
+                }
+
+                return values;
             }
 
             // Treat as logits and apply numerically stable softmax.
-            double max =
-                values.Max();
-
             double[] exp =
-                values
-                    .Select(
-                        x =>
-                            Math.Exp(
-                                Math.Max(
-                                    -80.0,
-                                    Math.Min(
-                                        80.0,
-                                        x - max))))
-                    .ToArray();
+                new double[values.Length];
 
-            double expSum =
-                exp.Sum();
+            double expSum = 0.0;
+
+            for (int i = 0;
+                i < values.Length;
+                i++)
+            {
+                double diff =
+                    values[i] - max;
+
+                if (diff < -80.0)
+                    diff = -80.0;
+                else if (diff > 80.0)
+                    diff = 80.0;
+
+                double value =
+                    Math.Exp(diff);
+
+                exp[i] =
+                    value;
+
+                expSum +=
+                    value;
+            }
 
             if (expSum <= 1e-12)
             {
-                return
-                    Enumerable
-                        .Repeat(
-                            0.0,
-                            exp.Length)
-                        .ToArray();
+                Array.Clear(
+                    exp,
+                    0,
+                    exp.Length);
+
+                return exp;
             }
 
-            return
-                exp
-                    .Select(
-                        x => x / expSum)
-                    .ToArray();
+            double inverseExpSum =
+                1.0 / expSum;
+
+            for (int i = 0;
+                i < exp.Length;
+                i++)
+            {
+                exp[i] *=
+                    inverseExpSum;
+            }
+
+            return exp;
         }
 
         private static bool IsChannelDimension(

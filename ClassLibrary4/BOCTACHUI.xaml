@@ -1840,26 +1840,141 @@
                                 </StackPanel>
                             </Border>
 
-                            <Button x:Name="BtnAiAutoTakeoff"
-                                    Content="AI NHẬN DIỆN ĐƯỜNG ỐNG"
-                                    Height="46"
-                                    FontSize="13.5"
-                                    FontWeight="Bold"
-                                    Background="#FF0078D7"
-                                    Foreground="White"
-                                    Margin="0,0,0,8"
-                                    Cursor="Hand"
-                                    Click="BtnAiAutoTakeoff_Click">
-                                <Button.ToolTip>
-                                    <ToolTip>
-                                        <TextBlock MaxWidth="310"
-                                                   TextWrapping="Wrap"
-                                                   Text="Chỉ nhận diện ĐƯỜNG ỐNG: Text DN + geometry + topology + branch-template. Không tự chạy sang thiết bị."/>
-                                    </ToolTip>
-                                </Button.ToolTip>
-                            </Button>
+                            <Border Margin="0,0,0,10"
+                                    Padding="10"
+                                    Background="#FFF8FBFF"
+                                    BorderBrush="#FFB8CCE5"
+                                    BorderThickness="1"
+                                    CornerRadius="7">
+                                <StackPanel>
+                                    <TextBlock x:Name="TxtAiAutoStatus"
+                                               Text="AI ENGINE: ĐANG KIỂM TRA..."
+                                               FontSize="11"
+                                               FontWeight="Bold"
+                                               Foreground="#FF1E3A5F"
+                                               TextAlignment="Center"
+                                               TextWrapping="Wrap"/>
 
-                            <Button x:Name="BtnAiDeviceOnly"
+                                    <Button Content="AI NHẬN DIỆN ĐƯỜNG ỐNG"
+                                            Height="46"
+                                            Margin="0,9,0,0"
+                                            FontSize="13"
+                                            FontWeight="Bold"
+                                            Background="#FF0078D7"
+                                            Foreground="White"
+                                            BorderBrush="#FF005EA8"
+                                            Cursor="Hand"
+                                            Click="BtnAiAutoTakeoff_Click">
+                                        <Button.ToolTip>
+                                            <ToolTip>
+                                                <TextBlock MaxWidth="330"
+                                                           TextWrapping="Wrap"
+                                                           Text="Chỉ nhận diện và thống kê ĐƯỜNG ỐNG: đọc DN/D/Ø, geometry, topology và Graph/GNN khi có model. Không chạy sang VAN / THIẾT BỊ."/>
+                                            </ToolTip>
+                                        </Button.ToolTip>
+                                    </Button>
+
+                                    <Button x:Name="BtnAiAutoRun"
+                                            Content="AI TỰ ĐỘNG: ỐNG + VAN/TB"
+                                            Height="50"
+                                            Margin="0,9,0,0"
+                                            FontSize="13.5"
+                                            FontWeight="Bold"
+                                            Background="#FF0B74C9"
+                                            Foreground="White"
+                                            BorderBrush="#FF075A9D"
+                                            Cursor="Hand"
+                                            Click="BtnAiAutoRun_Click">
+                                        <Button.ToolTip>
+                                            <ToolTip>
+                                                <TextBlock MaxWidth="330"
+                                                           TextWrapping="Wrap"
+                                                           Text="Một nút chạy toàn bộ pipeline: đọc/reuse Legend → nhận diện ống → Graph/Topology → nhận diện van/thiết bị → ONNX/GNN khi cần → lưu Learning → xếp hàng Cloud. Chỉ quét mặt bằng một lần."/>
+                                            </ToolTip>
+                                        </Button.ToolTip>
+                                    </Button>
+
+                                    <Button x:Name="BtnAiReviewHub"
+                                            Content="KIỂM TRA / SỬA KẾT QUẢ"
+                                            Height="38"
+                                            Margin="0,8,0,0"
+                                            FontSize="11.5"
+                                            FontWeight="SemiBold"
+                                            Background="#FFFFFFFF"
+                                            Foreground="#FF334155"
+                                            BorderBrush="#FFCBD5E1"
+                                            Cursor="Hand"
+                                            Click="BtnAiReviewHub_Click"/>
+
+                                    <Border Margin="0,9,0,0"
+                                            Padding="8"
+                                            Background="#FFF1F5F9"
+                                            BorderBrush="#FFE2E8F0"
+                                            BorderThickness="1"
+                                            CornerRadius="5">
+                                        <TextBlock x:Name="TxtAiAutoSummary"
+                                                   Text="Chọn AI ĐƯỜNG ỐNG để chạy riêng ống, hoặc AI TỰ ĐỘNG để chạy cả ỐNG + VAN/TB."
+                                                   FontSize="10"
+                                                   Foreground="#FF475569"
+                                                   TextAlignment="Center"
+                                                   TextWrapping="Wrap"/>
+                                    </Border>
+                                </StackPanel>
+                            </Border>
+
+                            <Expander x:Name="ExpAiAdvanced"
+                                      Header="NÂNG CAO  •  MODEL / CLOUD / DATASET / DEBUG"
+                                      IsExpanded="False"
+                                      Margin="0,0,0,10"
+                                      FontSize="10.5"
+                                      FontWeight="SemiBold"
+                                      Foreground="#FF475569">
+                                <StackPanel Margin="0,8,0,0">
+                                    <Border Margin="0,0,0,8"
+                                    Padding="8"
+                                    Background="#FFFFF7ED"
+                                    BorderBrush="#FFFDBA74"
+                                    BorderThickness="1"
+                                    CornerRadius="5">
+                                        <StackPanel>
+                                            <TextBlock x:Name="TxtAiLegendStatus"
+                                               Text="LEGEND AI: CHƯA ĐỌC BẢNG KÝ HIỆU"
+                                               FontSize="10.5"
+                                               FontWeight="Bold"
+                                               Foreground="#FFC2410C"
+                                               TextAlignment="Center"
+                                               TextWrapping="Wrap"/>
+
+                                            <Button x:Name="BtnAiLegendReader"
+                                            Content="AI ĐỌC LEGEND / KÝ HIỆU"
+                                            Height="36"
+                                            Margin="0,7,0,0"
+                                            FontSize="11"
+                                            FontWeight="Bold"
+                                            Background="#FFFFEDD5"
+                                            Foreground="#FF9A3412"
+                                            BorderBrush="#FFFDBA74"
+                                            Cursor="Hand"
+                                            Click="BtnAiLegendReader_Click">
+                                                <Button.ToolTip>
+                                                    <ToolTip>
+                                                        <TextBlock MaxWidth="330"
+                                                           TextWrapping="Wrap"
+                                                           Text="Quét riêng bảng Legend. Tool tự ghép KÝ HIỆU + TÊN + THEO DN, cho sửa/chọn lại từng dòng rồi lưu vào thư viện, Local AI Memory và Dataset. Không bắt quét mặt bằng ngay."/>
+                                                    </ToolTip>
+                                                </Button.ToolTip>
+                                            </Button>
+
+                                            <TextBlock Margin="0,6,0,0"
+                                               FontSize="9.4"
+                                               Foreground="#FF7C5A44"
+                                               TextAlignment="Center"
+                                               TextWrapping="Wrap"
+                                               Text="STEP22C1: đọc Legend độc lập. Sau khi lưu, AI VAN / THIẾT BỊ có thể dùng ngay Legend vừa đọc mà không bắt quét lại."/>
+                                        </StackPanel>
+                                    </Border>
+
+                                    <Button x:Name="BtnAiDeviceOnly"
                                     Content="AI NHẬN DIỆN VAN / THIẾT BỊ"
                                     Height="46"
                                     FontSize="13"
@@ -1869,24 +1984,24 @@
                                     Margin="0,0,0,8"
                                     Cursor="Hand"
                                     Click="BtnAiDeviceOnly_Click">
-                                <Button.ToolTip>
-                                    <ToolTip>
-                                        <TextBlock MaxWidth="310"
+                                        <Button.ToolTip>
+                                            <ToolTip>
+                                                <TextBlock MaxWidth="310"
                                                    TextWrapping="Wrap"
                                                    Text="Chỉ nhận diện VAN / THIẾT BỊ. STEP21: Exact Block → Vector Fingerprint → ONNX Classifier → Vision Lite → Pipe Context. Nếu chưa có model ONNX, các tầng cũ vẫn chạy bình thường."/>
-                                    </ToolTip>
-                                </Button.ToolTip>
-                            </Button>
+                                            </ToolTip>
+                                        </Button.ToolTip>
+                                    </Button>
 
 
-                            <Border Margin="0,0,0,8"
+                                    <Border Margin="0,0,0,8"
                                     Padding="8"
                                     Background="#FFF0F9FF"
                                     BorderBrush="#FF7DD3FC"
                                     BorderThickness="1"
                                     CornerRadius="5">
-                                <StackPanel>
-                                    <TextBlock x:Name="TxtAiGraphStatus"
+                                        <StackPanel>
+                                            <TextBlock x:Name="TxtAiGraphStatus"
                                                Text="GRAPH ENGINE: CHƯA PHÂN TÍCH • GNN FOUNDATION"
                                                FontSize="10.5"
                                                FontWeight="Bold"
@@ -1894,7 +2009,7 @@
                                                TextAlignment="Center"
                                                TextWrapping="Wrap"/>
 
-                                    <Button x:Name="BtnAiGraphAnalyze"
+                                            <Button x:Name="BtnAiGraphAnalyze"
                                             Content="AI GRAPH / TOPOLOGY"
                                             Height="32"
                                             Margin="0,7,0,0"
@@ -1905,33 +2020,33 @@
                                             BorderBrush="#FF7DD3FC"
                                             Cursor="Hand"
                                             Click="BtnAiGraphAnalyze_Click">
-                                        <Button.ToolTip>
-                                            <ToolTip>
-                                                <TextBlock MaxWidth="320"
+                                                <Button.ToolTip>
+                                                    <ToolTip>
+                                                        <TextBlock MaxWidth="320"
                                                            TextWrapping="Wrap"
                                                            Text="Đọc trực tiếp Line/Polyline/Arc/Block/Text từ CAD, tạo graph CONNECTED / ON_PIPE / HAS_DN. Không raster hóa. Graph tự hỗ trợ suy DN cho van/thiết bị."/>
-                                            </ToolTip>
-                                        </Button.ToolTip>
-                                    </Button>
+                                                    </ToolTip>
+                                                </Button.ToolTip>
+                                            </Button>
 
-                                    <TextBlock Margin="0,6,0,0"
+                                            <TextBlock Margin="0,6,0,0"
                                                FontSize="9.5"
                                                Foreground="#FF475569"
                                                TextAlignment="Center"
                                                TextWrapping="Wrap"
                                                Text="STEP22A: graph deterministic chạy ngay. Dữ liệu graph được lưu local để STEP22B train GNN thật."/>
-                                </StackPanel>
-                            </Border>
+                                        </StackPanel>
+                                    </Border>
 
 
-                            <Border Margin="0,0,0,8"
+                                    <Border Margin="0,0,0,8"
                                     Padding="8"
                                     Background="#FFF5F3FF"
                                     BorderBrush="#FFC4B5FD"
                                     BorderThickness="1"
                                     CornerRadius="5">
-                                <StackPanel>
-                                    <TextBlock x:Name="TxtAiGnnStatus"
+                                        <StackPanel>
+                                            <TextBlock x:Name="TxtAiGnnStatus"
                                                Text="GNN CONTEXT: CHƯA CÓ MODEL • GRAPH cũ vẫn chạy"
                                                FontSize="10.5"
                                                FontWeight="Bold"
@@ -1939,14 +2054,14 @@
                                                TextAlignment="Center"
                                                TextWrapping="Wrap"/>
 
-                                    <Grid Margin="0,7,0,0">
-                                        <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="*"/>
-                                            <ColumnDefinition Width="8"/>
-                                            <ColumnDefinition Width="*"/>
-                                        </Grid.ColumnDefinitions>
+                                            <Grid Margin="0,7,0,0">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*"/>
+                                                    <ColumnDefinition Width="8"/>
+                                                    <ColumnDefinition Width="*"/>
+                                                </Grid.ColumnDefinitions>
 
-                                        <Button x:Name="BtnAiGnnLoad"
+                                                <Button x:Name="BtnAiGnnLoad"
                                                 Grid.Column="0"
                                                 Content="NẠP GNN ONNX"
                                                 Height="31"
@@ -1958,7 +2073,7 @@
                                                 Cursor="Hand"
                                                 Click="BtnAiGnnLoad_Click"/>
 
-                                        <Button x:Name="BtnAiGnnExport"
+                                                <Button x:Name="BtnAiGnnExport"
                                                 Grid.Column="2"
                                                 Content="XUẤT GNN DATASET"
                                                 Height="31"
@@ -1969,9 +2084,9 @@
                                                 BorderBrush="#FFD8B4FE"
                                                 Cursor="Hand"
                                                 Click="BtnAiGnnExport_Click"/>
-                                    </Grid>
+                                            </Grid>
 
-                                    <Button x:Name="BtnAiGnnOpenFolder"
+                                            <Button x:Name="BtnAiGnnOpenFolder"
                                             Content="MỞ THƯ MỤC GNN TRAIN"
                                             Height="29"
                                             Margin="0,7,0,0"
@@ -1983,24 +2098,24 @@
                                             Cursor="Hand"
                                             Click="BtnAiGnnOpenFolder_Click"/>
 
-                                    <TextBlock Margin="0,6,0,0"
+                                            <TextBlock Margin="0,6,0,0"
                                                FontSize="9.5"
                                                Foreground="#FF6B5B7A"
                                                TextAlignment="Center"
                                                TextWrapping="Wrap"
                                                Text="STEP22B: GraphSAGE-style context model. GNN chỉ thêm bằng chứng cho DN; geometry mạnh không bị ghi đè mù quáng."/>
-                                </StackPanel>
-                            </Border>
+                                        </StackPanel>
+                                    </Border>
 
 
-                            <Border Margin="0,0,0,8"
+                                    <Border Margin="0,0,0,8"
                                     Padding="8"
                                     Background="#FFECFDF5"
                                     BorderBrush="#FF86EFAC"
                                     BorderThickness="1"
                                     CornerRadius="5">
-                                <StackPanel>
-                                    <TextBlock x:Name="TxtAiGraphCloudStatus"
+                                        <StackPanel>
+                                            <TextBlock x:Name="TxtAiGraphCloudStatus"
                                                Text="GNN CLOUD: CHƯA ĐỒNG BỘ • LOCAL 0 • CHỜ 0"
                                                FontSize="10.2"
                                                FontWeight="Bold"
@@ -2008,14 +2123,14 @@
                                                TextAlignment="Center"
                                                TextWrapping="Wrap"/>
 
-                                    <Grid Margin="0,7,0,0">
-                                        <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="*"/>
-                                            <ColumnDefinition Width="8"/>
-                                            <ColumnDefinition Width="*"/>
-                                        </Grid.ColumnDefinitions>
+                                            <Grid Margin="0,7,0,0">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*"/>
+                                                    <ColumnDefinition Width="8"/>
+                                                    <ColumnDefinition Width="*"/>
+                                                </Grid.ColumnDefinitions>
 
-                                        <Button x:Name="BtnAiGraphCloudSync"
+                                                <Button x:Name="BtnAiGraphCloudSync"
                                                 Grid.Column="0"
                                                 Content="ĐỒNG BỘ GRAPH"
                                                 Height="31"
@@ -2027,7 +2142,7 @@
                                                 Cursor="Hand"
                                                 Click="BtnAiGraphCloudSync_Click"/>
 
-                                        <Button x:Name="BtnAiGraphCloudManage"
+                                                <Button x:Name="BtnAiGraphCloudManage"
                                                 Grid.Column="2"
                                                 Content="QUẢN LÝ CLOUD"
                                                 Height="31"
@@ -2038,9 +2153,9 @@
                                                 BorderBrush="#FF86EFAC"
                                                 Cursor="Hand"
                                                 Click="BtnAiGraphCloudManage_Click"/>
-                                    </Grid>
+                                            </Grid>
 
-                                    <Button x:Name="BtnAiGraphCloudPull"
+                                            <Button x:Name="BtnAiGraphCloudPull"
                                             Content="KÉO APPROVED GRAPH VỀ MÁY"
                                             Height="29"
                                             Margin="0,7,0,0"
@@ -2052,30 +2167,30 @@
                                             Cursor="Hand"
                                             Click="BtnAiGraphCloudPull_Click"/>
 
-                                    <TextBlock Margin="0,6,0,0"
+                                            <TextBlock Margin="0,6,0,0"
                                                FontSize="9.3"
                                                Foreground="#FF45635A"
                                                TextAlignment="Center"
                                                TextWrapping="Wrap"
                                                Text="STEP22B2: chỉ upload Graph đã ẩn tên DWG/Handle/layer thô và đổi tọa độ về local. SHA256 canonical chống trùng giữa nhiều máy."/>
-                                </StackPanel>
-                            </Border>
+                                        </StackPanel>
+                                    </Border>
 
-                            <Border Margin="0,0,0,8"
+                                    <Border Margin="0,0,0,8"
                                     Padding="8"
                                     Background="#FFF8FAFC"
                                     BorderBrush="#FFCBD5E1"
                                     BorderThickness="1"
                                     CornerRadius="5">
-                                <StackPanel>
-                                    <TextBlock x:Name="TxtOnnxStatus"
+                                        <StackPanel>
+                                            <TextBlock x:Name="TxtOnnxStatus"
                                                Text="ONNX: CHƯA CÓ MODEL  •  CAD/Vector/Vision cũ vẫn hoạt động"
                                                FontSize="10"
                                                FontWeight="SemiBold"
                                                Foreground="#FF92400E"
                                                TextAlignment="Center"
                                                TextWrapping="Wrap"/>
-                                    <Button x:Name="BtnOnnxLoadModel"
+                                            <Button x:Name="BtnOnnxLoadModel"
                                             Content="NẠP MODEL ONNX"
                                             Height="30"
                                             Margin="0,7,0,0"
@@ -2086,17 +2201,17 @@
                                             BorderBrush="#FF93C5FD"
                                             Cursor="Hand"
                                             Click="BtnOnnxLoadModel_Click"/>
-                                </StackPanel>
-                            </Border>
+                                        </StackPanel>
+                                    </Border>
 
-                            <Grid Margin="0,0,0,8">
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="*"/>
-                                    <ColumnDefinition Width="8"/>
-                                    <ColumnDefinition Width="*"/>
-                                </Grid.ColumnDefinitions>
+                                    <Grid Margin="0,0,0,8">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="8"/>
+                                            <ColumnDefinition Width="*"/>
+                                        </Grid.ColumnDefinitions>
 
-                                <Button x:Name="BtnAiReopenDeviceAudit"
+                                        <Button x:Name="BtnAiReopenDeviceAudit"
                                         Grid.Column="0"
                                         Content="MỞ LẠI KIỂM TRA"
                                         Height="34"
@@ -2108,7 +2223,7 @@
                                         Cursor="Hand"
                                         Click="BtnAiReopenDeviceAudit_Click"/>
 
-                                <Button x:Name="BtnAiReopenLegend"
+                                        <Button x:Name="BtnAiReopenLegend"
                                         Grid.Column="2"
                                         Content="SỬA LẠI LEGEND"
                                         Height="34"
@@ -2119,23 +2234,23 @@
                                         BorderBrush="#FFFED7AA"
                                         Cursor="Hand"
                                         Click="BtnAiReopenLegend_Click"/>
-                            </Grid>
+                                    </Grid>
 
-                            <Border Margin="0,10,0,0"
+                                    <Border Margin="0,10,0,0"
                                     Padding="9"
                                     Background="#FFF0FDF4"
                                     BorderBrush="#FFB7E4C7"
                                     BorderThickness="1"
                                     CornerRadius="5">
-                                <StackPanel>
-                                    <TextBlock x:Name="TxtAiLearningStatus"
+                                        <StackPanel>
+                                            <TextBlock x:Name="TxtAiLearningStatus"
                                                Text="AI Learning: LOCAL  •  Tự học đang bật"
                                                FontSize="10.5"
                                                FontWeight="Bold"
                                                Foreground="#FF166534"
                                                TextAlignment="Center"
                                                TextWrapping="Wrap"/>
-                                    <Button x:Name="BtnAiLearningMemory"
+                                            <Button x:Name="BtnAiLearningMemory"
                                             Content="BỘ NHỚ AI"
                                             Height="30"
                                             Margin="0,7,0,0"
@@ -2146,18 +2261,18 @@
                                             BorderBrush="#FF86C99A"
                                             Cursor="Hand"
                                             Click="BtnAiLearningMemory_Click"/>
-                                </StackPanel>
-                            </Border>
+                                        </StackPanel>
+                                    </Border>
 
 
-                            <Border Margin="0,10,0,0"
+                                    <Border Margin="0,10,0,0"
                                     Padding="9"
                                     Background="#FFEFF6FF"
                                     BorderBrush="#FF93C5FD"
                                     BorderThickness="1"
                                     CornerRadius="5">
-                                <StackPanel>
-                                    <TextBlock x:Name="TxtAiCloudStatus"
+                                        <StackPanel>
+                                            <TextBlock x:Name="TxtAiCloudStatus"
                                                Text="AI CLOUD: CHƯA CẤU HÌNH"
                                                FontSize="10.5"
                                                FontWeight="Bold"
@@ -2165,14 +2280,14 @@
                                                TextAlignment="Center"
                                                TextWrapping="Wrap"/>
 
-                                    <Grid Margin="0,7,0,0">
-                                        <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="*"/>
-                                            <ColumnDefinition Width="8"/>
-                                            <ColumnDefinition Width="*"/>
-                                        </Grid.ColumnDefinitions>
+                                            <Grid Margin="0,7,0,0">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*"/>
+                                                    <ColumnDefinition Width="8"/>
+                                                    <ColumnDefinition Width="*"/>
+                                                </Grid.ColumnDefinitions>
 
-                                        <Button x:Name="BtnAiCloudConfigure"
+                                                <Button x:Name="BtnAiCloudConfigure"
                                                 Grid.Column="0"
                                                 Content="CẤU HÌNH CLOUD"
                                                 Height="31"
@@ -2184,7 +2299,7 @@
                                                 Cursor="Hand"
                                                 Click="BtnAiCloudConfigure_Click"/>
 
-                                        <Button x:Name="BtnAiCloudSync"
+                                                <Button x:Name="BtnAiCloudSync"
                                                 Grid.Column="2"
                                                 Content="ĐỒNG BỘ AI"
                                                 Height="31"
@@ -2195,26 +2310,26 @@
                                                 BorderBrush="#FF93C5FD"
                                                 Cursor="Hand"
                                                 Click="BtnAiCloudSync_Click"/>
-                                    </Grid>
+                                            </Grid>
 
-                                    <TextBlock Margin="0,6,0,0"
+                                            <TextBlock Margin="0,6,0,0"
                                                FontSize="9.5"
                                                Foreground="#FF475569"
                                                TextWrapping="Wrap"
                                                TextAlignment="Center"
                                                Text="Local-first: mất mạng vẫn dùng Local Memory + ONNX. Các correction sẽ xếp hàng và đồng bộ khi có mạng."/>
-                                </StackPanel>
-                            </Border>
+                                        </StackPanel>
+                                    </Border>
 
 
-                            <Border Margin="0,10,0,0"
+                                    <Border Margin="0,10,0,0"
                                     Padding="9"
                                     Background="#FFF5F3FF"
                                     BorderBrush="#FFC4B5FD"
                                     BorderThickness="1"
                                     CornerRadius="5">
-                                <StackPanel>
-                                    <TextBlock x:Name="TxtAiDatasetStatus"
+                                        <StackPanel>
+                                            <TextBlock x:Name="TxtAiDatasetStatus"
                                                Text="AI DATASET: LOCAL 0 • CHỜ 0 • CLOUD 0 • APPROVED 0"
                                                FontSize="10.5"
                                                FontWeight="Bold"
@@ -2222,19 +2337,19 @@
                                                TextAlignment="Center"
                                                TextWrapping="Wrap"/>
 
-                                    <Grid Margin="0,7,0,0">
-                                        <Grid.RowDefinitions>
-                                            <RowDefinition Height="Auto"/>
-                                            <RowDefinition Height="6"/>
-                                            <RowDefinition Height="Auto"/>
-                                        </Grid.RowDefinitions>
-                                        <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="*"/>
-                                            <ColumnDefinition Width="8"/>
-                                            <ColumnDefinition Width="*"/>
-                                        </Grid.ColumnDefinitions>
+                                            <Grid Margin="0,7,0,0">
+                                                <Grid.RowDefinitions>
+                                                    <RowDefinition Height="Auto"/>
+                                                    <RowDefinition Height="6"/>
+                                                    <RowDefinition Height="Auto"/>
+                                                </Grid.RowDefinitions>
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*"/>
+                                                    <ColumnDefinition Width="8"/>
+                                                    <ColumnDefinition Width="*"/>
+                                                </Grid.ColumnDefinitions>
 
-                                        <Button x:Name="BtnAiDatasetManage"
+                                                <Button x:Name="BtnAiDatasetManage"
                                                 Grid.Row="0"
                                                 Grid.Column="0"
                                                 Content="DATASET LOCAL"
@@ -2247,7 +2362,7 @@
                                                 Cursor="Hand"
                                                 Click="BtnAiDatasetManage_Click"/>
 
-                                        <Button x:Name="BtnAiDatasetCloudReview"
+                                                <Button x:Name="BtnAiDatasetCloudReview"
                                                 Grid.Row="0"
                                                 Grid.Column="2"
                                                 Content="DUYỆT CLOUD"
@@ -2260,7 +2375,7 @@
                                                 Cursor="Hand"
                                                 Click="BtnAiDatasetCloudReview_Click"/>
 
-                                        <Button x:Name="BtnAiDatasetSync"
+                                                <Button x:Name="BtnAiDatasetSync"
                                                 Grid.Row="2"
                                                 Grid.Column="0"
                                                 Grid.ColumnSpan="3"
@@ -2273,26 +2388,26 @@
                                                 BorderBrush="#FFC4B5FD"
                                                 Cursor="Hand"
                                                 Click="BtnAiDatasetSync_Click"/>
-                                    </Grid>
+                                            </Grid>
 
-                                    <TextBlock Margin="0,6,0,0"
+                                            <TextBlock Margin="0,6,0,0"
                                                FontSize="9.5"
                                                Foreground="#FF6B5B7A"
                                                TextWrapping="Wrap"
                                                TextAlignment="Center"
                                                Text="SỬA / THÊM / CHỌN LẠI / BỎ QUA sẽ tự sinh mẫu 224×224. SHA256 chống trùng; correction đổi nhãn tạo Hard Negative."/>
-                                </StackPanel>
-                            </Border>
+                                        </StackPanel>
+                                    </Border>
 
 
-                            <Border Margin="0,10,0,0"
+                                    <Border Margin="0,10,0,0"
                                     Padding="9"
                                     Background="#FFF0FDFA"
                                     BorderBrush="#FF99F6E4"
                                     BorderThickness="1"
                                     CornerRadius="5">
-                                <StackPanel>
-                                    <TextBlock x:Name="TxtAiTrainingStatus"
+                                        <StackPanel>
+                                            <TextBlock x:Name="TxtAiTrainingStatus"
                                                Text="ONNX TRAINING: CHƯA XUẤT BỘ TRAIN"
                                                FontSize="10.5"
                                                FontWeight="Bold"
@@ -2300,14 +2415,14 @@
                                                TextAlignment="Center"
                                                TextWrapping="Wrap"/>
 
-                                    <Grid Margin="0,7,0,0">
-                                        <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="*"/>
-                                            <ColumnDefinition Width="8"/>
-                                            <ColumnDefinition Width="*"/>
-                                        </Grid.ColumnDefinitions>
+                                            <Grid Margin="0,7,0,0">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*"/>
+                                                    <ColumnDefinition Width="8"/>
+                                                    <ColumnDefinition Width="*"/>
+                                                </Grid.ColumnDefinitions>
 
-                                        <Button x:Name="BtnAiTrainingExport"
+                                                <Button x:Name="BtnAiTrainingExport"
                                                 Grid.Column="0"
                                                 Content="XUẤT BỘ TRAIN"
                                                 Height="31"
@@ -2319,7 +2434,7 @@
                                                 Cursor="Hand"
                                                 Click="BtnAiTrainingExport_Click"/>
 
-                                        <Button x:Name="BtnAiTrainingOpenFolder"
+                                                <Button x:Name="BtnAiTrainingOpenFolder"
                                                 Grid.Column="2"
                                                 Content="MỞ THƯ MỤC TRAIN"
                                                 Height="31"
@@ -2330,28 +2445,31 @@
                                                 BorderBrush="#FF99F6E4"
                                                 Cursor="Hand"
                                                 Click="BtnAiTrainingOpenFolder_Click"/>
-                                    </Grid>
+                                            </Grid>
 
-                                    <TextBlock Margin="0,6,0,0"
+                                            <TextBlock Margin="0,6,0,0"
                                                FontSize="9.5"
                                                Foreground="#FF47645F"
                                                TextWrapping="Wrap"
                                                TextAlignment="Center"
                                                Text="Chỉ xuất APPROVED + CLASS CODE. Python chỉ cần trên 1 máy TRAIN; 100 máy AutoCAD không cần Python."/>
-                                </StackPanel>
-                            </Border>
+                                        </StackPanel>
+                                    </Border>
 
-                            <Border Margin="0,10,0,0"
+                                    <Border Margin="0,10,0,0"
                                     Padding="9"
                                     Background="#FFFFFBEB"
                                     BorderBrush="#FFF3D58B"
                                     BorderThickness="1"
                                     CornerRadius="5">
-                                <TextBlock FontSize="10.5"
+                                        <TextBlock FontSize="10.5"
                                            TextWrapping="Wrap"
                                            Foreground="#FF664D10"
-                                           Text="STEP22B2: Graph/GNN + Cloud Dataset. Graph được privacy-sanitize, canonical SHA256, đồng bộ nhiều máy và kéo Approved Graph về bộ train chung."/>
-                            </Border>
+                                           Text="STEP22C1: thêm AI Legend Reader độc lập. Quét Legend → review → lưu thư viện/Memory/Dataset; AI VAN/TB dùng lại Legend vừa đọc mà không cần quét lại."/>
+                                    </Border>
+
+                                </StackPanel>
+                            </Expander>
 
                         </StackPanel>
                     </ScrollViewer>

@@ -40,6 +40,9 @@ namespace ClassLibrary4
 
         [JsonPropertyName("total_reliable_targets")]
         public int TotalReliableTargets { get; set; }
+
+        [JsonPropertyName("conflict_structures")]
+        public int ConflictStructures { get; set; }
     }
 
     public sealed class AiGraphCloudLocalSummary
@@ -53,6 +56,7 @@ namespace ClassLibrary4
         public int LastCloudApproved { get; set; }
         public int LastCloudPending { get; set; }
         public int LastCloudRejected { get; set; }
+        public int LastCloudConflict { get; set; }
     }
 
     public sealed class AiGraphCloudSyncResult
@@ -70,6 +74,12 @@ namespace ClassLibrary4
     {
         [JsonPropertyName("graph_hash")]
         public string GraphHash { get; set; } = "";
+
+        [JsonPropertyName("structure_hash")]
+        public string StructureHash { get; set; } = "";
+
+        [JsonPropertyName("variant_count")]
+        public int VariantCount { get; set; }
 
         [JsonPropertyName("status")]
         public string Status { get; set; } = "PENDING";
@@ -115,17 +125,29 @@ namespace ClassLibrary4
         public string CompanyCode { get; set; } = "";
         public List<string> UploadedHashes { get; set; } =
             new List<string>();
+
+        // STEP22C1R:
+        // graph_hash -> revision_hash.
+        // Nếu cùng graph hash nhưng Ground-truth/source/confidence mạnh hơn,
+        // revision thay đổi => upload lại, không bị bỏ qua như bản cũ.
+        public Dictionary<string, string> UploadedRevisionHashes { get; set; } =
+            new Dictionary<string, string>(
+                StringComparer.OrdinalIgnoreCase);
+
         public string LastSyncUtc { get; set; } = "";
         public string LastMessage { get; set; } = "";
         public int LastCloudTotal { get; set; }
         public int LastCloudApproved { get; set; }
         public int LastCloudPending { get; set; }
         public int LastCloudRejected { get; set; }
+        public int LastCloudConflict { get; set; }
     }
 
     internal sealed class AiGraphCloudLocalItem
     {
         public string Hash { get; set; } = "";
+        public string StructureHash { get; set; } = "";
+        public string RevisionHash { get; set; } = "";
         public string SourcePath { get; set; } = "";
         public JsonElement Graph { get; set; }
     }
@@ -224,6 +246,27 @@ namespace ClassLibrary4
             }
         }
 
+        // STEP22D: dùng structure hash cho Local Graph History.
+        // Cùng topology nhưng user sửa DN/confidence sẽ cập nhật một history slot
+        // thay vì tích lũy hai ground-truth local mâu thuẫn.
+        public string GetStructureHashForGraphFile(
+            string path)
+        {
+            try
+            {
+                AiGraphCloudLocalItem item =
+                    BuildCanonicalCloudGraph(
+                        path);
+
+                return
+                    item?.StructureHash ?? "";
+            }
+            catch
+            {
+                return "";
+            }
+        }
+
         public AiGraphCloudLocalSummary GetLocalSummary(
             AiCloudConfig config = null)
         {
@@ -251,10 +294,9 @@ namespace ClassLibrary4
             List<AiGraphCloudLocalItem> local =
                 ScanCanonicalLocalGraphs();
 
-            HashSet<string> uploaded =
-                new HashSet<string>(
-                    state.UploadedHashes ??
-                    new List<string>(),
+            Dictionary<string, string> uploadedRevisions =
+                state.UploadedRevisionHashes ??
+                new Dictionary<string, string>(
                     StringComparer.OrdinalIgnoreCase);
 
             return
@@ -266,8 +308,25 @@ namespace ClassLibrary4
                     PendingUpload =
                         local.Count(
                             x =>
-                                !uploaded.Contains(
-                                    x.Hash)),
+                            {
+                                if (x == null ||
+                                    string.IsNullOrWhiteSpace(
+                                        x.Hash) ||
+                                    string.IsNullOrWhiteSpace(
+                                        x.RevisionHash))
+                                {
+                                    return false;
+                                }
+
+                                return
+                                    !uploadedRevisions.TryGetValue(
+                                        x.Hash,
+                                        out string uploadedRevision) ||
+                                    !string.Equals(
+                                        uploadedRevision,
+                                        x.RevisionHash,
+                                        StringComparison.OrdinalIgnoreCase);
+                            }),
 
                     CloudApprovedLocal =
                         Directory
@@ -293,7 +352,10 @@ namespace ClassLibrary4
                         state.LastCloudPending,
 
                     LastCloudRejected =
-                        state.LastCloudRejected
+                        state.LastCloudRejected,
+
+                    LastCloudConflict =
+                        state.LastCloudConflict
                 };
         }
 
@@ -347,6 +409,11 @@ namespace ClassLibrary4
                     new List<string>(),
                     StringComparer.OrdinalIgnoreCase);
 
+            Dictionary<string, string> uploadedRevisions =
+                state.UploadedRevisionHashes ??
+                new Dictionary<string, string>(
+                    StringComparer.OrdinalIgnoreCase);
+
             List<AiGraphCloudLocalItem> local =
                 ScanCanonicalLocalGraphs();
 
@@ -354,8 +421,20 @@ namespace ClassLibrary4
                 local
                     .Where(
                         x =>
-                            !uploaded.Contains(
-                                x.Hash))
+                            x != null &&
+                            !string.IsNullOrWhiteSpace(
+                                x.Hash) &&
+                            !string.IsNullOrWhiteSpace(
+                                x.RevisionHash) &&
+                            (
+                                !uploadedRevisions.TryGetValue(
+                                    x.Hash,
+                                    out string uploadedRevision) ||
+                                !string.Equals(
+                                    uploadedRevision,
+                                    x.RevisionHash,
+                                    StringComparison.OrdinalIgnoreCase)
+                            ))
                     .ToList();
 
             int uploadCount =
@@ -381,6 +460,10 @@ namespace ClassLibrary4
                                     {
                                         graph_hash =
                                             x.Hash,
+                                        structure_hash =
+                                            x.StructureHash,
+                                        revision_hash =
+                                            x.RevisionHash,
                                         graph =
                                             x.Graph
                                     })
@@ -409,6 +492,10 @@ namespace ClassLibrary4
                         uploaded.Add(
                             item.Hash);
 
+                        uploadedRevisions[
+                            item.Hash] =
+                            item.RevisionHash;
+
                         uploadCount++;
                     }
 
@@ -419,6 +506,11 @@ namespace ClassLibrary4
                                     x,
                                 StringComparer.OrdinalIgnoreCase)
                             .ToList();
+
+                    state.UploadedRevisionHashes =
+                        new Dictionary<string, string>(
+                            uploadedRevisions,
+                            StringComparer.OrdinalIgnoreCase);
 
                     SaveState(
                         state);
@@ -454,6 +546,9 @@ namespace ClassLibrary4
                 state.LastCloudRejected =
                     cloudSummary.Rejected;
 
+                state.LastCloudConflict =
+                    cloudSummary.ConflictStructures;
+
                 state.UploadedHashes =
                     uploaded
                         .OrderBy(
@@ -461,6 +556,11 @@ namespace ClassLibrary4
                                 x,
                             StringComparer.OrdinalIgnoreCase)
                         .ToList();
+
+                state.UploadedRevisionHashes =
+                    new Dictionary<string, string>(
+                        uploadedRevisions,
+                        StringComparer.OrdinalIgnoreCase);
 
                 SaveState(
                     state);
@@ -504,6 +604,11 @@ namespace ClassLibrary4
                                 x,
                             StringComparer.OrdinalIgnoreCase)
                         .ToList();
+
+                state.UploadedRevisionHashes =
+                    new Dictionary<string, string>(
+                        uploadedRevisions,
+                        StringComparer.OrdinalIgnoreCase);
 
                 SaveState(
                     state);
@@ -1003,10 +1108,17 @@ namespace ClassLibrary4
                         .ThenBy(
                             p =>
                                 p.Length)
+                        // STEP22C1R:
+                        // Canonical node order KHÔNG được phụ thuộc DN label,
+                        // nếu không structure_hash vẫn có thể đổi khi chỉ sửa DN.
+                        .ThenByDescending(
+                            p =>
+                                p.LayerPipe)
                         .ThenBy(
                             p =>
-                                p.Dn,
-                            StringComparer.OrdinalIgnoreCase)
+                                p.Neighbors == null
+                                    ? 0
+                                    : p.Neighbors.Count)
                         .ThenBy(
                             p =>
                                 p.OriginalIndex)
@@ -1105,72 +1217,114 @@ namespace ClassLibrary4
                         canonical,
                         JsonOptions);
 
-                // Hash cố ý KHÔNG dùng confidence/source/ai-overlay.
-                // Cùng geometry + topology + DN labels từ nhiều máy vẫn dedupe,
-                // còn server sẽ giữ bản có Ground-truth mạnh hơn.
-                object hashCanonical =
+                // STEP22C1R:
+                // 1) structure_hash: chỉ geometry + topology, KHÔNG DN.
+                //    Dùng để phát hiện cùng network nhưng các máy gán DN khác nhau.
+                // 2) graph_hash: structure + DN.
+                //    Dùng dedupe một phiên bản label cụ thể.
+                // 3) revision_hash: full sanitized payload.
+                //    Nếu source/confidence/ground-truth mạnh hơn thì upload lại.
+
+                List<object> structurePipes =
+                    sorted.Select(
+                        (pipe, i) =>
+                        {
+                            int[] neighbors =
+                                pipe.Neighbors
+                                    .Where(
+                                        n =>
+                                            remap.ContainsKey(
+                                                n))
+                                    .Select(
+                                        n =>
+                                            remap[n])
+                                    .Where(
+                                        n =>
+                                            n != i)
+                                    .Distinct()
+                                    .OrderBy(
+                                        n =>
+                                            n)
+                                    .ToArray();
+
+                            return
+                                (object)new
+                                {
+                                    id =
+                                        i,
+                                    layer_pipe =
+                                        pipe.LayerPipe,
+                                    start =
+                                        new[]
+                                        {
+                                            pipe.StartX,
+                                            pipe.StartY
+                                        },
+                                    end =
+                                        new[]
+                                        {
+                                            pipe.EndX,
+                                            pipe.EndY
+                                        },
+                                    length =
+                                        pipe.Length,
+                                    neighbors =
+                                        neighbors
+                                };
+                        })
+                        .ToList();
+
+                object structureCanonical =
                     new
                     {
                         version =
-                            2,
+                            3,
                         pipes =
-                            sorted.Select(
-                                (pipe, i) =>
-                                {
-                                    int[] neighbors =
-                                        pipe.Neighbors
-                                            .Where(
-                                                n =>
-                                                    remap.ContainsKey(
-                                                        n))
-                                            .Select(
-                                                n =>
-                                                    remap[n])
-                                            .Where(
-                                                n =>
-                                                    n != i)
-                                            .Distinct()
-                                            .OrderBy(
-                                                n =>
-                                                    n)
-                                            .ToArray();
+                            structurePipes
+                    };
 
-                                    return
-                                        new
-                                        {
-                                            id =
-                                                i,
-                                            layer_pipe =
-                                                pipe.LayerPipe,
-                                            start =
-                                                new[]
-                                                {
-                                                    pipe.StartX,
-                                                    pipe.StartY
-                                                },
-                                            end =
-                                                new[]
-                                                {
-                                                    pipe.EndX,
-                                                    pipe.EndY
-                                                },
-                                            length =
-                                                pipe.Length,
-                                            dn =
-                                                NormalizeDn(
-                                                    pipe.Dn),
-                                            neighbors =
-                                                neighbors
-                                        };
-                                })
-                            .ToList()
+                string structureHash =
+                    ComputeSha256(
+                        JsonSerializer.Serialize(
+                            structureCanonical,
+                            JsonOptions));
+
+                List<object> labelPipes =
+                    sorted.Select(
+                        (pipe, i) =>
+                        {
+                            return
+                                (object)new
+                                {
+                                    id =
+                                        i,
+                                    dn =
+                                        NormalizeDn(
+                                            pipe.Dn)
+                                };
+                        })
+                        .ToList();
+
+                object graphCanonical =
+                    new
+                    {
+                        version =
+                            3,
+                        structure_hash =
+                            structureHash,
+                        labels =
+                            labelPipes
                     };
 
                 string hash =
                     ComputeSha256(
                         JsonSerializer.Serialize(
-                            hashCanonical,
+                            graphCanonical,
                             JsonOptions));
+
+                string revisionHash =
+                    ComputeSha256(
+                        json);
 
                 using (JsonDocument canonicalDoc =
                     JsonDocument.Parse(
@@ -1181,6 +1335,10 @@ namespace ClassLibrary4
                         {
                             Hash =
                                 hash,
+                            StructureHash =
+                                structureHash,
+                            RevisionHash =
+                                revisionHash,
                             SourcePath =
                                 sourcePath,
                             Graph =
@@ -1203,13 +1361,24 @@ namespace ClassLibrary4
                         new AiGraphCloudState();
                 }
 
-                return
+                AiGraphCloudState state =
                     JsonSerializer.Deserialize<AiGraphCloudState>(
                         File.ReadAllText(
                             StatePath,
                             Encoding.UTF8),
                         JsonOptions) ??
                     new AiGraphCloudState();
+
+                state.UploadedHashes =
+                    state.UploadedHashes ??
+                    new List<string>();
+
+                state.UploadedRevisionHashes =
+                    state.UploadedRevisionHashes ??
+                    new Dictionary<string, string>(
+                        StringComparer.OrdinalIgnoreCase);
+
+                return state;
             }
             catch
             {

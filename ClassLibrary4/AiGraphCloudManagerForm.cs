@@ -148,6 +148,7 @@ namespace ClassLibrary4
                     "TẤT CẢ",
                     "PENDING",
                     "APPROVED",
+                    "CONFLICT",
                     "REJECTED"
                 });
 
@@ -284,7 +285,17 @@ namespace ClassLibrary4
             AddTextColumn(
                 "HASH",
                 "GRAPH HASH",
-                215);
+                165);
+
+            AddTextColumn(
+                "STRUCTURE",
+                "STRUCTURE",
+                155);
+
+            AddTextColumn(
+                "VARIANTS",
+                "BIẾN THỂ",
+                75);
 
             AddTextColumn(
                 "PIPES",
@@ -625,6 +636,8 @@ namespace ClassLibrary4
                     summary.Approved +
                     "  |  Pending " +
                     summary.Pending +
+                    "  |  Conflict structure " +
+                    summary.ConflictStructures +
                     "  |  Rejected " +
                     summary.Rejected +
                     "  |  Reliable DN targets " +
@@ -683,6 +696,13 @@ namespace ClassLibrary4
                     ShortHash(
                         row.GraphHash);
 
+                gridRow.Cells["STRUCTURE"].Value =
+                    ShortHash(
+                        row.StructureHash);
+
+                gridRow.Cells["VARIANTS"].Value =
+                    row.VariantCount;
+
                 gridRow.Cells["PIPES"].Value =
                     row.PipeCount;
 
@@ -738,6 +758,24 @@ namespace ClassLibrary4
             }
 
             if (s.StartsWith(
+                    "CONFLICT"))
+            {
+                row.DefaultCellStyle.BackColor =
+                    Color.FromArgb(
+                        254,
+                        226,
+                        226);
+
+                row.DefaultCellStyle.ForeColor =
+                    Color.FromArgb(
+                        153,
+                        27,
+                        27);
+
+                return;
+            }
+
+            if (s.StartsWith(
                     "REJECTED"))
             {
                 row.DefaultCellStyle.BackColor =
@@ -772,8 +810,12 @@ namespace ClassLibrary4
             _detail.Text =
                 "TRẠNG THÁI: " +
                 row.Status +
-                "\n\nHASH:\n" +
+                "\n\nGRAPH HASH:\n" +
                 row.GraphHash +
+                "\n\nSTRUCTURE HASH:\n" +
+                row.StructureHash +
+                "\nBiến thể DN cùng structure: " +
+                row.VariantCount +
                 "\n\nỐng: " +
                 row.PipeCount +
                 "\nGround-truth DN: " +
@@ -922,6 +964,8 @@ namespace ClassLibrary4
                 summary.Approved +
                 "  |  Pending " +
                 summary.Pending +
+                "  |  Conflict structure " +
+                summary.ConflictStructures +
                 "  |  Rejected " +
                 summary.Rejected +
                 "  |  Reliable DN targets " +

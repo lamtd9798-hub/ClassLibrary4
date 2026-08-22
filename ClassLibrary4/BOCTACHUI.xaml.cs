@@ -325,6 +325,16 @@ namespace ClassLibrary4
 
             // STEP22B2: chỉ đọc trạng thái Graph Cloud local, không gọi Internet.
             UpdateAiGraphCloudStatusUi();
+
+            // STEP22C1: Legend Reader độc lập.
+            UpdateAiLegendStatusUi();
+
+            // STEP22D: giao diện AI tối giản - 1 nút chạy pipeline chính.
+            UpdateAiAutoHubStatusUi();
+
+            // STEP23 - AUTO CLOUD SYNC V2:
+            // mở Palette => tự kéo Memory/learning mới từ Cloud; sau đó kiểm tra định kỳ.
+            InitializeAiCloudAutoSync();
         }
 
         private WpfComboBox TimComboBox(string name)
@@ -41266,6 +41276,13 @@ namespace ClassLibrary4
             public double Score { get; set; }
             public string Source { get; set; } = "GEOMETRY";
             public MepSymbolClassifier.Prediction OnnxPrediction { get; set; } = null;
+
+            // STEP22D-PERSIST-IGNORE-V2:
+            // Giữ đúng fingerprint + tập ObjectId của instance EXPLODE đã match.
+            // Nhờ vậy BỎ QUA một hình đã nhận diện OK cũng được nhớ theo Handle,
+            // không bị xuất hiện lại ở lần quét sau.
+            public string GeometryFingerprint { get; set; } = "";
+            public List<ObjectId> ObjectIds { get; set; } = new List<ObjectId>();
         }
 
         private class SmartVisionCandidateScore
@@ -41394,6 +41411,21 @@ namespace ClassLibrary4
             public bool ReviewBaselineInitialized { get; set; } = false;
             public bool UserEdited { get; set; } = false;
             public bool NegativeLearned { get; set; } = false;
+
+            // STEP22D-PERSIST-IGNORE:
+            // Handle ổn định theo DWG để BỎ QUA một ứng viên thì lần quét sau
+            // không đưa chính instance đó trở lại bảng kiểm tra.
+            public string InstanceHandleKey { get; set; } = "";
+        }
+
+        private class SmartAuditIgnoreEntry
+        {
+            public string DrawingKey { get; set; } = "";
+            public string MatchMode { get; set; } = "";
+            public string InstanceHandleKey { get; set; } = "";
+            public string BlockKey { get; set; } = "";
+            public string GeometryFingerprint { get; set; } = "";
+            public string UpdatedUtc { get; set; } = "";
         }
 
         private class SmartAuditGeometryCluster
@@ -41437,6 +41469,15 @@ namespace ClassLibrary4
             ObjectId.Null;
 
         // ============================================================
+        // STEP22D - AUTO AI HUB
+        // Người dùng chỉ thao tác 2 nút chính. Các engine kỹ thuật vẫn giữ
+        // dưới NÂNG CAO để debug/admin nhưng pipeline tự điều phối phía sau.
+        // ============================================================
+        private bool _aiAutoPipelineBusy = false;
+        private AiPipeTakeoffRunResult _lastAiAutoPipeRun = null;
+        private DateTime _lastAiAutoRunUtc = DateTime.MinValue;
+
+        // ============================================================
         // STEP21A/B - ONNX SYMBOL CLASSIFIER
         // ------------------------------------------------------------
         // CPU-first. Nếu chưa có model/labels hoặc ONNX Runtime lỗi,
@@ -41458,6 +41499,15 @@ namespace ClassLibrary4
         private AiCloudSyncClient _aiCloudSyncClient = null;
         private bool _aiCloudSyncBusy = false;
         private const int AiCloudMinConsensusVotes = 3;
+
+        // STEP23 - AUTO CLOUD SYNC V2
+        // Memory là local-first nhưng mọi học/sửa của người dùng được đẩy Cloud tự động.
+        // Máy khác đang mở Palette sẽ tự kéo Memory định kỳ, không cần bấm ĐỒNG BỘ AI.
+        private System.Windows.Threading.DispatcherTimer _aiCloudAutoSyncTimer = null;
+        private bool _aiCloudAutoSyncPending = false;
+        private bool _aiCloudAutoSyncPendingHeavy = false;
+        private string _aiCloudAutoSyncLastReason = "";
+        private static readonly TimeSpan AiCloudAutoPullInterval = TimeSpan.FromMinutes(5);
 
         // ============================================================
         // STEP21D - CLOUD DATASET
@@ -42073,6 +42123,11 @@ namespace ClassLibrary4
                     source,
                     false);
             }
+
+            // Legend mới / học BLOCK / học EXPLODE / sửa rule => tự đẩy Cloud.
+            RequestAiCloudAutoSyncQuiet(
+                "SYMBOL_RULE_CHANGED:" + (source ?? ""),
+                true);
         }
 
         private void LearnAiNegativeFromAuditRow(
@@ -42118,6 +42173,12 @@ namespace ClassLibrary4
 
             row.NegativeLearned =
                 true;
+
+            // Báo nhầm được người dùng xác nhận cũng phải được xếp hàng Cloud ngay.
+            // Instance-ignore vẫn chỉ local theo DWG; chỉ NEGATIVE fingerprint được sync.
+            RequestAiCloudAutoSyncQuiet(
+                "AUDIT_NEGATIVE",
+                true);
         }
 
         private void LearnAiFromAuditCorrections(
@@ -42125,6 +42186,9 @@ namespace ClassLibrary4
         {
             if (rows == null)
                 return;
+
+            bool learnedSomething =
+                false;
 
             foreach (SmartAuditRow row
                 in rows)
@@ -42200,6 +42264,17 @@ namespace ClassLibrary4
 
                 row.ReviewBaselineInitialized =
                     true;
+
+                learnedSomething =
+                    true;
+            }
+
+            if (learnedSomething)
+            {
+                // SỬA tên / THEO DN / thêm thiết bị mới => tự upload Memory + Dataset.
+                RequestAiCloudAutoSyncQuiet(
+                    "AUDIT_USER_CORRECTION",
+                    true);
             }
         }
 
@@ -42372,6 +42447,444 @@ namespace ClassLibrary4
             return false;
         }
 
+        // ============================================================
+        // STEP22D-PERSIST-IGNORE
+        // ------------------------------------------------------------
+        // "BỎ QUA" phải nhớ đúng INSTANCE trong đúng DWG, không chỉ nhớ
+        // fingerprint toàn cục. Điều này đặc biệt quan trọng với DBPoint và
+        // hình EXPLODE vì fingerprint/cụm nét có thể thay đổi nhẹ giữa 2 lần quét.
+        // ============================================================
+        private string SmartAuditIgnoreInstancesPath
+        {
+            get
+            {
+                try
+                {
+                    string baseFolder =
+                        Environment.GetFolderPath(
+                            Environment.SpecialFolder.ApplicationData);
+
+                    if (string.IsNullOrWhiteSpace(baseFolder))
+                    {
+                        baseFolder = Path.GetTempPath();
+                    }
+
+                    string folder =
+                        Path.Combine(
+                            baseFolder,
+                            "TDL_MEP");
+
+                    if (!Directory.Exists(folder))
+                    {
+                        Directory.CreateDirectory(folder);
+                    }
+
+                    return
+                        Path.Combine(
+                            folder,
+                            "smart_audit_ignored_instances_v1.tsv");
+                }
+                catch
+                {
+                    return
+                        Path.Combine(
+                            Path.GetTempPath(),
+                            "smart_audit_ignored_instances_v1.tsv");
+                }
+            }
+        }
+
+        private string GetSmartAuditDrawingKey(
+            Document doc)
+        {
+            try
+            {
+                string value =
+                    doc != null &&
+                    doc.Database != null
+                        ? (doc.Database.Filename ?? "")
+                        : "";
+
+                if (string.IsNullOrWhiteSpace(value) &&
+                    doc != null)
+                {
+                    value = doc.Name ?? "";
+                }
+
+                value =
+                    (value ?? "")
+                        .Trim()
+                        .Replace('/', '\\')
+                        .ToUpperInvariant();
+
+                return
+                    string.IsNullOrWhiteSpace(value)
+                        ? "UNSAVED_DRAWING"
+                        : value;
+            }
+            catch
+            {
+                return "UNSAVED_DRAWING";
+            }
+        }
+
+        private List<SmartAuditIgnoreEntry> LoadSmartAuditIgnoredInstances()
+        {
+            List<SmartAuditIgnoreEntry> result =
+                new List<SmartAuditIgnoreEntry>();
+
+            try
+            {
+                string path =
+                    SmartAuditIgnoreInstancesPath;
+
+                if (!File.Exists(path))
+                    return result;
+
+                foreach (string line in
+                    File.ReadAllLines(path, Encoding.UTF8))
+                {
+                    if (string.IsNullOrWhiteSpace(line))
+                        continue;
+
+                    string[] p =
+                        line.Split('\t');
+
+                    if (p.Length < 6)
+                        continue;
+
+                    result.Add(
+                        new SmartAuditIgnoreEntry
+                        {
+                            DrawingKey = DecodeSmartField(p[0]),
+                            MatchMode = DecodeSmartField(p[1]),
+                            InstanceHandleKey = DecodeSmartField(p[2]),
+                            BlockKey = DecodeSmartField(p[3]),
+                            GeometryFingerprint = DecodeSmartField(p[4]),
+                            UpdatedUtc = DecodeSmartField(p[5])
+                        });
+                }
+            }
+            catch
+            {
+            }
+
+            return result;
+        }
+
+        private void SaveSmartAuditIgnoredInstances(
+            List<SmartAuditIgnoreEntry> entries)
+        {
+            try
+            {
+                string path =
+                    SmartAuditIgnoreInstancesPath;
+
+                List<string> lines =
+                    (entries ?? new List<SmartAuditIgnoreEntry>())
+                        .Where(e => e != null)
+                        .Select(
+                            e =>
+                                string.Join(
+                                    "\t",
+                                    EncodeSmartField(e.DrawingKey),
+                                    EncodeSmartField(e.MatchMode),
+                                    EncodeSmartField(e.InstanceHandleKey),
+                                    EncodeSmartField(e.BlockKey),
+                                    EncodeSmartField(e.GeometryFingerprint),
+                                    EncodeSmartField(e.UpdatedUtc)))
+                        .ToList();
+
+                File.WriteAllLines(
+                    path,
+                    lines,
+                    Encoding.UTF8);
+            }
+            catch
+            {
+                // Local ignore là tiện ích; lỗi ghi file không được làm CAD dừng.
+            }
+        }
+
+        private static HashSet<string> ParseSmartAuditHandleSet(
+            string value)
+        {
+            return
+                new HashSet<string>(
+                    (value ?? "")
+                        .Split(
+                            new[] { ',' },
+                            StringSplitOptions.RemoveEmptyEntries)
+                        .Select(x => x.Trim())
+                        .Where(x => !string.IsNullOrWhiteSpace(x)),
+                    StringComparer.OrdinalIgnoreCase);
+        }
+
+        private string BuildSmartAuditHandleKey(
+            Transaction tr,
+            IEnumerable<ObjectId> ids)
+        {
+            if (tr == null || ids == null)
+                return "";
+
+            List<string> handles =
+                new List<string>();
+
+            foreach (ObjectId id in ids)
+            {
+                if (id.IsNull)
+                    continue;
+
+                try
+                {
+                    DBObject obj =
+                        tr.GetObject(
+                            id,
+                            OpenMode.ForRead,
+                            false);
+
+                    if (obj == null || obj.IsErased)
+                        continue;
+
+                    string handle =
+                        obj.Handle.ToString();
+
+                    if (!string.IsNullOrWhiteSpace(handle))
+                    {
+                        handles.Add(handle);
+                    }
+                }
+                catch
+                {
+                }
+            }
+
+            return
+                string.Join(
+                    ",",
+                    handles
+                        .Distinct(StringComparer.OrdinalIgnoreCase)
+                        .OrderBy(x => x, StringComparer.OrdinalIgnoreCase));
+        }
+
+        private bool AreSmartAuditHandleKeysSameInstance(
+            string a,
+            string b)
+        {
+            if (string.IsNullOrWhiteSpace(a) ||
+                string.IsNullOrWhiteSpace(b))
+            {
+                return false;
+            }
+
+            if (string.Equals(
+                    a,
+                    b,
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+
+            HashSet<string> sa =
+                ParseSmartAuditHandleSet(a);
+
+            HashSet<string> sb =
+                ParseSmartAuditHandleSet(b);
+
+            if (sa.Count == 0 || sb.Count == 0)
+                return false;
+
+            int overlap =
+                sa.Count(x => sb.Contains(x));
+
+            int denominator =
+                Math.Min(sa.Count, sb.Count);
+
+            // Hình EXPLODE có thể cluster thêm/bớt 1 nét giữa hai lần quét.
+            // >=60% handle trùng nhau được xem là cùng một instance.
+            return
+                denominator > 0 &&
+                overlap >= 1 &&
+                ((double)overlap / denominator) >= 0.60;
+        }
+
+        private void RememberSmartAuditIgnoredInstance(
+            Document doc,
+            SmartAuditRow row)
+        {
+            if (doc == null || row == null)
+                return;
+
+            string drawingKey =
+                GetSmartAuditDrawingKey(doc);
+
+            string mode =
+                (row.MatchMode ?? "").Trim().ToUpperInvariant();
+
+            string handleKey =
+                row.InstanceHandleKey ?? "";
+
+            if (string.IsNullOrWhiteSpace(handleKey) &&
+                !row.SourceId.IsNull)
+            {
+                try
+                {
+                    using (Transaction tr =
+                        doc.Database.TransactionManager.StartTransaction())
+                    {
+                        handleKey =
+                            BuildSmartAuditHandleKey(
+                                tr,
+                                new[] { row.SourceId });
+
+                        tr.Commit();
+                    }
+                }
+                catch
+                {
+                }
+            }
+
+            // Nếu không có handle (trường hợp đặc biệt), vẫn có thể nhớ
+            // geometry fingerprint trong phạm vi đúng DWG.
+            if (string.IsNullOrWhiteSpace(handleKey) &&
+                string.IsNullOrWhiteSpace(row.GeometryFingerprint) &&
+                string.IsNullOrWhiteSpace(row.BlockKey))
+            {
+                return;
+            }
+
+            List<SmartAuditIgnoreEntry> entries =
+                LoadSmartAuditIgnoredInstances();
+
+            entries.RemoveAll(
+                e =>
+                    e != null &&
+                    string.Equals(
+                        e.DrawingKey,
+                        drawingKey,
+                        StringComparison.OrdinalIgnoreCase) &&
+                    string.Equals(
+                        e.MatchMode,
+                        mode,
+                        StringComparison.OrdinalIgnoreCase) &&
+                    ((!string.IsNullOrWhiteSpace(handleKey) &&
+                      AreSmartAuditHandleKeysSameInstance(
+                          e.InstanceHandleKey,
+                          handleKey)) ||
+                     (string.IsNullOrWhiteSpace(handleKey) &&
+                      string.IsNullOrWhiteSpace(e.InstanceHandleKey) &&
+                      string.Equals(
+                          e.GeometryFingerprint,
+                          row.GeometryFingerprint,
+                          StringComparison.Ordinal))));
+
+            entries.Add(
+                new SmartAuditIgnoreEntry
+                {
+                    DrawingKey = drawingKey,
+                    MatchMode = mode,
+                    InstanceHandleKey = handleKey,
+                    BlockKey = row.BlockKey ?? "",
+                    GeometryFingerprint = row.GeometryFingerprint ?? "",
+                    UpdatedUtc =
+                        DateTime.UtcNow.ToString(
+                            "O",
+                            CultureInfo.InvariantCulture)
+                });
+
+            // Giữ file local gọn; ưu tiên bản mới nhất.
+            entries =
+                entries
+                    .OrderByDescending(e => e.UpdatedUtc)
+                    .Take(10000)
+                    .ToList();
+
+            SaveSmartAuditIgnoredInstances(entries);
+        }
+
+        private bool IsSmartAuditInstanceIgnored(
+            Document doc,
+            string matchMode,
+            string instanceHandleKey,
+            string blockKey,
+            string geometryFingerprint,
+            bool requireHandleMatch = false)
+        {
+            if (doc == null)
+                return false;
+
+            string drawingKey =
+                GetSmartAuditDrawingKey(doc);
+
+            string mode =
+                (matchMode ?? "").Trim().ToUpperInvariant();
+
+            List<SmartAuditIgnoreEntry> entries =
+                LoadSmartAuditIgnoredInstances();
+
+            foreach (SmartAuditIgnoreEntry e in entries)
+            {
+                if (e == null ||
+                    !string.Equals(
+                        e.DrawingKey,
+                        drawingKey,
+                        StringComparison.OrdinalIgnoreCase) ||
+                    !string.Equals(
+                        e.MatchMode,
+                        mode,
+                        StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                if (!string.IsNullOrWhiteSpace(instanceHandleKey) &&
+                    !string.IsNullOrWhiteSpace(e.InstanceHandleKey) &&
+                    AreSmartAuditHandleKeysSameInstance(
+                        e.InstanceHandleKey,
+                        instanceHandleKey))
+                {
+                    return true;
+                }
+
+                // Với một đối tượng ĐÃ NHẬN DIỆN OK, chỉ cho phép bỏ lại
+                // khi đúng Handle instance đã từng bị người dùng bấm BỎ QUA.
+                // Không fallback bằng fingerprint ở đây vì nhiều sprinkler/van
+                // có thể có cùng fingerprint trong một DWG.
+                if (requireHandleMatch)
+                    continue;
+
+                // Fallback chỉ trong cùng DWG và cùng mode.
+                if (!string.IsNullOrWhiteSpace(geometryFingerprint) &&
+                    !string.IsNullOrWhiteSpace(e.GeometryFingerprint))
+                {
+                    if (string.Equals(
+                            e.GeometryFingerprint,
+                            geometryFingerprint,
+                            StringComparison.Ordinal))
+                    {
+                        return true;
+                    }
+
+                    if (string.Equals(
+                            mode,
+                            "GEOMETRY",
+                            StringComparison.OrdinalIgnoreCase))
+                    {
+                        double score =
+                            CompareSmartGeometryFingerprints(
+                                e.GeometryFingerprint,
+                                geometryFingerprint);
+
+                        if (score <= 0.08)
+                            return true;
+                    }
+                }
+            }
+
+            return false;
+        }
+
         private void UpdateAiLearningStatusUi()
         {
             try
@@ -42475,7 +42988,11 @@ namespace ClassLibrary4
                     " • APPROVED " +
                     local.LastCloudApproved +
                     " • PENDING " +
-                    local.LastCloudPending;
+                    local.LastCloudPending +
+                    " • CONFLICT " +
+                    local.LastCloudConflict +
+                    " • REJECTED " +
+                    local.LastCloudRejected;
 
                 TxtAiGraphCloudStatus.Foreground =
                     new System.Windows.Media.SolidColorBrush(
@@ -42776,37 +43293,138 @@ namespace ClassLibrary4
             }
         }
 
+        private bool TryResolveDefaultMepGraphGnnFiles(
+            out string modelPath,
+            out string labelsPath)
+        {
+            modelPath = "";
+            labelsPath = "";
+
+            List<string> folders =
+                new List<string>();
+
+            try
+            {
+                string appData =
+                    Environment.GetFolderPath(
+                        Environment.SpecialFolder.ApplicationData);
+
+                if (!string.IsNullOrWhiteSpace(
+                        appData))
+                {
+                    folders.Add(
+                        Path.Combine(
+                            appData,
+                            "TDL_MEP",
+                            "Graph",
+                            "models"));
+                }
+            }
+            catch
+            {
+            }
+
+            try
+            {
+                string pluginFolder =
+                    Path.GetDirectoryName(
+                        Assembly.GetExecutingAssembly()
+                            .Location) ??
+                    "";
+
+                if (!string.IsNullOrWhiteSpace(
+                        pluginFolder))
+                {
+                    folders.Add(
+                        Path.Combine(
+                            pluginFolder,
+                            "AI",
+                            "models"));
+
+                    folders.Add(
+                        pluginFolder);
+                }
+            }
+            catch
+            {
+            }
+
+            foreach (string folder
+                in folders
+                    .Where(
+                        x =>
+                            !string.IsNullOrWhiteSpace(
+                                x))
+                    .Distinct(
+                        StringComparer.OrdinalIgnoreCase))
+            {
+                string candidateModel =
+                    Path.Combine(
+                        folder,
+                        "mep_graph_context.onnx");
+
+                string candidateLabels =
+                    Path.Combine(
+                        folder,
+                        "mep_graph_dn_labels.txt");
+
+                if (File.Exists(
+                        candidateModel) &&
+                    File.Exists(
+                        candidateLabels))
+                {
+                    modelPath =
+                        candidateModel;
+
+                    labelsPath =
+                        candidateLabels;
+
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
         private void TryRestoreMepGraphGnnModel()
         {
             try
             {
-                if (!File.Exists(
+                string modelPath = "";
+                string labelsPath = "";
+
+                if (File.Exists(
                         MepGraphGnnStatePath))
                 {
-                    return;
+                    string[] lines =
+                        File.ReadAllLines(
+                            MepGraphGnnStatePath);
+
+                    if (lines.Length >= 2)
+                    {
+                        modelPath =
+                            (lines[0] ?? "")
+                                .Trim();
+
+                        labelsPath =
+                            (lines[1] ?? "")
+                                .Trim();
+                    }
                 }
 
-                string[] lines =
-                    File.ReadAllLines(
-                        MepGraphGnnStatePath);
-
-                if (lines.Length < 2)
-                    return;
-
-                string modelPath =
-                    (lines[0] ?? "")
-                        .Trim();
-
-                string labelsPath =
-                    (lines[1] ?? "")
-                        .Trim();
-
+                // STEP22D: nếu state cũ không tồn tại / path đã đổi máy,
+                // tự tìm model theo convention deploy. Không bắt user bấm NẠP GNN.
                 if (!File.Exists(
                         modelPath) ||
                     !File.Exists(
                         labelsPath))
                 {
-                    return;
+                    if (!TryResolveDefaultMepGraphGnnFiles(
+                            out modelPath,
+                            out labelsPath))
+                    {
+                        return;
+                    }
                 }
 
                 LoadMepGraphGnnModel(
@@ -43241,11 +43859,26 @@ namespace ClassLibrary4
 
             try
             {
+                // STEP22D FIX eWasErased: SelectionSet có thể chứa ObjectId
+                // của overlay AI vừa bị thay thế. Loại ObjectId đã erased trước khi build graph.
+                ObjectId[] liveIds =
+                    ids
+                        .Where(
+                            id =>
+                                !id.IsNull &&
+                                id.IsValid &&
+                                !id.IsErased)
+                        .Distinct()
+                        .ToArray();
+
+                if (liveIds.Length == 0)
+                    return null;
+
                 MepGraphSnapshot snapshot =
                     GetMepGraphEngine()
                         .BuildSnapshot(
                             doc,
-                            ids,
+                            liveIds,
                             true);
 
                 _lastMepGraphSnapshot =
@@ -43832,7 +44465,8 @@ namespace ClassLibrary4
 
         private void CaptureReviewedLegendRowsIntoDataset(
             List<SmartLegendAutoRow> rows,
-            bool showSummary)
+            bool showSummary,
+            bool willScanDrawing = true)
         {
             if (rows == null ||
                 rows.Count == 0)
@@ -43928,7 +44562,9 @@ namespace ClassLibrary4
                         after.Pending +
                         "\\n\\n" +
                         "Các mẫu hợp lệ đã được lưu Local AI Memory + AI Dataset.\\n" +
-                        "Tiếp theo tool sẽ quét bản vẽ để thống kê.",
+                        (willScanDrawing
+                            ? "Tiếp theo tool sẽ quét bản vẽ để thống kê."
+                            : "Legend đã sẵn sàng. Khi cần, bấm AI NHẬN DIỆN VAN / THIẾT BỊ để quét mặt bằng."),
                         "AI DATASET - LEGEND");
                 }
             }
@@ -43939,7 +44575,10 @@ namespace ClassLibrary4
                     MessageBox.Show(
                         "Đã lưu Legend vào thư viện nhưng chưa tạo đủ Dataset:\\n" +
                         ex.Message +
-                        "\\n\\nBạn vẫn có thể tiếp tục quét bản vẽ.",
+                        "\\n\\n" +
+                        (willScanDrawing
+                            ? "Bạn vẫn có thể tiếp tục quét bản vẽ."
+                            : "Legend vẫn được giữ trong thư viện; có thể quét mặt bằng sau."),
                         "AI DATASET - LEGEND");
                 }
                 catch
@@ -44857,7 +45496,7 @@ namespace ClassLibrary4
                 }
 
                 TxtAiCloudStatus.Text =
-                    "AI CLOUD: SẴN SÀNG  •  " +
+                    "AI CLOUD: AUTO  •  " +
                     config.CompanyCode +
                     "  •  ↑ " +
                     pending +
@@ -44996,6 +45635,37 @@ namespace ClassLibrary4
                         datasetResult.CloudSummary;
                 }
 
+                // STEP22C1R:
+                // Nút ĐỒNG BỘ AI phải đồng bộ đủ 3 tầng:
+                // MEMORY + SYMBOL DATASET + GRAPH/GNN DATASET.
+                AiGraphCloudSyncResult graphCloudResult =
+                    new AiGraphCloudSyncResult
+                    {
+                        Success =
+                            true,
+                        Message =
+                            "Không có Graph mới."
+                    };
+
+                if (!_aiGraphCloudBusy)
+                {
+                    _aiGraphCloudBusy =
+                        true;
+
+                    try
+                    {
+                        graphCloudResult =
+                            await GetAiGraphCloudClient()
+                                .SyncAsync(
+                                    client.LoadConfig());
+                    }
+                    finally
+                    {
+                        _aiGraphCloudBusy =
+                            false;
+                    }
+                }
+
                 AiCloudLocalState state =
                     client.LoadState();
 
@@ -45030,6 +45700,7 @@ namespace ClassLibrary4
                 UpdateAiLearningStatusUi();
                 UpdateAiCloudStatusUi();
                 UpdateAiDatasetStatusUi();
+                UpdateAiGraphCloudStatusUi();
 
                 MessageBox.Show(
                     "ĐỒNG BỘ AI CLOUD XONG\n\n" +
@@ -45060,10 +45731,21 @@ namespace ClassLibrary4
                     "\n" +
                     "Approved dataset: " +
                     _lastAiDatasetCloudSummary.Approved +
+                    "\n\nGRAPH / GNN DATASET\n" +
+                    (graphCloudResult.Success
+                        ? "↑ Graph upload/revision: " +
+                          graphCloudResult.Uploaded +
+                          "\n✓ Approved Graph: " +
+                          graphCloudResult.CloudSummary.Approved +
+                          "\n⚠ Conflict structure: " +
+                          graphCloudResult.CloudSummary.ConflictStructures
+                        : "⚠ Graph Cloud chưa sync: " +
+                          graphCloudResult.Message) +
                     "\n\n" +
-                    "Mặc định cần tối thiểu " +
+                    "STEP23: mẫu POSITIVE do người dùng học/sửa được chia sẻ ngay trong Company khi không có xung đột.\n" +
+                    "NEGATIVE / dữ liệu mâu thuẫn vẫn giữ ngưỡng bảo vệ " +
                     AiCloudMinConsensusVotes +
-                    " người độc lập để tự áp dụng.",
+                    " phiếu độc lập.",
                     "AI CLOUD");
             }
             catch (System.Exception ex)
@@ -45089,6 +45771,11 @@ namespace ClassLibrary4
 
                 UpdateAiCloudStatusUi();
                 UpdateAiDatasetStatusUi();
+                UpdateAiGraphCloudStatusUi();
+
+                // Nếu trong lúc người dùng bấm sync thủ công có phát sinh học/sửa mới,
+                // chạy thêm một lượt nền để không bỏ sót queue vừa tạo.
+                RunPendingAiCloudAutoSyncIfNeeded();
             }
         }
 
@@ -45424,7 +46111,19 @@ namespace ClassLibrary4
                         ? positiveRows[1].PositiveVotes
                         : 0;
 
-                bool positiveApproved =
+                // STEP23 - COMPANY FAST POSITIVE MEMORY:
+                // Tất cả POSITIVE được queue hiện tại đều xuất phát từ thao tác người dùng
+                // (Legend review / học ký hiệu / sửa audit / thêm thiết bị), không phải AI tự đoán.
+                // Vì vậy 1 phiếu POSITIVE duy nhất được phép chia sẻ ngay sang máy khác
+                // nếu hoàn toàn không có nhãn cạnh tranh và không có NEGATIVE.
+                // Nếu đã có bất kỳ xung đột nào thì quay về consensus >=3 như trước.
+                bool fastCompanyPositive =
+                    best != null &&
+                    bestVotes >= 1 &&
+                    secondVotes == 0 &&
+                    negativeVotes == 0;
+
+                bool consensusPositive =
                     best != null &&
                     bestVotes >=
                         AiCloudMinConsensusVotes &&
@@ -45436,6 +46135,10 @@ namespace ClassLibrary4
                     bestVotes >
                         negativeVotes;
 
+                bool positiveApproved =
+                    fastCompanyPositive ||
+                    consensusPositive;
+
                 bool negativeApproved =
                     negativeVotes >=
                         AiCloudMinConsensusVotes &&
@@ -45444,20 +46147,31 @@ namespace ClassLibrary4
 
                 if (positiveApproved)
                 {
-                    UpsertCloudApprovedMemory(
-                        memory,
-                        best.Signature,
-                        best.MatchMode,
-                        best.BlockKey,
-                        best.GeometryFingerprint,
-                        best.Label,
-                        best.FollowDn,
-                        "POSITIVE",
-                        bestVotes,
-                        negativeVotes,
-                        best.LastEventAt);
+                    bool localCompatible =
+                        UpsertCloudApprovedMemory(
+                            memory,
+                            best.Signature,
+                            best.MatchMode,
+                            best.BlockKey,
+                            best.GeometryFingerprint,
+                            best.Label,
+                            best.FollowDn,
+                            "POSITIVE",
+                            bestVotes,
+                            negativeVotes,
+                            best.LastEventAt);
 
-                    approvedCount++;
+                    if (localCompatible)
+                    {
+                        approvedCount++;
+                    }
+                    else
+                    {
+                        // Cloud consensus khác correction local.
+                        // Không ghi đè local; đưa về Conflict để user biết.
+                        conflictCount++;
+                    }
+
                     continue;
                 }
 
@@ -45467,20 +46181,29 @@ namespace ClassLibrary4
                         best ??
                         signatureGroup.First();
 
-                    UpsertCloudApprovedMemory(
-                        memory,
-                        template.Signature,
-                        template.MatchMode,
-                        template.BlockKey,
-                        template.GeometryFingerprint,
-                        "",
-                        false,
-                        "NEGATIVE",
-                        bestVotes,
-                        negativeVotes,
-                        template.LastEventAt);
+                    bool localCompatible =
+                        UpsertCloudApprovedMemory(
+                            memory,
+                            template.Signature,
+                            template.MatchMode,
+                            template.BlockKey,
+                            template.GeometryFingerprint,
+                            "",
+                            false,
+                            "NEGATIVE",
+                            bestVotes,
+                            negativeVotes,
+                            template.LastEventAt);
 
-                    approvedCount++;
+                    if (localCompatible)
+                    {
+                        approvedCount++;
+                    }
+                    else
+                    {
+                        conflictCount++;
+                    }
+
                     continue;
                 }
 
@@ -45506,7 +46229,7 @@ namespace ClassLibrary4
                 memory);
         }
 
-        private void UpsertCloudApprovedMemory(
+        private bool UpsertCloudApprovedMemory(
             List<AiLearningMemoryEntry> memory,
             string signature,
             string matchMode,
@@ -45523,7 +46246,7 @@ namespace ClassLibrary4
                 string.IsNullOrWhiteSpace(
                     signature))
             {
-                return;
+                return false;
             }
 
             AiLearningMemoryEntry entry =
@@ -45546,6 +46269,86 @@ namespace ClassLibrary4
 
                 memory.Add(
                     entry);
+            }
+            else
+            {
+                // STEP22C1R - LOCAL FIRST:
+                // Consensus Cloud không được âm thầm ghi đè correction/Legend
+                // đã được người dùng xác nhận trên máy này.
+                //
+                // Current Legend vốn đã ưu tiên hơn Memory; guard này bảo vệ luôn
+                // các phiên sau khi sync Cloud.
+                string localSource =
+                    (entry.LastSource ?? "")
+                        .Trim();
+
+                bool localOwned =
+                    !string.IsNullOrWhiteSpace(
+                        localSource) &&
+                    !string.Equals(
+                        localSource,
+                        "CLOUD_SYNC",
+                        StringComparison.OrdinalIgnoreCase) &&
+                    !string.Equals(
+                        localSource,
+                        "CLOUD_APPROVED",
+                        StringComparison.OrdinalIgnoreCase);
+
+                string cloudDecision =
+                    string.Equals(
+                        decision,
+                        "NEGATIVE",
+                        StringComparison.OrdinalIgnoreCase)
+                        ? "NEGATIVE"
+                        : "POSITIVE";
+
+                string cloudLabel =
+                    cloudDecision ==
+                        "POSITIVE"
+                        ? NormalizeSmartDisplayName(
+                            label)
+                        : "";
+
+                bool differsFromLocal =
+                    !string.Equals(
+                        entry.Decision ?? "",
+                        cloudDecision,
+                        StringComparison.OrdinalIgnoreCase) ||
+                    !string.Equals(
+                        NormalizeSmartDisplayName(
+                            entry.Label ?? ""),
+                        cloudLabel,
+                        StringComparison.OrdinalIgnoreCase) ||
+                    (
+                        cloudDecision ==
+                            "POSITIVE" &&
+                        entry.FollowDn !=
+                            followDn
+                    );
+
+                if (localOwned)
+                {
+                    // Vẫn ghi nhận số phiếu Cloud để UI biết độ mạnh consensus,
+                    // nhưng giữ nguyên nhãn local.
+                    entry.Confirmations =
+                        Math.Max(
+                            entry.Confirmations,
+                            positiveVotes);
+
+                    entry.Rejections =
+                        Math.Max(
+                            entry.Rejections,
+                            negativeVotes);
+
+                    if (differsFromLocal)
+                    {
+                        return false;
+                    }
+
+                    // Cloud đồng ý local => không cần ghi đè,
+                    // nhưng kết quả consensus là tương thích.
+                    return true;
+                }
             }
 
             entry.MatchMode =
@@ -45603,6 +46406,8 @@ namespace ClassLibrary4
 
             entry.LastSource =
                 "CLOUD_SYNC";
+
+            return true;
         }
 
         private void BtnAiLearningMemory_Click(
@@ -46087,6 +46892,505 @@ namespace ClassLibrary4
         }
 
 
+        // ============================================================
+        // STEP22C1 - AI LEGEND READER
+        // ------------------------------------------------------------
+        // Tách việc đọc Legend khỏi việc quét mặt bằng.
+        // Flow:
+        //   QUÉT LEGEND -> REVIEW -> LƯU LIBRARY/MEMORY/DATASET
+        //   -> AI VAN/TB dùng lại ngay trong phiên hiện tại.
+        // ============================================================
+        private void UpdateAiLegendStatusUi()
+        {
+            try
+            {
+                if (TxtAiLegendStatus == null)
+                    return;
+
+                int sessionCount =
+                    _lastSmartLegendRows == null
+                        ? 0
+                        : _lastSmartLegendRows.Count(
+                            r =>
+                                r != null &&
+                                !string.IsNullOrWhiteSpace(
+                                    r.DisplayName));
+
+                int libraryCount =
+                    0;
+
+                try
+                {
+                    libraryCount =
+                        LoadSmartSymbolRules()
+                            .Where(
+                                r =>
+                                    r != null &&
+                                    !string.IsNullOrWhiteSpace(
+                                        r.DisplayName))
+                            .Select(
+                                r =>
+                                    NormalizeSmartDisplayName(
+                                        r.DisplayName))
+                            .Where(
+                                x =>
+                                    !string.IsNullOrWhiteSpace(
+                                        x))
+                            .Distinct(
+                                StringComparer.OrdinalIgnoreCase)
+                            .Count();
+                }
+                catch
+                {
+                }
+
+                if (sessionCount > 0)
+                {
+                    TxtAiLegendStatus.Text =
+                        "LEGEND AI: PHIÊN HIỆN TẠI " +
+                        sessionCount +
+                        " KÝ HIỆU • THƯ VIỆN " +
+                        libraryCount;
+
+                    TxtAiLegendStatus.Foreground =
+                        new System.Windows.Media.SolidColorBrush(
+                            System.Windows.Media.Color.FromRgb(
+                                194,
+                                65,
+                                12));
+
+                    return;
+                }
+
+                if (libraryCount > 0)
+                {
+                    TxtAiLegendStatus.Text =
+                        "LEGEND AI: THƯ VIỆN " +
+                        libraryCount +
+                        " KÝ HIỆU • SẴN SÀNG ĐỌC LEGEND MỚI";
+
+                    TxtAiLegendStatus.Foreground =
+                        new System.Windows.Media.SolidColorBrush(
+                            System.Windows.Media.Color.FromRgb(
+                                154,
+                                52,
+                                18));
+
+                    return;
+                }
+
+                TxtAiLegendStatus.Text =
+                    "LEGEND AI: CHƯA ĐỌC BẢNG KÝ HIỆU";
+
+                TxtAiLegendStatus.Foreground =
+                    new System.Windows.Media.SolidColorBrush(
+                        System.Windows.Media.Color.FromRgb(
+                            194,
+                            65,
+                            12));
+            }
+            catch
+            {
+            }
+        }
+
+        private void BtnAiLegendReader_Click(
+            object sender,
+            RoutedEventArgs e)
+        {
+            Document doc =
+                Autodesk.AutoCAD.ApplicationServices.Core.Application
+                    .DocumentManager
+                    .MdiActiveDocument;
+
+            if (doc == null)
+                return;
+
+            try
+            {
+                Autodesk.AutoCAD.ApplicationServices.Core.Application
+                    .MainWindow
+                    .Focus();
+            }
+            catch
+            {
+            }
+
+            try
+            {
+                RunStandaloneAiLegendReader(
+                    doc);
+            }
+            catch (System.Exception ex)
+            {
+                HandleSmartValveFatalSafe(
+                    "STEP22C1_LEGEND_READER",
+                    ex);
+            }
+        }
+
+        private void RunStandaloneAiLegendReader(
+            Document doc)
+        {
+            if (doc == null)
+                return;
+
+            Editor ed =
+                doc.Editor;
+
+            // Nếu đã đọc Legend trong phiên này, cho phép mở lại hoặc đọc bảng mới.
+            if (_lastSmartLegendRows != null &&
+                _lastSmartLegendRows.Count > 0)
+            {
+                int action =
+                    GetSmartMenuChoice(
+                        ed,
+                        "\n[AI LEGEND] Đã có Legend trong phiên hiện tại. " +
+                        "1=ĐỌC LEGEND MỚI, " +
+                        "2=MỞ LẠI / SỬA LEGEND, " +
+                        "3=GIỮ LEGEND HIỆN TẠI",
+                        1,
+                        3,
+                        2);
+
+                if (action <= 0 ||
+                    action == 3)
+                {
+                    UpdateAiLegendStatusUi();
+                    return;
+                }
+
+                if (action == 2)
+                {
+                    ReopenLastSmartLegendSessionSaveOnly(
+                        doc);
+
+                    UpdateAiLegendStatusUi();
+                    return;
+                }
+            }
+
+            _smartValveStage =
+                "STEP22C1_LEGEND_SELECT";
+
+            PromptSelectionOptions legendOptions =
+                new PromptSelectionOptions();
+
+            legendOptions.MessageForAdding =
+                "\n[AI LEGEND] Quét TOÀN BỘ bảng gồm KÝ HIỆU + TÊN THIẾT BỊ/VẬT TƯ: ";
+
+            PromptSelectionResult legendResult =
+                ed.GetSelection(
+                    legendOptions);
+
+            if (legendResult.Status !=
+                    PromptStatus.OK ||
+                legendResult.Value == null ||
+                legendResult.Value.Count == 0)
+            {
+                _smartValveStage =
+                    "IDLE";
+                return;
+            }
+
+            _smartValveStage =
+                "STEP22C1_LEGEND_ANALYZE";
+
+            List<SmartLegendAutoRow> rows =
+                BuildSmartLegendRowsAutomatically(
+                    doc,
+                    legendResult.Value
+                        .GetObjectIds());
+
+            if (rows == null ||
+                rows.Count == 0)
+            {
+                MessageBox.Show(
+                    "Không tự tách được KÝ HIỆU + TÊN từ vùng vừa quét.\n\n" +
+                    "Hãy quét trọn cả cột KÝ HIỆU và cột TÊN THIẾT BỊ/VẬT TƯ.",
+                    "AI ĐỌC LEGEND");
+
+                _smartValveStage =
+                    "IDLE";
+                return;
+            }
+
+            _smartValveStage =
+                "STEP22C1_LEGEND_REVIEW";
+
+            bool accepted =
+                ShowSmartLegendReviewDialog(
+                    doc,
+                    rows,
+                    false);
+
+            if (!accepted)
+            {
+                DisposeSmartLegendPreviews(
+                    rows);
+
+                _smartValveStage =
+                    "IDLE";
+                return;
+            }
+
+            rows =
+                rows
+                    .Where(
+                        r =>
+                            r != null &&
+                            !string.IsNullOrWhiteSpace(
+                                r.DisplayName) &&
+                            (!string.IsNullOrWhiteSpace(
+                                 r.BlockKey) ||
+                             !string.IsNullOrWhiteSpace(
+                                 r.GeometryFingerprint)))
+                    .ToList();
+
+            if (rows.Count == 0)
+            {
+                DisposeSmartLegendPreviews(
+                    rows);
+
+                MessageBox.Show(
+                    "Không còn dòng Legend hợp lệ để lưu.",
+                    "AI ĐỌC LEGEND");
+
+                _smartValveStage =
+                    "IDLE";
+                return;
+            }
+
+            _smartValveStage =
+                "STEP22C1_LEGEND_SAVE";
+
+            // Lưu local snapshot riêng để STEP22C2 VLM sau này có thể dùng lại
+            // hình ký hiệu + label đã review mà không cần quét lại.
+            SaveReviewedLegendSessionLocal(
+                rows);
+
+            List<SmartSymbolRule> rules =
+                MergeSmartLegendRowsIntoLibrary(
+                    rows,
+                    false);
+
+            DisposeSmartLegendPreviews(
+                _lastSmartLegendRows);
+
+            _lastSmartLegendRows =
+                CloneSmartLegendRowsForSession(
+                    rows);
+
+            _lastSmartRules =
+                CloneSmartRulesForSession(
+                    rules);
+
+            DisposeSmartLegendPreviews(
+                rows);
+
+            UpdateAiLegendStatusUi();
+            UpdateAiLearningStatusUi();
+            UpdateAiDatasetStatusUi();
+            UpdateAiCloudStatusUi();
+
+            _smartValveStage =
+                "IDLE";
+        }
+
+        private void ReopenLastSmartLegendSessionSaveOnly(
+            Document doc)
+        {
+            if (doc == null ||
+                _lastSmartLegendRows == null ||
+                _lastSmartLegendRows.Count == 0)
+            {
+                MessageBox.Show(
+                    "Chưa có Legend gần nhất để sửa.",
+                    "AI ĐỌC LEGEND");
+
+                return;
+            }
+
+            bool accepted =
+                ShowSmartLegendReviewDialog(
+                    doc,
+                    _lastSmartLegendRows,
+                    false);
+
+            if (!accepted)
+                return;
+
+            SaveReviewedLegendSessionLocal(
+                _lastSmartLegendRows);
+
+            _lastSmartRules =
+                MergeSmartLegendRowsIntoLibrary(
+                    _lastSmartLegendRows,
+                    false);
+
+            UpdateAiLegendStatusUi();
+        }
+
+        private string SaveReviewedLegendSessionLocal(
+            List<SmartLegendAutoRow> rows)
+        {
+            if (rows == null ||
+                rows.Count == 0)
+            {
+                return "";
+            }
+
+            try
+            {
+                string appData =
+                    Environment.GetFolderPath(
+                        Environment.SpecialFolder.ApplicationData);
+
+                if (string.IsNullOrWhiteSpace(
+                        appData))
+                {
+                    appData =
+                        Path.GetTempPath();
+                }
+
+                string root =
+                    Path.Combine(
+                        appData,
+                        "TDL_MEP",
+                        "LegendSessions");
+
+                Directory.CreateDirectory(
+                    root);
+
+                string folder =
+                    Path.Combine(
+                        root,
+                        "LEGEND_" +
+                        DateTime.Now.ToString(
+                            "yyyyMMdd_HHmmss",
+                            CultureInfo.InvariantCulture));
+
+                Directory.CreateDirectory(
+                    folder);
+
+                List<string> manifest =
+                    new List<string>();
+
+                manifest.Add(
+                    "STT\tIMAGE\tNAME\tFOLLOW_DN\tMATCH_MODE\tBLOCK_KEY\tGEOMETRY_FINGERPRINT\tRASTER_SIGNATURE");
+
+                int stt =
+                    1;
+
+                foreach (SmartLegendAutoRow row
+                    in rows)
+                {
+                    if (row == null ||
+                        string.IsNullOrWhiteSpace(
+                            row.DisplayName))
+                    {
+                        continue;
+                    }
+
+                    string imageName =
+                        "";
+
+                    if (row.Preview != null)
+                    {
+                        imageName =
+                            stt.ToString(
+                                "000",
+                                CultureInfo.InvariantCulture) +
+                            ".png";
+
+                        string imagePath =
+                            Path.Combine(
+                                folder,
+                                imageName);
+
+                        try
+                        {
+                            row.Preview.Save(
+                                imagePath,
+                                System.Drawing.Imaging.ImageFormat.Png);
+                        }
+                        catch
+                        {
+                            imageName =
+                                "";
+                        }
+                    }
+
+                    manifest.Add(
+                        stt.ToString(
+                            CultureInfo.InvariantCulture) +
+                        "\t" +
+                        EscapeSmartLegendManifestField(
+                            imageName) +
+                        "\t" +
+                        EscapeSmartLegendManifestField(
+                            row.DisplayName) +
+                        "\t" +
+                        (row.FollowDn
+                            ? "1"
+                            : "0") +
+                        "\t" +
+                        EscapeSmartLegendManifestField(
+                            row.MatchMode) +
+                        "\t" +
+                        EscapeSmartLegendManifestField(
+                            row.BlockKey) +
+                        "\t" +
+                        EscapeSmartLegendManifestField(
+                            row.GeometryFingerprint) +
+                        "\t" +
+                        EscapeSmartLegendManifestField(
+                            row.RasterSignature));
+
+                    stt++;
+                }
+
+                File.WriteAllLines(
+                    Path.Combine(
+                        folder,
+                        "legend_manifest.tsv"),
+                    manifest,
+                    new UTF8Encoding(
+                        true));
+
+                File.WriteAllText(
+                    Path.Combine(
+                        root,
+                        "latest_session.txt"),
+                    folder,
+                    new UTF8Encoding(
+                        true));
+
+                return folder;
+            }
+            catch
+            {
+                return "";
+            }
+        }
+
+        private static string EscapeSmartLegendManifestField(
+            string value)
+        {
+            return
+                (value ?? "")
+                    .Replace(
+                        "\t",
+                        " ")
+                    .Replace(
+                        "\r",
+                        " ")
+                    .Replace(
+                        "\n",
+                        " ")
+                    .Trim();
+        }
+
         private void ThongKeThietBiVanThongMinh(
             Document doc)
         {
@@ -46112,6 +47416,66 @@ namespace ClassLibrary4
 
             Editor ed =
                 doc.Editor;
+
+            // STEP22C1:
+            // Nếu user đã đọc Legend bằng nút AI ĐỌC LEGEND,
+            // không bắt họ quét lại Legend khi bấm AI VAN / THIẾT BỊ.
+            if ((_lastSmartAuditRows == null ||
+                 _lastSmartAuditRows.Count == 0) &&
+                _lastSmartLegendRows != null &&
+                _lastSmartLegendRows.Count > 0 &&
+                _lastSmartRules != null &&
+                _lastSmartRules.Count > 0)
+            {
+                _smartValveStage =
+                    "STEP22C1_REUSE_LEGEND";
+
+                int legendAction =
+                    GetSmartMenuChoice(
+                        ed,
+                        "\n[NHẬN DIỆN VAN/TB] Đã có Legend vừa đọc. " +
+                        "1=DÙNG LEGEND NÀY QUÉT MẶT BẰNG, " +
+                        "2=ĐỌC LEGEND MỚI, " +
+                        "3=SỬA LEGEND HIỆN TẠI",
+                        1,
+                        3,
+                        1);
+
+                if (legendAction <= 0)
+                {
+                    _smartValveStage =
+                        "IDLE";
+
+                    return;
+                }
+
+                if (legendAction == 1)
+                {
+                    ScanSmartValveDeviceStatistics(
+                        doc,
+                        _lastSmartRules);
+
+                    _smartValveStage =
+                        "IDLE";
+
+                    return;
+                }
+
+                if (legendAction == 3)
+                {
+                    ReopenLastSmartLegendSession(
+                        doc);
+
+                    UpdateAiLegendStatusUi();
+
+                    _smartValveStage =
+                        "IDLE";
+
+                    return;
+                }
+
+                // 2 = ĐỌC LEGEND MỚI -> tiếp tục flow cũ bên dưới.
+            }
 
             if (_lastSmartAuditRows != null &&
                 _lastSmartAuditRows.Count > 0)
@@ -46268,6 +47632,12 @@ namespace ClassLibrary4
             _smartValveStage =
                 "AUTO_LEGEND_SAVE";
 
+            // STEP22C1R:
+            // Dù Legend được đọc từ nút riêng hay từ flow VAN/TB,
+            // đều lưu cùng một Legend Session cho Dataset/VLM sau này.
+            SaveReviewedLegendSessionLocal(
+                rows);
+
             List<SmartSymbolRule> rules =
                 MergeSmartLegendRowsIntoLibrary(
                     rows);
@@ -46282,6 +47652,8 @@ namespace ClassLibrary4
             _lastSmartRules =
                 CloneSmartRulesForSession(
                     rules);
+
+            UpdateAiLegendStatusUi();
 
             DisposeSmartLegendPreviews(
                 rows);
@@ -47221,7 +48593,8 @@ namespace ClassLibrary4
 
         private bool ShowSmartLegendReviewDialog(
             Document doc,
-            List<SmartLegendAutoRow> rows)
+            List<SmartLegendAutoRow> rows,
+            bool scanAfterSave = true)
         {
             if (doc == null ||
                 rows == null ||
@@ -47300,7 +48673,10 @@ namespace ClassLibrary4
 
                     subTitle.Text =
                         "Nếu nhận sai: bấm SỬA để đổi TÊN/THEO DN, hoặc CHỌN LẠI để lấy lại ký hiệu trên CAD. " +
-                        "Thiếu ký hiệu trong bảng: bấm + THÊM KÝ HIỆU TỪ CAD.";
+                        "Thiếu ký hiệu trong bảng: bấm + THÊM KÝ HIỆU TỪ CAD. " +
+                        (scanAfterSave
+                            ? "Bấm OK để lưu rồi quét mặt bằng."
+                            : "Bấm LƯU LEGEND để chỉ học/lưu bảng này, chưa quét mặt bằng.");
 
                     subTitle.Left =
                         18;
@@ -47785,7 +49161,9 @@ namespace ClassLibrary4
                         };
 
                     okButton.Text =
-                        "OK - QUÉT BẢN VẼ";
+                        scanAfterSave
+                            ? "OK - QUÉT BẢN VẼ"
+                            : "LƯU LEGEND";
 
                     okButton.Width =
                         190;
@@ -49400,9 +50778,14 @@ namespace ClassLibrary4
             if (!accepted)
                 return;
 
+            SaveReviewedLegendSessionLocal(
+                _lastSmartLegendRows);
+
             _lastSmartRules =
                 MergeSmartLegendRowsIntoLibrary(
                     _lastSmartLegendRows);
+
+            UpdateAiLegendStatusUi();
 
             int action =
                 GetSmartMenuChoice(
@@ -49423,7 +50806,8 @@ namespace ClassLibrary4
         }
 
         private List<SmartSymbolRule> MergeSmartLegendRowsIntoLibrary(
-            List<SmartLegendAutoRow> rows)
+            List<SmartLegendAutoRow> rows,
+            bool willScanDrawing = true)
         {
             List<SmartSymbolRule> library =
                 LoadSmartSymbolRules();
@@ -49606,7 +50990,8 @@ namespace ClassLibrary4
             // CaptureSample dùng SHA256 nên quét lại cùng ký hiệu không tạo ảnh rác.
             CaptureReviewedLegendRowsIntoDataset(
                 rows,
-                true);
+                true,
+                willScanDrawing);
 
             // Quan trọng:
             // lần quét hiện tại chỉ dùng đúng Legend của dự án vừa quét,
@@ -52959,7 +54344,13 @@ namespace ClassLibrary4
                             Source =
                                 source,
                             OnnxPrediction =
-                                onnxPrediction
+                                onnxPrediction,
+                            GeometryFingerprint =
+                                fingerprint ?? "",
+                            ObjectIds =
+                                ids != null
+                                    ? ids.ToList()
+                                    : new List<ObjectId>()
                         });
                 }
 
@@ -52987,7 +54378,11 @@ namespace ClassLibrary4
 
         private void ScanSmartValveDeviceStatistics(
             Document doc,
-            List<SmartSymbolRule> rules)
+            List<SmartSymbolRule> rules,
+            SelectionSet fixedSelection = null,
+            bool showCompletionMessage = true,
+            bool graphAlreadyBuilt = false,
+            bool currentProjectLegendAvailable = true)
         {
             if (doc == null)
                 return;
@@ -53007,37 +54402,50 @@ namespace ClassLibrary4
             Database db =
                 doc.Database;
 
-            PromptSelectionOptions pso =
-                new PromptSelectionOptions();
+            SelectionSet workingSelection =
+                fixedSelection;
 
-            pso.MessageForAdding =
-                "\nQuét vùng mặt bằng cần nhận diện VAN / THIẾT BỊ + KIỂM TRA SÓT: ";
-
-            _smartValveStage =
-                "SCAN_SELECT_AREA";
-
-            PromptSelectionResult psr =
-                ed.GetSelection(
-                    pso);
-
-            if (psr.Status !=
-                    PromptStatus.OK ||
-                psr.Value == null ||
-                psr.Value.Count == 0)
+            if (workingSelection == null ||
+                workingSelection.Count == 0)
             {
-                return;
+                PromptSelectionOptions pso =
+                    new PromptSelectionOptions();
+
+                pso.MessageForAdding =
+                    "\nQuét vùng mặt bằng cần nhận diện VAN / THIẾT BỊ + KIỂM TRA SÓT: ";
+
+                _smartValveStage =
+                    "SCAN_SELECT_AREA";
+
+                PromptSelectionResult psr =
+                    ed.GetSelection(
+                        pso);
+
+                if (psr.Status !=
+                        PromptStatus.OK ||
+                    psr.Value == null ||
+                    psr.Value.Count == 0)
+                {
+                    return;
+                }
+
+                workingSelection =
+                    psr.Value;
             }
 
-            // STEP22A:
-            // Build graph ngay trên đúng vùng user vừa quét.
-            // Các bước nhận diện phía dưới sẽ dùng graph này để suy DN/context.
-            _smartValveStage =
-                "GRAPH_BUILD";
+            // STEP22A / STEP22D:
+            // Nếu pipeline đã build Graph ngay sau AI PIPE thì dùng lại snapshot đó,
+            // tránh phân tích cùng một vùng hai lần. Flow cũ vẫn tự build như trước.
+            if (!graphAlreadyBuilt)
+            {
+                _smartValveStage =
+                    "GRAPH_BUILD";
 
-            BuildMepGraphFromSelection(
-                doc,
-                psr.Value.GetObjectIds(),
-                false);
+                BuildMepGraphFromSelection(
+                    doc,
+                    workingSelection.GetObjectIds(),
+                    false);
+            }
 
             rules =
                 rules
@@ -53061,17 +54469,19 @@ namespace ClassLibrary4
             // Chỉ các tên có thật trong Legend hiện tại mới dùng cho cảnh báo LEGEND 0.
             // Memory Local được phép hỗ trợ nhận diện nhưng không tạo cảnh báo giả.
             List<string> currentLegendNames =
-                rules
-                    .Select(
-                        r =>
-                            r.DisplayName)
-                    .Where(
-                        n =>
-                            !string.IsNullOrWhiteSpace(
-                                n))
-                    .Distinct(
-                        StringComparer.OrdinalIgnoreCase)
-                    .ToList();
+                currentProjectLegendAvailable
+                    ? rules
+                        .Select(
+                            r =>
+                                r.DisplayName)
+                        .Where(
+                            n =>
+                                !string.IsNullOrWhiteSpace(
+                                    n))
+                        .Distinct(
+                            StringComparer.OrdinalIgnoreCase)
+                        .ToList()
+                    : new List<string>();
 
             // STEP 18: Legend hiện tại thắng trước; sau đó bổ sung Positive Memory.
             rules =
@@ -53215,19 +54625,31 @@ namespace ClassLibrary4
                 db.TransactionManager.StartTransaction())
             {
                 foreach (SelectedObject selected
-                    in psr.Value)
+                    in workingSelection)
                 {
                     if (selected == null ||
-                        selected.ObjectId.IsNull)
+                        selected.ObjectId.IsNull ||
+                        !selected.ObjectId.IsValid ||
+                        selected.ObjectId.IsErased)
                     {
                         continue;
                     }
 
-                    Entity ent =
-                        tr.GetObject(
-                            selected.ObjectId,
-                            OpenMode.ForRead,
-                            false) as Entity;
+                    Entity ent = null;
+
+                    try
+                    {
+                        ent =
+                            tr.GetObject(
+                                selected.ObjectId,
+                                OpenMode.ForRead,
+                                false) as Entity;
+                    }
+                    catch
+                    {
+                        // SelectionSet cũ có thể còn ID của overlay AI vừa bị xóa.
+                        continue;
+                    }
 
                     if (ent == null ||
                         ent.IsErased)
@@ -53530,6 +54952,25 @@ namespace ClassLibrary4
                         continue;
                     }
 
+                    // STEP22D-PERSIST-IGNORE-V2:
+                    // Dòng POINT đã nhận diện OK nhưng từng bấm BỎ QUA
+                    // phải biến mất ở các lần quét sau.
+                    string pointInstanceHandleKey =
+                        BuildSmartAuditHandleKey(
+                            tr,
+                            new[] { pointId });
+
+                    if (IsSmartAuditInstanceIgnored(
+                            doc,
+                            "POINT",
+                            pointInstanceHandleKey,
+                            pointKey,
+                            "",
+                            true))
+                    {
+                        continue;
+                    }
+
                     string size =
                         "-";
 
@@ -53638,6 +55079,8 @@ namespace ClassLibrary4
                                 rule.BlockKey,
                             GeometryFingerprint =
                                 "",
+                            InstanceHandleKey =
+                                pointInstanceHandleKey,
                             SourceId =
                                 pointId
                         });
@@ -53710,6 +55153,41 @@ namespace ClassLibrary4
                         !ruleMap.TryGetValue(
                             blockKey,
                             out rule))
+                    {
+                        continue;
+                    }
+
+                    string recognizedBlockMatchMode =
+                        onnxFallbackMatch
+                            ? "BLOCK"
+                            : rasterFallbackMatch
+                                ? (string.IsNullOrWhiteSpace(rule.MatchMode)
+                                    ? "BLOCK"
+                                    : rule.MatchMode)
+                                : geometryFallbackMatch
+                                    ? "GEOMETRY"
+                                    : "BLOCK";
+
+                    string recognizedBlockFingerprint =
+                        BuildSmartBlockGeometryFingerprint(
+                            tr,
+                            br);
+
+                    string recognizedBlockHandleKey =
+                        BuildSmartAuditHandleKey(
+                            tr,
+                            new[] { blockId });
+
+                    // STEP22D-PERSIST-IGNORE-V2:
+                    // BỎ QUA một BLOCK đã nhận diện OK = bỏ đúng instance đó,
+                    // không được quay lại bảng ở lần quét sau.
+                    if (IsSmartAuditInstanceIgnored(
+                            doc,
+                            recognizedBlockMatchMode,
+                            recognizedBlockHandleKey,
+                            blockKey,
+                            recognizedBlockFingerprint,
+                            true))
                     {
                         continue;
                     }
@@ -53861,23 +55339,15 @@ namespace ClassLibrary4
                                     "THEO_ONG",
                                     StringComparison.OrdinalIgnoreCase),
                             MatchMode =
-                                onnxFallbackMatch
-                                    ? "BLOCK"
-                                    : rasterFallbackMatch
-                                        ? (string.IsNullOrWhiteSpace(rule.MatchMode)
-                                            ? "BLOCK"
-                                            : rule.MatchMode)
-                                        : geometryFallbackMatch
-                                            ? "GEOMETRY"
-                                            : "BLOCK",
+                                recognizedBlockMatchMode,
                             BlockKey =
                                 overrideMatch
                                     ? blockKey
                                     : rule.BlockKey,
                             GeometryFingerprint =
-                                BuildSmartBlockGeometryFingerprint(
-                                    tr,
-                                    br),
+                                recognizedBlockFingerprint,
+                            InstanceHandleKey =
+                                recognizedBlockHandleKey,
                             RasterSignature =
                                 onnxFallbackMatch
                                     ? BuildSmartBlockRasterSignature(
@@ -53903,6 +55373,31 @@ namespace ClassLibrary4
 
                     SmartSymbolRule rule =
                         match.Rule;
+
+                    string recognizedGeometryFingerprint =
+                        !string.IsNullOrWhiteSpace(match.GeometryFingerprint)
+                            ? match.GeometryFingerprint
+                            : (rule.GeometryFingerprint ?? "");
+
+                    string recognizedGeometryHandleKey =
+                        BuildSmartAuditHandleKey(
+                            tr,
+                            match.ObjectIds ?? new List<ObjectId>());
+
+                    // STEP22D-PERSIST-IGNORE-V2:
+                    // Đây là lỗi của bản trước: ignore chỉ được kiểm tra ở nhánh
+                    // HÌNH CHƯA HỌC, còn HÌNH EXPLODE đã match thì đi thẳng vào counts.
+                    // Bản V2 kiểm tra đúng Handle cluster trước khi thống kê.
+                    if (IsSmartAuditInstanceIgnored(
+                            doc,
+                            "GEOMETRY",
+                            recognizedGeometryHandleKey,
+                            rule.BlockKey,
+                            recognizedGeometryFingerprint,
+                            true))
+                    {
+                        continue;
+                    }
 
                     string size =
                         "-";
@@ -54032,7 +55527,9 @@ namespace ClassLibrary4
                             BlockKey =
                                 rule.BlockKey,
                             GeometryFingerprint =
-                                rule.GeometryFingerprint ?? ""
+                                recognizedGeometryFingerprint,
+                            InstanceHandleKey =
+                                recognizedGeometryHandleKey
                         });
                 }
 
@@ -54121,6 +55618,26 @@ namespace ClassLibrary4
                                 blockName);
                     }
 
+                    string unknownBlockFingerprint =
+                        BuildSmartBlockGeometryFingerprint(
+                            tr,
+                            br);
+
+                    string unknownBlockHandleKey =
+                        BuildSmartAuditHandleKey(
+                            tr,
+                            new[] { blockId });
+
+                    if (IsSmartAuditInstanceIgnored(
+                            doc,
+                            "BLOCK",
+                            unknownBlockHandleKey,
+                            unknownBlockKey,
+                            unknownBlockFingerprint))
+                    {
+                        continue;
+                    }
+
                     auditRows.Add(
                         new SmartAuditRow
                         {
@@ -54147,15 +55664,15 @@ namespace ClassLibrary4
                             BlockKey =
                                 unknownBlockKey,
                             GeometryFingerprint =
-                                BuildSmartBlockGeometryFingerprint(
-                                    tr,
-                                    br),
+                                unknownBlockFingerprint,
                             RasterSignature =
                                 BuildSmartBlockRasterSignature(
                                     tr,
                                     br),
                             SourceId =
-                                blockId
+                                blockId,
+                            InstanceHandleKey =
+                                unknownBlockHandleKey
                         });
                 }
 
@@ -54219,6 +55736,21 @@ namespace ClassLibrary4
                         GetSmartPointSignature(
                             point);
 
+                    string pointHandleKey =
+                        BuildSmartAuditHandleKey(
+                            tr,
+                            new[] { pointId });
+
+                    if (IsSmartAuditInstanceIgnored(
+                            doc,
+                            "POINT",
+                            pointHandleKey,
+                            pointKey,
+                            ""))
+                    {
+                        continue;
+                    }
+
                     auditRows.Add(
                         new SmartAuditRow
                         {
@@ -54245,7 +55777,9 @@ namespace ClassLibrary4
                             GeometryFingerprint =
                                 "",
                             SourceId =
-                                pointId
+                                pointId,
+                            InstanceHandleKey =
+                                pointHandleKey
                         });
                 }
 
@@ -54315,6 +55849,23 @@ namespace ClassLibrary4
                                   Encoding.UTF8.GetBytes(
                                       unknownFingerprint));
 
+                    string unknownGeometryHandleKey =
+                        BuildSmartAuditHandleKey(
+                            tr,
+                            cluster.ObjectIds);
+
+                    // STEP22D-PERSIST-IGNORE:
+                    // Ưu tiên bỏ đúng instance đã từng bấm BỎ QUA trong DWG này.
+                    if (IsSmartAuditInstanceIgnored(
+                            doc,
+                            "GEOMETRY",
+                            unknownGeometryHandleKey,
+                            unknownGeometryKey,
+                            unknownFingerprint))
+                    {
+                        continue;
+                    }
+
                     // STEP 18:
                     // Negative geometry memory dùng fingerprint rotation/scale independent.
                     if (IsAiLearningNegativeGeometry(
@@ -54347,7 +55898,9 @@ namespace ClassLibrary4
                             BlockKey =
                                 unknownGeometryKey,
                             GeometryFingerprint =
-                                unknownFingerprint ?? ""
+                                unknownFingerprint ?? "",
+                            InstanceHandleKey =
+                                unknownGeometryHandleKey
                         });
                 }
 
@@ -54514,31 +56067,34 @@ namespace ClassLibrary4
                       candidateCount
                     : 100.0;
 
-            MessageBox.Show(
-                "KIỂM TRA CHÉO hoàn tất.\n\n" +
-                "• Tổng ứng viên sau khi rà soát: " +
-                candidateCount +
-                "\n• Đã nhận diện: " +
-                recognizedCount +
-                "\n• Nhận diện chắc chắn: " +
-                certainCount +
-                "\n• Còn nghi bị sót: " +
-                missingCount +
-                "\n• Legend có nhưng mặt bằng chưa thấy: " +
-                legendZero.Count +
-                "\n\n" +
-                "Độ phủ nhận diện: " +
-                coverage.ToString(
-                    "0.0",
-                    CultureInfo.InvariantCulture) +
-                "%\n" +
-                "Độ phủ chắc chắn: " +
-                certainCoverage.ToString(
-                    "0.0",
-                    CultureInfo.InvariantCulture) +
-                "%\n\n" +
-                "Các tên bạn sửa trong bảng kiểm tra đã được học lại cho lần quét sau.",
-                "KIỂM TRA SÓT VAN / THIẾT BỊ");
+            if (showCompletionMessage)
+            {
+                MessageBox.Show(
+                    "KIỂM TRA CHÉO hoàn tất.\n\n" +
+                    "• Tổng ứng viên sau khi rà soát: " +
+                    candidateCount +
+                    "\n• Đã nhận diện: " +
+                    recognizedCount +
+                    "\n• Nhận diện chắc chắn: " +
+                    certainCount +
+                    "\n• Còn nghi bị sót: " +
+                    missingCount +
+                    "\n• Legend có nhưng mặt bằng chưa thấy: " +
+                    legendZero.Count +
+                    "\n\n" +
+                    "Độ phủ nhận diện: " +
+                    coverage.ToString(
+                        "0.0",
+                        CultureInfo.InvariantCulture) +
+                    "%\n" +
+                    "Độ phủ chắc chắn: " +
+                    certainCoverage.ToString(
+                        "0.0",
+                        CultureInfo.InvariantCulture) +
+                    "%\n\n" +
+                    "Các tên bạn sửa trong bảng kiểm tra đã được học lại cho lần quét sau.",
+                    "KIỂM TRA SÓT VAN / THIẾT BỊ");
+            }
         }
 
 
@@ -55413,6 +56969,351 @@ namespace ClassLibrary4
                     .ToList();
         }
 
+        // ============================================================
+        // STEP22D-AUDIT-UX:
+        // Cho phép hoàn tác BỎ QUA và thêm lại thiết bị thủ công.
+        // ============================================================
+        private bool ForgetSmartAuditIgnoredInstance(
+            Document doc,
+            SmartAuditRow row)
+        {
+            if (doc == null || row == null)
+                return false;
+
+            string drawingKey =
+                GetSmartAuditDrawingKey(doc);
+
+            string mode =
+                (row.MatchMode ?? "")
+                    .Trim()
+                    .ToUpperInvariant();
+
+            string handleKey =
+                row.InstanceHandleKey ?? "";
+
+            if (string.IsNullOrWhiteSpace(handleKey) &&
+                !row.SourceId.IsNull)
+            {
+                try
+                {
+                    using (Transaction tr =
+                        doc.Database.TransactionManager.StartTransaction())
+                    {
+                        handleKey =
+                            BuildSmartAuditHandleKey(
+                                tr,
+                                new[] { row.SourceId });
+
+                        tr.Commit();
+                    }
+                }
+                catch
+                {
+                }
+            }
+
+            List<SmartAuditIgnoreEntry> entries =
+                LoadSmartAuditIgnoredInstances();
+
+            int before =
+                entries.Count;
+
+            entries.RemoveAll(
+                e =>
+                    e != null &&
+                    string.Equals(
+                        e.DrawingKey,
+                        drawingKey,
+                        StringComparison.OrdinalIgnoreCase) &&
+                    string.Equals(
+                        e.MatchMode,
+                        mode,
+                        StringComparison.OrdinalIgnoreCase) &&
+                    ((!string.IsNullOrWhiteSpace(handleKey) &&
+                      AreSmartAuditHandleKeysSameInstance(
+                          e.InstanceHandleKey,
+                          handleKey)) ||
+                     (string.IsNullOrWhiteSpace(handleKey) &&
+                      string.IsNullOrWhiteSpace(e.InstanceHandleKey) &&
+                      !string.IsNullOrWhiteSpace(row.GeometryFingerprint) &&
+                      string.Equals(
+                          e.GeometryFingerprint,
+                          row.GeometryFingerprint,
+                          StringComparison.Ordinal))));
+
+            if (entries.Count == before)
+                return false;
+
+            SaveSmartAuditIgnoredInstances(entries);
+            return true;
+        }
+
+        private bool TryCreateManualSmartAuditRow(
+            Document doc,
+            out SmartAuditRow row)
+        {
+            row = null;
+
+            if (doc == null || doc.Database == null)
+                return false;
+
+            try
+            {
+                Autodesk.AutoCAD.ApplicationServices.Core.Application
+                    .MainWindow
+                    .Focus();
+            }
+            catch
+            {
+            }
+
+            Editor ed =
+                doc.Editor;
+
+            PromptSelectionOptions pso =
+                new PromptSelectionOptions();
+
+            pso.MessageForAdding =
+                "\n[THÊM THIẾT BỊ] Chọn thiết bị cần thêm lại. " +
+                "BLOCK/POINT: chọn đối tượng; HÌNH EXPLODE: quét đúng các nét của 1 ký hiệu: ";
+
+            pso.AllowDuplicates =
+                false;
+
+            PromptSelectionResult psr =
+                ed.GetSelection(pso);
+
+            if (psr.Status != PromptStatus.OK ||
+                psr.Value == null ||
+                psr.Value.Count == 0)
+            {
+                return false;
+            }
+
+            ObjectId[] selectedIds =
+                psr.Value.GetObjectIds();
+
+            Database db =
+                doc.Database;
+
+            SmartAuditRow newRow =
+                new SmartAuditRow
+                {
+                    Status = "MISSING",
+                    Name = "CHƯA NHẬN DIỆN",
+                    Size = "-",
+                    Source = "THÊM THỦ CÔNG",
+                    Note = "Người dùng chủ động thêm thiết bị vào danh sách kiểm tra.",
+                    FollowDn = false,
+                    UserEdited = true
+                };
+
+            using (Transaction tr =
+                db.TransactionManager.StartTransaction())
+            {
+                // Ưu tiên BLOCK nếu vùng chọn chỉ có đúng 1 block.
+                if (selectedIds.Length == 1)
+                {
+                    Entity ent =
+                        tr.GetObject(
+                            selectedIds[0],
+                            OpenMode.ForRead,
+                            false) as Entity;
+
+                    if (ent is BlockReference br &&
+                        !br.IsErased)
+                    {
+                        newRow.MatchMode =
+                            "BLOCK";
+
+                        newRow.BlockKey =
+                            GetSmartBlockIdentityKey(
+                                tr,
+                                br);
+
+                        newRow.GeometryFingerprint =
+                            BuildSmartBlockGeometryFingerprint(
+                                tr,
+                                br) ?? "";
+
+                        newRow.RasterSignature =
+                            BuildSmartBlockRasterSignature(
+                                tr,
+                                br) ?? "";
+
+                        newRow.SourceId =
+                            br.ObjectId;
+
+                        newRow.Point =
+                            new Point3d(
+                                br.Position.X,
+                                br.Position.Y,
+                                0.0);
+
+                        newRow.InstanceHandleKey =
+                            BuildSmartAuditHandleKey(
+                                tr,
+                                new[] { br.ObjectId });
+                    }
+                    else if (ent is DBPoint point &&
+                             !point.IsErased)
+                    {
+                        newRow.MatchMode =
+                            "POINT";
+
+                        newRow.BlockKey =
+                            GetSmartPointSignature(
+                                point);
+
+                        newRow.SourceId =
+                            point.ObjectId;
+
+                        newRow.Point =
+                            new Point3d(
+                                point.Position.X,
+                                point.Position.Y,
+                                0.0);
+
+                        newRow.InstanceHandleKey =
+                            BuildSmartAuditHandleKey(
+                                tr,
+                                new[] { point.ObjectId });
+                    }
+                }
+
+                // Nếu không phải BLOCK/POINT thì coi vùng chọn là một ký hiệu EXPLODE.
+                if (string.IsNullOrWhiteSpace(newRow.MatchMode))
+                {
+                    List<ObjectId> geometryIds =
+                        new List<ObjectId>();
+
+                    double minX = double.MaxValue;
+                    double minY = double.MaxValue;
+                    double maxX = double.MinValue;
+                    double maxY = double.MinValue;
+
+                    foreach (ObjectId id in selectedIds)
+                    {
+                        Entity ent =
+                            tr.GetObject(
+                                id,
+                                OpenMode.ForRead,
+                                false) as Entity;
+
+                        if (ent == null || ent.IsErased)
+                            continue;
+
+                        if (!(ent is Line) &&
+                            !(ent is Arc) &&
+                            !(ent is Circle) &&
+                            !(ent is Polyline))
+                        {
+                            continue;
+                        }
+
+                        geometryIds.Add(id);
+
+                        try
+                        {
+                            Extents3d ex =
+                                ent.GeometricExtents;
+
+                            minX = Math.Min(minX, ex.MinPoint.X);
+                            minY = Math.Min(minY, ex.MinPoint.Y);
+                            maxX = Math.Max(maxX, ex.MaxPoint.X);
+                            maxY = Math.Max(maxY, ex.MaxPoint.Y);
+                        }
+                        catch
+                        {
+                        }
+                    }
+
+                    if (geometryIds.Count == 0)
+                    {
+                        tr.Commit();
+
+                        MessageBox.Show(
+                            "Không đọc được thiết bị từ vùng chọn.\n\n" +
+                            "Hỗ trợ: BLOCK, DBPoint hoặc các nét LINE / ARC / CIRCLE / POLYLINE của một ký hiệu EXPLODE.",
+                            "THÊM THIẾT BỊ");
+
+                        return false;
+                    }
+
+                    string fingerprint =
+                        BuildSmartGeometryFingerprint(
+                            tr,
+                            geometryIds);
+
+                    if (string.IsNullOrWhiteSpace(fingerprint))
+                    {
+                        tr.Commit();
+
+                        MessageBox.Show(
+                            "Không tạo được dấu vân tay hình học cho thiết bị đã chọn.",
+                            "THÊM THIẾT BỊ");
+
+                        return false;
+                    }
+
+                    newRow.MatchMode =
+                        "GEOMETRY";
+
+                    newRow.GeometryFingerprint =
+                        fingerprint;
+
+                    newRow.BlockKey =
+                        "GEO_" +
+                        Convert.ToBase64String(
+                            Encoding.UTF8.GetBytes(
+                                fingerprint));
+
+                    newRow.InstanceHandleKey =
+                        BuildSmartAuditHandleKey(
+                            tr,
+                            geometryIds);
+
+                    if (minX != double.MaxValue &&
+                        minY != double.MaxValue &&
+                        maxX != double.MinValue &&
+                        maxY != double.MinValue)
+                    {
+                        newRow.Point =
+                            new Point3d(
+                                (minX + maxX) * 0.5,
+                                (minY + maxY) * 0.5,
+                                0.0);
+                    }
+                }
+
+                tr.Commit();
+            }
+
+            AttachPreviewToAuditRows(
+                doc,
+                new List<SmartAuditRow> { newRow },
+                _lastSmartLegendRows);
+
+            if (!ShowSmartAuditEditDialog(
+                    newRow))
+            {
+                return false;
+            }
+
+            // Chỉ khi người dùng xác nhận THÊM mới gỡ cờ BỎ QUA cũ.
+            ForgetSmartAuditIgnoredInstance(
+                doc,
+                newRow);
+
+            newRow.Note =
+                "Người dùng thêm thủ công / khôi phục thiết bị đã bỏ qua.";
+
+            row =
+                newRow;
+
+            return true;
+        }
+
         private bool ShowSmartAuditReportDialog(
             Document doc,
             List<SmartAuditRow> rows,
@@ -55429,10 +57330,16 @@ namespace ClassLibrary4
                 legendZero ??
                 new List<string>();
 
+            Stack<SmartAuditRow> ignoredRows =
+                new Stack<SmartAuditRow>();
+
             while (true)
             {
                 SmartAuditRow zoomRow =
                     null;
+
+                bool addDeviceRequested =
+                    false;
 
                 using (System.Windows.Forms.Form form =
                     new System.Windows.Forms.Form())
@@ -55440,6 +57347,12 @@ namespace ClassLibrary4
                     new System.Windows.Forms.Label())
                 using (System.Windows.Forms.DataGridView grid =
                     new System.Windows.Forms.DataGridView())
+                using (System.Windows.Forms.Panel bottomPanel =
+                    new System.Windows.Forms.Panel())
+                using (System.Windows.Forms.Button undoButton =
+                    new System.Windows.Forms.Button())
+                using (System.Windows.Forms.Button addDeviceButton =
+                    new System.Windows.Forms.Button())
                 using (System.Windows.Forms.Button applyButton =
                     new System.Windows.Forms.Button())
                 using (System.Windows.Forms.Button cancelButton =
@@ -55491,8 +57404,7 @@ namespace ClassLibrary4
 
                     double coverage =
                         total > 0
-                            ? recognized * 100.0 /
-                              total
+                            ? recognized * 100.0 / total
                             : 100.0;
 
                     form.Text =
@@ -55501,11 +57413,27 @@ namespace ClassLibrary4
                     form.StartPosition =
                         System.Windows.Forms.FormStartPosition.CenterScreen;
 
+                    System.Drawing.Rectangle workArea =
+                        System.Windows.Forms.Screen.PrimaryScreen.WorkingArea;
+
                     form.Width =
-                        1460;
+                        Math.Min(
+                            1460,
+                            Math.Max(
+                                1050,
+                                workArea.Width - 40));
 
                     form.Height =
-                        760;
+                        Math.Min(
+                            820,
+                            Math.Max(
+                                650,
+                                workArea.Height - 40));
+
+                    form.MinimumSize =
+                        new System.Drawing.Size(
+                            1000,
+                            620);
 
                     form.BackColor =
                         System.Drawing.Color.White;
@@ -55513,17 +57441,15 @@ namespace ClassLibrary4
                     form.MinimizeBox =
                         false;
 
-                    summary.Left =
-                        16;
+                    form.Padding =
+                        new System.Windows.Forms.Padding(
+                            12);
 
-                    summary.Top =
-                        10;
-
-                    summary.Width =
-                        1400;
+                    summary.Dock =
+                        System.Windows.Forms.DockStyle.Top;
 
                     summary.Height =
-                        78;
+                        88;
 
                     summary.Font =
                         new System.Drawing.Font(
@@ -55548,20 +57474,29 @@ namespace ClassLibrary4
                             CultureInfo.InvariantCulture) +
                         "%    |    LEGEND 0: " +
                         legendZero.Count +
-                        "\r\nDòng ĐỎ: bấm ZOOM để xem trên CAD → bấm SỬA để nhập TÊN / THEO DN / SIZE → ÁP DỤNG. " +
-                        "Nếu là báo nhầm, bấm BỎ QUA.";
+                        "\r\nBỎ QUA nhầm: bấm HOÀN TÁC. Muốn thêm lại mục cũ / thêm thủ công: bấm + THÊM THIẾT BỊ.";
 
-                    grid.Left =
-                        16;
+                    bottomPanel.Dock =
+                        System.Windows.Forms.DockStyle.Bottom;
 
-                    grid.Top =
-                        94;
+                    bottomPanel.Height =
+                        58;
 
-                    grid.Width =
-                        1410;
+                    bottomPanel.Padding =
+                        new System.Windows.Forms.Padding(
+                            0,
+                            8,
+                            0,
+                            4);
 
-                    grid.Height =
-                        565;
+                    bottomPanel.BackColor =
+                        System.Drawing.Color.FromArgb(
+                            247,
+                            249,
+                            252);
+
+                    grid.Dock =
+                        System.Windows.Forms.DockStyle.Fill;
 
                     grid.AllowUserToAddRows =
                         false;
@@ -55796,6 +57731,9 @@ namespace ClassLibrary4
                     grid.Columns["NOTE"].AutoSizeMode =
                         System.Windows.Forms.DataGridViewAutoSizeColumnMode.Fill;
 
+                    grid.Columns["NOTE"].MinimumWidth =
+                        180;
+
                     grid.Columns["NOTE"].ReadOnly =
                         true;
 
@@ -55924,8 +57862,7 @@ namespace ClassLibrary4
                                         Convert.ToString(
                                             gridRow.Cells["NAME"].Value));
 
-                                if (!string.IsNullOrWhiteSpace(
-                                        name))
+                                if (!string.IsNullOrWhiteSpace(name))
                                 {
                                     if (!string.Equals(
                                             row.Name,
@@ -55949,8 +57886,7 @@ namespace ClassLibrary4
                                 if (rawDn != null)
                                 {
                                     bool.TryParse(
-                                        Convert.ToString(
-                                            rawDn),
+                                        Convert.ToString(rawDn),
                                         out followDn);
                                 }
 
@@ -56031,31 +57967,6 @@ namespace ClassLibrary4
                                     grid.Rows[e.RowIndex]
                                         .Cells["NOTE"].Value =
                                         row.Note;
-
-                                    if (string.Equals(
-                                            row.Status,
-                                            "MISSING",
-                                            StringComparison.OrdinalIgnoreCase))
-                                    {
-                                        grid.Rows[e.RowIndex]
-                                            .DefaultCellStyle.BackColor =
-                                            System.Drawing.Color.MistyRose;
-                                    }
-                                    else if (!string.Equals(
-                                                 row.Status,
-                                                 "OK",
-                                                 StringComparison.OrdinalIgnoreCase))
-                                    {
-                                        grid.Rows[e.RowIndex]
-                                            .DefaultCellStyle.BackColor =
-                                            System.Drawing.Color.LemonChiffon;
-                                    }
-                                    else
-                                    {
-                                        grid.Rows[e.RowIndex]
-                                            .DefaultCellStyle.BackColor =
-                                            System.Drawing.Color.Honeydew;
-                                    }
                                 }
 
                                 return;
@@ -56068,29 +57979,24 @@ namespace ClassLibrary4
                             {
                                 syncGridToRows();
 
-                                // STEP 18:
-                                // Dòng đỏ CHƯA HỌC bị BỎ QUA => học NEGATIVE ngay.
                                 LearnAiNegativeFromAuditRow(
+                                    row);
+
+                                RememberSmartAuditIgnoredInstance(
+                                    doc,
+                                    row);
+
+                                ignoredRows.Push(
                                     row);
 
                                 rows.Remove(
                                     row);
 
-                                grid.Rows.RemoveAt(
-                                    e.RowIndex);
+                                // Re-open form để summary/STT cập nhật sạch sẽ.
+                                form.DialogResult =
+                                    System.Windows.Forms.DialogResult.Retry;
 
-                                int number =
-                                    1;
-
-                                foreach (System.Windows.Forms.DataGridViewRow r
-                                    in grid.Rows)
-                                {
-                                    if (r.Tag is SmartAuditRow)
-                                    {
-                                        r.Cells["STT"].Value =
-                                            number++;
-                                    }
-                                }
+                                form.Close();
 
                                 return;
                             }
@@ -56119,20 +58025,135 @@ namespace ClassLibrary4
                             form.Close();
                         };
 
+                    undoButton.Text =
+                        "↶ HOÀN TÁC BỎ QUA";
+
+                    undoButton.Width =
+                        175;
+
+                    undoButton.Height =
+                        38;
+
+                    undoButton.Dock =
+                        System.Windows.Forms.DockStyle.Left;
+
+                    undoButton.Enabled =
+                        ignoredRows.Count > 0;
+
+                    undoButton.Font =
+                        new System.Drawing.Font(
+                            "Segoe UI",
+                            9.2f,
+                            System.Drawing.FontStyle.Bold);
+
+                    undoButton.Click +=
+                        (s, e) =>
+                        {
+                            if (ignoredRows.Count == 0)
+                                return;
+
+                            SmartAuditRow restoredRow =
+                                ignoredRows.Pop();
+
+                            ForgetSmartAuditIgnoredInstance(
+                                doc,
+                                restoredRow);
+
+                            if (!rows.Contains(restoredRow))
+                            {
+                                rows.Add(
+                                    restoredRow);
+                            }
+
+                            form.DialogResult =
+                                System.Windows.Forms.DialogResult.Retry;
+
+                            form.Close();
+                        };
+
+                    addDeviceButton.Text =
+                        "+ THÊM THIẾT BỊ";
+
+                    addDeviceButton.Width =
+                        170;
+
+                    addDeviceButton.Height =
+                        38;
+
+                    addDeviceButton.Dock =
+                        System.Windows.Forms.DockStyle.Left;
+
+                    addDeviceButton.Margin =
+                        new System.Windows.Forms.Padding(
+                            8,
+                            0,
+                            0,
+                            0);
+
+                    addDeviceButton.Font =
+                        new System.Drawing.Font(
+                            "Segoe UI",
+                            9.2f,
+                            System.Drawing.FontStyle.Bold);
+
+                    addDeviceButton.BackColor =
+                        System.Drawing.Color.FromArgb(
+                            16,
+                            135,
+                            90);
+
+                    addDeviceButton.ForeColor =
+                        System.Drawing.Color.White;
+
+                    addDeviceButton.FlatStyle =
+                        System.Windows.Forms.FlatStyle.Flat;
+
+                    addDeviceButton.Click +=
+                        (s, e) =>
+                        {
+                            syncGridToRows();
+
+                            addDeviceRequested =
+                                true;
+
+                            form.DialogResult =
+                                System.Windows.Forms.DialogResult.Retry;
+
+                            form.Close();
+                        };
+
+                    cancelButton.Text =
+                        "HỦY";
+
+                    cancelButton.Width =
+                        110;
+
+                    cancelButton.Height =
+                        38;
+
+                    cancelButton.Dock =
+                        System.Windows.Forms.DockStyle.Right;
+
+                    cancelButton.DialogResult =
+                        System.Windows.Forms.DialogResult.Cancel;
+
+                    cancelButton.Font =
+                        new System.Drawing.Font(
+                            "Segoe UI",
+                            9.5f,
+                            System.Drawing.FontStyle.Bold);
+
                     applyButton.Text =
                         "ÁP DỤNG & XUẤT THỐNG KÊ";
 
                     applyButton.Width =
-                        220;
+                        230;
 
                     applyButton.Height =
-                        40;
+                        38;
 
-                    applyButton.Left =
-                        1040;
-
-                    applyButton.Top =
-                        675;
+                    applyButton.Dock =
+                        System.Windows.Forms.DockStyle.Right;
 
                     applyButton.DialogResult =
                         System.Windows.Forms.DialogResult.OK;
@@ -56155,41 +58176,27 @@ namespace ClassLibrary4
                     applyButton.FlatStyle =
                         System.Windows.Forms.FlatStyle.Flat;
 
-                    cancelButton.Text =
-                        "HỦY";
+                    bottomPanel.Controls.Add(
+                        undoButton);
 
-                    cancelButton.Width =
-                        120;
+                    bottomPanel.Controls.Add(
+                        addDeviceButton);
 
-                    cancelButton.Height =
-                        40;
+                    bottomPanel.Controls.Add(
+                        cancelButton);
 
-                    cancelButton.Left =
-                        1270;
+                    bottomPanel.Controls.Add(
+                        applyButton);
 
-                    cancelButton.Top =
-                        675;
-
-                    cancelButton.DialogResult =
-                        System.Windows.Forms.DialogResult.Cancel;
-
-                    cancelButton.Font =
-                        new System.Drawing.Font(
-                            "Segoe UI",
-                            9.5f,
-                            System.Drawing.FontStyle.Bold);
-
-                    form.Controls.Add(
-                        summary);
-
+                    // Dock order: FILL trước, rồi BOTTOM/TOP đảm bảo không bị che khuất.
                     form.Controls.Add(
                         grid);
 
                     form.Controls.Add(
-                        applyButton);
+                        bottomPanel);
 
                     form.Controls.Add(
-                        cancelButton);
+                        summary);
 
                     form.AcceptButton =
                         applyButton;
@@ -56201,15 +58208,34 @@ namespace ClassLibrary4
                         form.ShowDialog();
 
                     if (result ==
-                            System.Windows.Forms.DialogResult.Retry &&
-                        zoomRow != null)
+                        System.Windows.Forms.DialogResult.Retry)
                     {
-                        syncGridToRows();
+                        if (addDeviceRequested)
+                        {
+                            if (TryCreateManualSmartAuditRow(
+                                    doc,
+                                    out SmartAuditRow addedRow) &&
+                                addedRow != null)
+                            {
+                                rows.Add(
+                                    addedRow);
 
-                        ZoomToSmartAuditRow(
-                            doc,
-                            zoomRow);
+                                ignoredRows.Clear();
+                            }
 
+                            continue;
+                        }
+
+                        if (zoomRow != null)
+                        {
+                            syncGridToRows();
+
+                            ZoomToSmartAuditRow(
+                                doc,
+                                zoomRow);
+                        }
+
+                        // Retry cũng được dùng sau BỎ QUA/HOÀN TÁC để rebuild UI.
                         continue;
                     }
 
@@ -62062,6 +64088,18 @@ namespace ClassLibrary4
 
             StopReview3DEscapeWatcher();
 
+            try
+            {
+                if (_aiCloudAutoSyncTimer != null)
+                {
+                    _aiCloudAutoSyncTimer.Stop();
+                    _aiCloudAutoSyncTimer = null;
+                }
+            }
+            catch
+            {
+            }
+
             DisposeOnnxSymbolClassifier();
             DisposeMepGraphGnnClassifier();
         }
@@ -63816,6 +65854,693 @@ namespace ClassLibrary4
             return normalized;
         }
 
+
+        // ============================================================
+        // STEP22D - AUTO AI HUB / ONE-BUTTON PIPELINE
+        // ============================================================
+        private void BtnAiAutoRun_Click(
+            object sender,
+            RoutedEventArgs e)
+        {
+            RunAiUnifiedPipeline();
+        }
+
+        private void BtnAiReviewHub_Click(
+            object sender,
+            RoutedEventArgs e)
+        {
+            Document doc =
+                Autodesk.AutoCAD.ApplicationServices.Core.Application
+                    .DocumentManager
+                    .MdiActiveDocument;
+
+            if (doc == null)
+                return;
+
+            if (_lastSmartAuditRows != null &&
+                _lastSmartAuditRows.Count > 0)
+            {
+                ReopenLastSmartAuditSession(
+                    doc);
+
+                UpdateAiAutoHubStatusUi();
+                return;
+            }
+
+            if (_lastSmartLegendRows != null &&
+                _lastSmartLegendRows.Count > 0)
+            {
+                MessageBoxResult editLegend =
+                    MessageBox.Show(
+                        "Chưa có bảng kiểm tra VAN / THIẾT BỊ gần nhất.\n\n" +
+                        "Hiện đang có Legend đã đọc. Bạn có muốn mở Legend để kiểm tra / sửa không?",
+                        "AI MEP - KIỂM TRA",
+                        MessageBoxButton.YesNo,
+                        MessageBoxImage.Information);
+
+                if (editLegend ==
+                    MessageBoxResult.Yes)
+                {
+                    ReopenLastSmartLegendSession(
+                        doc);
+                }
+
+                UpdateAiAutoHubStatusUi();
+                return;
+            }
+
+            MessageBox.Show(
+                "Chưa có kết quả AI gần nhất.\n\n" +
+                "Hãy bấm AI TỰ ĐỘNG NHẬN DIỆN trước.",
+                "AI MEP - KIỂM TRA");
+        }
+
+        private void RunAiUnifiedPipeline()
+        {
+            if (_aiAutoPipelineBusy)
+                return;
+
+            Document doc =
+                Autodesk.AutoCAD.ApplicationServices.Core.Application
+                    .DocumentManager
+                    .MdiActiveDocument;
+
+            if (doc == null)
+                return;
+
+            Editor ed =
+                doc.Editor;
+
+            try
+            {
+                Autodesk.AutoCAD.ApplicationServices.Core.Application
+                    .MainWindow
+                    .Focus();
+            }
+            catch
+            {
+            }
+
+            _aiAutoPipelineBusy =
+                true;
+
+            try
+            {
+                if (BtnAiAutoRun != null)
+                {
+                    BtnAiAutoRun.IsEnabled =
+                        false;
+
+                    BtnAiAutoRun.Content =
+                        "AI ĐANG PHÂN TÍCH...";
+                }
+
+                if (TxtAiAutoStatus != null)
+                {
+                    TxtAiAutoStatus.Text =
+                        "AI ENGINE: ĐANG CHUẨN BỊ MODEL / LEGEND...";
+                }
+
+                // ONNX symbol classifier tự load nếu model đã deploy.
+                UpdateOnnxStatusUi();
+
+                // GNN đã restore lúc mở Palette. Nếu chưa có thì Graph deterministic vẫn chạy.
+                UpdateAiGnnStatusUi();
+
+                bool hasCurrentProjectLegend;
+
+                List<SmartSymbolRule> autoDeviceRules =
+                    ResolveAiAutoDeviceRules(
+                        doc,
+                        out hasCurrentProjectLegend);
+
+                bool hasDeviceRules =
+                    autoDeviceRules != null &&
+                    autoDeviceRules.Count > 0;
+
+                PromptSelectionOptions pso =
+                    new PromptSelectionOptions();
+
+                pso.MessageForAdding =
+                    "\n[AI TỰ ĐỘNG] Quét MỘT LẦN toàn bộ vùng mặt bằng cần nhận diện: ";
+
+                PromptSelectionResult psr =
+                    ed.GetSelection(
+                        pso);
+
+                if (psr.Status !=
+                        PromptStatus.OK ||
+                    psr.Value == null ||
+                    psr.Value.Count == 0)
+                {
+                    return;
+                }
+
+                SelectionSet workingSelection =
+                    psr.Value;
+
+                if (TxtAiAutoStatus != null)
+                {
+                    TxtAiAutoStatus.Text =
+                        "AI ENGINE: 1/3 • ĐANG NHẬN DIỆN ĐƯỜNG ỐNG...";
+                }
+
+                AiPipeTakeoffRunResult pipeRun =
+                    AnalyzeAndDrawAiPipeTakeoff(
+                        doc,
+                        workingSelection);
+
+                _lastAiAutoPipeRun =
+                    pipeRun;
+
+                if (TxtAiAutoStatus != null)
+                {
+                    TxtAiAutoStatus.Text =
+                        "AI ENGINE: 2/3 • ĐANG BUILD GRAPH / TOPOLOGY...";
+                }
+
+                BuildMepGraphFromSelection(
+                    doc,
+                    workingSelection.GetObjectIds(),
+                    false);
+
+                if (hasDeviceRules)
+                {
+                    if (TxtAiAutoStatus != null)
+                    {
+                        TxtAiAutoStatus.Text =
+                            "AI ENGINE: 3/3 • ĐANG NHẬN DIỆN VAN / THIẾT BỊ...";
+                    }
+
+                    // Dùng lại chính SelectionSet ở bước Pipe: không quét lần hai.
+                    ScanSmartValveDeviceStatistics(
+                        doc,
+                        autoDeviceRules,
+                        workingSelection,
+                        false,
+                        true,
+                        hasCurrentProjectLegend);
+                }
+
+                _lastAiAutoRunUtc =
+                    DateTime.UtcNow;
+
+                UpdateAiAutoHubStatusUi();
+                UpdateAiGraphStatusUi();
+                UpdateAiLegendStatusUi();
+                UpdateAiLearningStatusUi();
+                UpdateAiDatasetStatusUi();
+
+                int pipeCount =
+                    pipeRun != null
+                        ? pipeRun.OutputSegmentCount
+                        : 0;
+
+                int auditTotal =
+                    _lastSmartAuditRows != null
+                        ? _lastSmartAuditRows.Count
+                        : 0;
+
+                int needReview =
+                    _lastSmartAuditRows != null
+                        ? _lastSmartAuditRows.Count(
+                            r =>
+                                r != null &&
+                                !string.Equals(
+                                    r.Status,
+                                    "OK",
+                                    StringComparison.OrdinalIgnoreCase))
+                        : 0;
+
+                MessageBox.Show(
+                    "AI TỰ ĐỘNG ĐÃ CHẠY XONG\n\n" +
+                    "Ống / đoạn nhận diện: " +
+                    pipeCount +
+                    "\nVan / thiết bị ứng viên: " +
+                    auditTotal +
+                    "\nCần kiểm tra: " +
+                    needReview +
+                    (hasDeviceRules
+                        ? (hasCurrentProjectLegend
+                            ? ""
+                            : "\n\nThiết bị đang dùng THƯ VIỆN AI GLOBAL vì phiên này chưa đọc Legend dự án. " +
+                              "Các dòng chưa chắc sẽ được đưa vào KIỂM TRA.")
+                        : "\n\nChưa có dữ liệu ký hiệu nên lượt này chỉ chốt phần ỐNG / GRAPH.") +
+                    "\n\nBạn có thể bấm KIỂM TRA / SỬA KẾT QUẢ để mở lại kết quả.",
+                    "AI MEP");
+
+                // Không chặn AutoCAD chờ Internet. Local luôn được lưu trước,
+                // sau đó Cloud sync im lặng nếu cấu hình hợp lệ.
+                RequestAiCloudAutoSyncQuiet(
+                    "AUTO_PIPELINE_FINISHED",
+                    true);
+            }
+            catch (System.Exception ex)
+            {
+                HandleSmartValveFatalSafe(
+                    "STEP22D_AUTO_PIPELINE",
+                    ex);
+            }
+            finally
+            {
+                _aiAutoPipelineBusy =
+                    false;
+
+                if (BtnAiAutoRun != null)
+                {
+                    BtnAiAutoRun.IsEnabled =
+                        true;
+
+                    BtnAiAutoRun.Content =
+                        "AI TỰ ĐỘNG NHẬN DIỆN";
+                }
+
+                UpdateAiAutoHubStatusUi();
+            }
+        }
+
+        private List<SmartSymbolRule> ResolveAiAutoDeviceRules(
+            Document doc,
+            out bool currentProjectLegend)
+        {
+            currentProjectLegend =
+                false;
+
+            // Ưu tiên cao nhất: Legend đã review của chính phiên/dự án hiện tại.
+            if (_lastSmartRules != null &&
+                _lastSmartRules.Count > 0 &&
+                _lastSmartLegendRows != null &&
+                _lastSmartLegendRows.Count > 0)
+            {
+                currentProjectLegend =
+                    true;
+
+                return
+                    CloneSmartRulesForSession(
+                        _lastSmartRules);
+            }
+
+            // Không có Legend hiện tại: vẫn cho AI chạy bằng thư viện đã học global.
+            // Không dùng danh sách này để cảnh báo "Legend có nhưng mặt bằng không thấy".
+            List<SmartSymbolRule> globalRules =
+                LoadSmartSymbolRules();
+
+            if (globalRules != null &&
+                globalRules.Count > 0)
+            {
+                return
+                    CloneSmartRulesForSession(
+                        globalRules);
+            }
+
+            // Máy mới / chưa từng học ký hiệu: chỉ lúc này mới hỏi quét Legend một lần.
+            MessageBoxResult readLegend =
+                MessageBox.Show(
+                    "AI chưa có dữ liệu ký hiệu để nhận diện VAN / THIẾT BỊ.\n\n" +
+                    "YES = quét bảng LEGEND một lần, sau đó AI tiếp tục tự chạy.\n" +
+                    "NO = bỏ qua thiết bị, vẫn nhận diện ỐNG + GRAPH.",
+                    "AI MEP - KHỞI TẠO LEGEND",
+                    MessageBoxButton.YesNo,
+                    MessageBoxImage.Question);
+
+            if (readLegend ==
+                MessageBoxResult.Yes)
+            {
+                RunStandaloneAiLegendReader(
+                    doc);
+            }
+
+            if (_lastSmartRules != null &&
+                _lastSmartRules.Count > 0)
+            {
+                currentProjectLegend =
+                    _lastSmartLegendRows != null &&
+                    _lastSmartLegendRows.Count > 0;
+
+                return
+                    CloneSmartRulesForSession(
+                        _lastSmartRules);
+            }
+
+            return
+                new List<SmartSymbolRule>();
+        }
+
+        private void UpdateAiAutoHubStatusUi()
+        {
+            try
+            {
+                if (TxtAiAutoStatus == null ||
+                    TxtAiAutoSummary == null)
+                {
+                    return;
+                }
+
+                string autoModelPath;
+                string autoLabelsPath;
+
+                bool onnxReady =
+                    ResolveOnnxModelFiles(
+                        out autoModelPath,
+                        out autoLabelsPath);
+
+                bool gnnReady =
+                    _mepGraphGnnClassifier != null;
+
+                int legendCount =
+                    _lastSmartLegendRows != null
+                        ? _lastSmartLegendRows.Count
+                        : 0;
+
+                AiCloudConfig cloudConfig =
+                    GetAiCloudClient()
+                        .LoadConfig();
+
+                bool cloudReady =
+                    cloudConfig != null &&
+                    cloudConfig.IsConfigured;
+
+                TxtAiAutoStatus.Text =
+                    "AI ENGINE: SẴN SÀNG" +
+                    "  •  CAD ✓" +
+                    "  •  VISION " +
+                    (onnxReady ? "✓" : "–") +
+                    "  •  GRAPH ✓" +
+                    "  •  GNN " +
+                    (gnnReady ? "✓" : "–") +
+                    "  •  CLOUD " +
+                    (cloudReady ? "✓" : "LOCAL");
+
+                TxtAiAutoStatus.Foreground =
+                    new System.Windows.Media.SolidColorBrush(
+                        System.Windows.Media.Color.FromRgb(
+                            30,
+                            58,
+                            95));
+
+                if (_lastAiAutoRunUtc ==
+                        DateTime.MinValue &&
+                    _lastAiAutoPipeRun == null &&
+                    (_lastSmartAuditRows == null ||
+                     _lastSmartAuditRows.Count == 0))
+                {
+                    TxtAiAutoSummary.Text =
+                        "LEGEND: " +
+                        legendCount +
+                        " ký hiệu  •  Chưa có lượt AI tự động gần nhất.";
+
+                    return;
+                }
+
+                int pipeCount =
+                    _lastAiAutoPipeRun != null
+                        ? _lastAiAutoPipeRun.OutputSegmentCount
+                        : 0;
+
+                int deviceCount =
+                    _lastSmartAuditRows != null
+                        ? _lastSmartAuditRows.Count(
+                            r =>
+                                r != null &&
+                                !string.Equals(
+                                    r.Status,
+                                    "MISSING",
+                                    StringComparison.OrdinalIgnoreCase))
+                        : 0;
+
+                int reviewCount =
+                    _lastSmartAuditRows != null
+                        ? _lastSmartAuditRows.Count(
+                            r =>
+                                r != null &&
+                                !string.Equals(
+                                    r.Status,
+                                    "OK",
+                                    StringComparison.OrdinalIgnoreCase))
+                        : 0;
+
+                double confidence =
+                    _lastAiAutoPipeRun != null
+                        ? _lastAiAutoPipeRun.AverageConfidence * 100.0
+                        : 0.0;
+
+                TxtAiAutoSummary.Text =
+                    "LẦN GẦN NHẤT  •  Ống: " +
+                    pipeCount +
+                    "  •  Thiết bị: " +
+                    deviceCount +
+                    "  •  Cần kiểm tra: " +
+                    reviewCount +
+                    (confidence > 0.01
+                        ? "  •  Pipe confidence: " +
+                          confidence.ToString(
+                              "0.0",
+                              CultureInfo.InvariantCulture) +
+                          "%"
+                        : "") +
+                    "  •  Legend: " +
+                    legendCount;
+            }
+            catch
+            {
+            }
+        }
+
+        // ============================================================
+        // STEP23 - AUTO CLOUD SYNC V2
+        // ------------------------------------------------------------
+        // 1) Mở Palette: tự kéo Cloud 1 lần.
+        // 2) Khi học Legend / sửa / thêm thiết bị: tự upload ngay.
+        // 3) Máy đang mở Palette: pull Memory định kỳ 5 phút/lần.
+        // 4) Mất mạng: local queue vẫn giữ nguyên, lần sau tự retry.
+        // ============================================================
+        private void InitializeAiCloudAutoSync()
+        {
+            try
+            {
+                if (_aiCloudAutoSyncTimer == null)
+                {
+                    _aiCloudAutoSyncTimer =
+                        new System.Windows.Threading.DispatcherTimer();
+
+                    _aiCloudAutoSyncTimer.Interval =
+                        AiCloudAutoPullInterval;
+
+                    _aiCloudAutoSyncTimer.Tick +=
+                        (s, e) =>
+                        {
+                            // Pull nhẹ: Memory là phần cần đồng bộ nhanh giữa các máy.
+                            // Dataset/Graph chỉ sync khi startup, pipeline hoặc có học/sửa mới.
+                            RequestAiCloudAutoSyncQuiet(
+                                "PERIODIC_PULL",
+                                false);
+                        };
+
+                    _aiCloudAutoSyncTimer.Start();
+                }
+
+                // Không chặn constructor: BeginInvoke để Palette render trước rồi mới gọi mạng.
+                Dispatcher.BeginInvoke(
+                    System.Windows.Threading.DispatcherPriority.Background,
+                    new Action(
+                        () =>
+                        {
+                            RequestAiCloudAutoSyncQuiet(
+                                "STARTUP_PULL",
+                                true);
+                        }));
+            }
+            catch
+            {
+                // Cloud không được làm Palette lỗi.
+            }
+        }
+
+        private void RequestAiCloudAutoSyncQuiet(
+            string reason,
+            bool includeDatasetAndGraph)
+        {
+            _aiCloudAutoSyncLastReason =
+                reason ?? "AUTO";
+
+            if (_aiCloudSyncBusy)
+            {
+                // Có thay đổi phát sinh trong lúc đang sync => chạy thêm 1 lượt sau.
+                _aiCloudAutoSyncPending =
+                    true;
+
+                _aiCloudAutoSyncPendingHeavy =
+                    _aiCloudAutoSyncPendingHeavy ||
+                    includeDatasetAndGraph;
+
+                return;
+            }
+
+            StartAiAutoBackgroundSyncQuiet(
+                includeDatasetAndGraph);
+        }
+
+        private void RunPendingAiCloudAutoSyncIfNeeded()
+        {
+            if (_aiCloudSyncBusy ||
+                !_aiCloudAutoSyncPending)
+            {
+                return;
+            }
+
+            bool includeHeavy =
+                _aiCloudAutoSyncPendingHeavy;
+
+            _aiCloudAutoSyncPending =
+                false;
+
+            _aiCloudAutoSyncPendingHeavy =
+                false;
+
+            try
+            {
+                Dispatcher.BeginInvoke(
+                    System.Windows.Threading.DispatcherPriority.Background,
+                    new Action(
+                        () =>
+                        {
+                            StartAiAutoBackgroundSyncQuiet(
+                                includeHeavy);
+                        }));
+            }
+            catch
+            {
+                StartAiAutoBackgroundSyncQuiet(
+                    includeHeavy);
+            }
+        }
+
+        private async void StartAiAutoBackgroundSyncQuiet(
+            bool includeDatasetAndGraph = true)
+        {
+            if (_aiCloudSyncBusy)
+            {
+                _aiCloudAutoSyncPending =
+                    true;
+
+                _aiCloudAutoSyncPendingHeavy =
+                    _aiCloudAutoSyncPendingHeavy ||
+                    includeDatasetAndGraph;
+
+                return;
+            }
+
+            AiCloudSyncClient client =
+                GetAiCloudClient();
+
+            AiCloudConfig config =
+                client.LoadConfig();
+
+            if (config == null ||
+                !config.IsConfigured)
+            {
+                UpdateAiAutoHubStatusUi();
+                return;
+            }
+
+            _aiCloudSyncBusy =
+                true;
+
+            try
+            {
+                AiCloudSyncResult result =
+                    await client.SyncAsync();
+
+                if (!result.Success)
+                    return;
+
+                ApplyAiCloudConsensus(
+                    result.ConsensusRows,
+                    out int approved,
+                    out int pending,
+                    out int conflict);
+
+                if (includeDatasetAndGraph)
+                {
+                    AiDatasetSyncResult datasetResult =
+                        await SyncAiDatasetOnlyAsync(
+                            false);
+
+                    if (datasetResult.CloudSummary != null)
+                    {
+                        _lastAiDatasetCloudSummary =
+                            datasetResult.CloudSummary;
+                    }
+
+                    if (!_aiGraphCloudBusy)
+                    {
+                        _aiGraphCloudBusy =
+                            true;
+
+                        try
+                        {
+                            await GetAiGraphCloudClient()
+                                .SyncAsync(
+                                    config);
+                        }
+                        finally
+                        {
+                            _aiGraphCloudBusy =
+                                false;
+                        }
+                    }
+                }
+
+                AiCloudLocalState state =
+                    client.LoadState();
+
+                state.LastSyncUtc =
+                    DateTime.UtcNow.ToString(
+                        "O",
+                        CultureInfo.InvariantCulture);
+
+                state.LastUploaded =
+                    result.Uploaded;
+
+                state.LastCloudGroups =
+                    result.ConsensusRows != null
+                        ? result.ConsensusRows.Count
+                        : 0;
+
+                state.LastApproved =
+                    approved;
+
+                state.LastPending =
+                    pending;
+
+                state.LastConflict =
+                    conflict;
+
+                state.LastMessage =
+                    "AUTO_SYNC_OK:" +
+                    (_aiCloudAutoSyncLastReason ?? "AUTO");
+
+                client.SaveState(
+                    state);
+            }
+            catch
+            {
+                // Local-first: mất mạng / Cloud lỗi không được làm gián đoạn CAD.
+            }
+            finally
+            {
+                _aiCloudSyncBusy =
+                    false;
+
+                UpdateAiCloudStatusUi();
+                UpdateAiDatasetStatusUi();
+                UpdateAiGraphCloudStatusUi();
+                UpdateAiAutoHubStatusUi();
+
+                RunPendingAiCloudAutoSyncIfNeeded();
+            }
+        }
+
         private void BtnAiDeviceOnly_Click(
             object sender,
             RoutedEventArgs e)
@@ -64041,10 +66766,10 @@ namespace ClassLibrary4
                         db.CurrentSpaceId,
                         OpenMode.ForWrite);
 
-                DeleteOldAiPipeOutput(
-                    tr,
-                    space);
-
+                // STEP22D FIX eWasErased:
+                // Không xóa output AI cũ trước khi đọc SelectionSet.
+                // SelectionSet có thể vẫn chứa ObjectId của output cũ; nếu xóa trước
+                // rồi tr.GetObject lại chính ObjectId đó AutoCAD sẽ ném eWasErased.
                 List<Curve> originalCurves =
                     new List<Curve>();
 
@@ -64065,16 +66790,28 @@ namespace ClassLibrary4
                     in selection)
                 {
                     if (so == null ||
-                        so.ObjectId.IsNull)
+                        so.ObjectId.IsNull ||
+                        !so.ObjectId.IsValid ||
+                        so.ObjectId.IsErased)
                     {
                         continue;
                     }
 
-                    Entity ent =
-                        tr.GetObject(
-                            so.ObjectId,
-                            OpenMode.ForRead,
-                            false) as Entity;
+                    Entity ent = null;
+
+                    try
+                    {
+                        ent =
+                            tr.GetObject(
+                                so.ObjectId,
+                                OpenMode.ForRead,
+                                false) as Entity;
+                    }
+                    catch
+                    {
+                        // Object vừa bị xóa / proxy hỏng / không mở được => bỏ qua.
+                        continue;
+                    }
 
                     if (ent == null ||
                         ent.IsErased)
@@ -64330,6 +67067,12 @@ namespace ClassLibrary4
                             });
                     }
                 }
+
+                // STEP22D FIX eWasErased:
+                // Chỉ xóa overlay AI cũ SAU KHI đã đọc xong toàn bộ SelectionSet.
+                DeleteOldAiPipeOutput(
+                    tr,
+                    space);
 
                 result.RawCurveCount = originalCurves.Count;
                 result.SizeTextCount = sizeTexts.Count;

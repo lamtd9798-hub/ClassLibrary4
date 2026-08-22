@@ -125,8 +125,13 @@ namespace ClassLibrary4
                                 file);
                     }
 
-                    if (!graphByKey.ContainsKey(
-                            key))
+                    if (!graphByKey.TryGetValue(
+                            key,
+                            out string existingFile) ||
+                        GetReliableTargetCount(
+                            file) >
+                        GetReliableTargetCount(
+                            existingFile))
                     {
                         graphByKey[key] =
                             file;
@@ -152,8 +157,19 @@ namespace ClassLibrary4
                                 file);
                     }
 
-                    graphByKey[key] =
-                        file;
+                    if (!graphByKey.TryGetValue(
+                            key,
+                            out string existingFile) ||
+                        GetReliableTargetCount(
+                            file) >=
+                        GetReliableTargetCount(
+                            existingFile))
+                    {
+                        // Cloud Approved chỉ thắng khi ground-truth
+                        // không yếu hơn local hiện tại.
+                        graphByKey[key] =
+                            file;
+                    }
                 }
 
                 List<string> graphFiles =
@@ -446,6 +462,85 @@ namespace ClassLibrary4
                     ex.Message;
 
                 return result;
+            }
+        }
+
+        private static int GetReliableTargetCount(
+            string filePath)
+        {
+            if (string.IsNullOrWhiteSpace(
+                    filePath) ||
+                !File.Exists(
+                    filePath))
+            {
+                return 0;
+            }
+
+            try
+            {
+                using (JsonDocument doc =
+                    JsonDocument.Parse(
+                        File.ReadAllText(
+                            filePath,
+                            Encoding.UTF8)))
+                {
+                    JsonElement root =
+                        doc.RootElement;
+
+                    if (!root.TryGetProperty(
+                            "pipes",
+                            out JsonElement pipes) ||
+                        pipes.ValueKind !=
+                            JsonValueKind.Array)
+                    {
+                        return 0;
+                    }
+
+                    int count =
+                        0;
+
+                    foreach (JsonElement pipe
+                        in pipes.EnumerateArray())
+                    {
+                        string dn =
+                            GetString(
+                                pipe,
+                                "dn");
+
+                        string source =
+                            GetString(
+                                pipe,
+                                "dn_source")
+                                .ToUpperInvariant();
+
+                        double confidence =
+                            GetDouble(
+                                pipe,
+                                "dn_confidence");
+
+                        bool reliable =
+                            !string.IsNullOrWhiteSpace(
+                                dn) &&
+                            confidence >=
+                                0.85 &&
+                            (
+                                source == "TEXT" ||
+                                source == "AI_LAYER" ||
+                                source == "LAYER"
+                            );
+
+                        if (reliable)
+                        {
+                            count++;
+                        }
+                    }
+
+                    return count;
+                }
+            }
+            catch
+            {
+                return 0;
             }
         }
 

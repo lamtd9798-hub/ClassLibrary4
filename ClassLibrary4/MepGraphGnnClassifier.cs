@@ -14,7 +14,7 @@ using Microsoft.ML.OnnxRuntime.Tensors;
 namespace ClassLibrary4
 {
     /// <summary>
-    /// STEP22B - GNN Context Model.
+    /// STEP22D.1 - GNN Context Model V2 (angle/topology + performance).
     ///
     /// ONNX contract:
     ///   input "nodes"      : float32 [1, N, F]
@@ -23,6 +23,7 @@ namespace ClassLibrary4
     ///
     /// Node 0 luôn là target pipe. DN của target bị mask khỏi feature.
     /// Neighbor pipes giữ DN one-hot để model học context/topology.
+    /// V2 thêm góc tương đối với target và direct-target adjacency.
     /// </summary>
     internal sealed class MepGraphGnnClassifier : IDisposable
     {
@@ -39,7 +40,7 @@ namespace ClassLibrary4
             public string Message { get; set; } = "";
         }
 
-        private const int BaseFeatureCount = 10;
+        private const int BaseFeatureCount = 13;
 
         private readonly InferenceSession _session;
         private readonly string _nodesInputName;
@@ -450,6 +451,12 @@ namespace ClassLibrary4
                         _featureCount
                     });
 
+            MepGraphPipeNode targetPipe =
+                targetIndex >= 0 &&
+                targetIndex < snapshot.Pipes.Count
+                    ? snapshot.Pipes[targetIndex]
+                    : null;
+
             for (int local = 0;
                 local < context.Count &&
                 local < _maxNodes;
@@ -468,11 +475,22 @@ namespace ClassLibrary4
                 MepGraphPipeNode pipe =
                     snapshot.Pipes[global];
 
+                bool isTarget =
+                    global ==
+                    targetIndex;
+
+                bool directlyConnectedToTarget =
+                    !isTarget &&
+                    pipe.Neighbors != null &&
+                    pipe.Neighbors.Contains(
+                        targetIndex);
+
                 float[] features =
                     BuildFeatures(
                         pipe,
-                        global ==
-                            targetIndex);
+                        targetPipe,
+                        isTarget,
+                        directlyConnectedToTarget);
 
                 for (int f = 0;
                     f < features.Length &&
@@ -490,9 +508,23 @@ namespace ClassLibrary4
             return tensor;
         }
 
+        /// <summary>
+        /// STEP22D.1 GNN V2 feature contract.
+        ///
+        /// Giữ nguyên 10 feature cũ để không mất thông tin layer/AI/DN,
+        /// sau đó thêm 3 feature topology-hình học:
+        ///   [10] |cos(theta)| : độ song song với target pipe
+        ///   [11] |sin(theta)| : độ vuông góc với target pipe
+        ///   [12] directTarget : có nối trực tiếp target hay không
+        ///
+        /// Dùng trị tuyệt đối cho dot/cross để feature không đổi khi
+        /// Start/End của LINE bị đảo chiều trong DWG.
+        /// </summary>
         private float[] BuildFeatures(
             MepGraphPipeNode pipe,
-            bool isTarget)
+            MepGraphPipeNode targetPipe,
+            bool isTarget,
+            bool directlyConnectedToTarget)
         {
             float[] features =
                 new float[
@@ -557,7 +589,7 @@ namespace ClassLibrary4
 
             features[5] =
                 Clamp01(
-                    pipe.Neighbors.Count /
+                    (pipe.Neighbors?.Count ?? 0) /
                     6.0);
 
             features[6] =
@@ -589,6 +621,75 @@ namespace ClassLibrary4
                         Math.Min(
                             1.0,
                             pipe.DnConfidence))
+                    : 0.0f;
+
+            // --------------------------------------------------------
+            // V2: góc tương đối với target pipe.
+            //
+            // Không dùng signed dot/cross trực tiếp vì hướng Start->End
+            // của entity CAD có thể bị đảo. |cos| / |sin| ổn định hơn:
+            //   |cos| ~ 1, |sin| ~ 0 : song song / thẳng hàng
+            //   |cos| ~ 0, |sin| ~ 1 : gần vuông góc
+            // --------------------------------------------------------
+            if (targetPipe != null)
+            {
+                double tdx =
+                    targetPipe.End.X -
+                    targetPipe.Start.X;
+
+                double tdy =
+                    targetPipe.End.Y -
+                    targetPipe.Start.Y;
+
+                double targetPlanar =
+                    Math.Sqrt(
+                        tdx * tdx +
+                        tdy * tdy);
+
+                if (targetPlanar >=
+                    1e-6)
+                {
+                    double denominator =
+                        planar *
+                        targetPlanar;
+
+                    double dot =
+                        (dx * tdx +
+                         dy * tdy) /
+                        denominator;
+
+                    double cross =
+                        (dx * tdy -
+                         dy * tdx) /
+                        denominator;
+
+                    dot =
+                        Math.Max(
+                            -1.0,
+                            Math.Min(
+                                1.0,
+                                dot));
+
+                    cross =
+                        Math.Max(
+                            -1.0,
+                            Math.Min(
+                                1.0,
+                                cross));
+
+                    features[10] =
+                        (float)Math.Abs(
+                            dot);
+
+                    features[11] =
+                        (float)Math.Abs(
+                            cross);
+                }
+            }
+
+            features[12] =
+                directlyConnectedToTarget
+                    ? 1.0f
                     : 0.0f;
 
             if (allowDnFeature)
@@ -629,21 +730,6 @@ namespace ClassLibrary4
             Dictionary<int, int> globalToLocal =
                 new Dictionary<int, int>();
 
-            for (int i = 0;
-                i < context.Count &&
-                i < _maxNodes;
-                i++)
-            {
-                globalToLocal[
-                    context[i]] =
-                    i;
-            }
-
-            float[,] raw =
-                new float[
-                    _maxNodes,
-                    _maxNodes];
-
             int active =
                 Math.Min(
                     context.Count,
@@ -653,68 +739,86 @@ namespace ClassLibrary4
                 i < active;
                 i++)
             {
-                raw[
-                    i,
-                    i] =
-                    1.0f;
-
-                int global =
-                    context[i];
-
-                MepGraphPipeNode pipe =
-                    snapshot.Pipes[global];
-
-                foreach (int neighbor
-                    in pipe.Neighbors)
-                {
-                    if (globalToLocal.TryGetValue(
-                            neighbor,
-                            out int localNeighbor))
-                    {
-                        raw[
-                            i,
-                            localNeighbor] =
-                            1.0f;
-                    }
-                }
+                globalToLocal[
+                    context[i]] =
+                    i;
             }
 
+            // --------------------------------------------------------
+            // STEP22D.1:
+            // Bỏ float[,] raw trung gian.
+            // Ghi trực tiếp adjacency đã row-normalize vào DenseTensor.
+            //
+            // Graph Engine đã Distinct() danh sách Neighbors, vì vậy
+            // degree = số neighbor hợp lệ trong ego-graph + self-loop.
+            // --------------------------------------------------------
             for (int i = 0;
                 i < active;
                 i++)
             {
-                float sum =
-                    0.0f;
+                int global =
+                    context[i];
 
-                for (int j = 0;
-                    j < active;
-                    j++)
+                if (global < 0 ||
+                    global >= snapshot.Pipes.Count)
                 {
-                    sum +=
-                        raw[
-                            i,
-                            j];
+                    continue;
                 }
 
-                if (sum <=
-                    0.0f)
+                MepGraphPipeNode pipe =
+                    snapshot.Pipes[global];
+
+                int localNeighborCount =
+                    0;
+
+                if (pipe.Neighbors != null)
                 {
-                    sum =
-                        1.0f;
+                    foreach (int neighbor
+                        in pipe.Neighbors)
+                    {
+                        if (globalToLocal.TryGetValue(
+                                neighbor,
+                                out int localNeighbor) &&
+                            localNeighbor != i)
+                        {
+                            localNeighborCount++;
+                        }
+                    }
                 }
 
-                for (int j = 0;
-                    j < active;
-                    j++)
+                float weight =
+                    1.0f /
+                    Math.Max(
+                        1,
+                        localNeighborCount +
+                        1);
+
+                // Self-loop.
+                tensor[
+                    0,
+                    i,
+                    i] =
+                    weight;
+
+                if (pipe.Neighbors == null)
+                    continue;
+
+                foreach (int neighbor
+                    in pipe.Neighbors)
                 {
+                    if (!globalToLocal.TryGetValue(
+                            neighbor,
+                            out int localNeighbor) ||
+                        localNeighbor == i)
+                    {
+                        continue;
+                    }
+
                     tensor[
                         0,
                         i,
-                        j] =
-                        raw[
-                            i,
-                            j] /
-                        sum;
+                        localNeighbor] =
+                        weight;
                 }
             }
 
@@ -811,11 +915,74 @@ namespace ClassLibrary4
                     position,
                     deviceExtents);
 
+            if (refs.Count == 0)
+                return -1;
+
             int best =
                 -1;
 
             double bestScore =
                 double.MaxValue;
+
+            // Đơn vị hiện tại của pipeline đang theo drawing unit (thường mm).
+            // Giữ tương thích ngưỡng cũ 1400 nhưng dùng envelope 1500 để lọc thô.
+            const double maxSearchRadius =
+                1500.0;
+
+            double queryMinX =
+                refs.Min(
+                    p =>
+                        p.X) -
+                maxSearchRadius;
+
+            double queryMaxX =
+                refs.Max(
+                    p =>
+                        p.X) +
+                maxSearchRadius;
+
+            double queryMinY =
+                refs.Min(
+                    p =>
+                        p.Y) -
+                maxSearchRadius;
+
+            double queryMaxY =
+                refs.Max(
+                    p =>
+                        p.Y) +
+                maxSearchRadius;
+
+            // Nếu có extents thiết bị thì mở rộng query envelope theo cả block.
+            if (deviceExtents.HasValue)
+            {
+                Extents3d ex =
+                    deviceExtents.Value;
+
+                queryMinX =
+                    Math.Min(
+                        queryMinX,
+                        ex.MinPoint.X -
+                        maxSearchRadius);
+
+                queryMaxX =
+                    Math.Max(
+                        queryMaxX,
+                        ex.MaxPoint.X +
+                        maxSearchRadius);
+
+                queryMinY =
+                    Math.Min(
+                        queryMinY,
+                        ex.MinPoint.Y -
+                        maxSearchRadius);
+
+                queryMaxY =
+                    Math.Max(
+                        queryMaxY,
+                        ex.MaxPoint.Y +
+                        maxSearchRadius);
+            }
 
             for (int i = 0;
                 i < snapshot.Pipes.Count;
@@ -824,13 +991,55 @@ namespace ClassLibrary4
                 MepGraphPipeNode pipe =
                     snapshot.Pipes[i];
 
+                // ----------------------------------------------------
+                // LỌC THÔ BẰNG AABB / ENVELOPE.
+                //
+                // Không dùng midpoint filter vì một pipe rất dài có thể
+                // đi sát thiết bị nhưng midpoint nằm xa > 1500.
+                // ----------------------------------------------------
+                Extents3d pipeEx =
+                    pipe.Extents;
+
+                if (pipeEx.MaxPoint.X <
+                        queryMinX ||
+                    pipeEx.MinPoint.X >
+                        queryMaxX ||
+                    pipeEx.MaxPoint.Y <
+                        queryMinY ||
+                    pipeEx.MinPoint.Y >
+                        queryMaxY)
+                {
+                    continue;
+                }
+
+                // Chỉ các pipe lọt envelope mới tính khoảng cách segment.
+                // Dùng vòng for thay LINQ Min để giảm delegate/enumerator overhead.
                 double distance =
-                    refs.Min(
-                        p =>
-                            DistancePointToSegment2D(
-                                p,
-                                pipe.Start,
-                                pipe.End));
+                    double.MaxValue;
+
+                for (int r = 0;
+                    r < refs.Count;
+                    r++)
+                {
+                    double d =
+                        DistancePointToSegment2D(
+                            refs[r],
+                            pipe.Start,
+                            pipe.End);
+
+                    if (d <
+                        distance)
+                    {
+                        distance =
+                            d;
+
+                        if (distance <=
+                            1e-6)
+                        {
+                            break;
+                        }
+                    }
+                }
 
                 bool overlap =
                     deviceExtents.HasValue &&

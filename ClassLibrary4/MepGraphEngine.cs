@@ -153,7 +153,8 @@ namespace ClassLibrary4
                     selectedIds.Where(
                         x =>
                             !x.IsNull &&
-                            x.IsValid));
+                            x.IsValid &&
+                            !x.IsErased));
 
             using (Transaction tr =
                 db.TransactionManager.StartTransaction())
@@ -182,11 +183,28 @@ namespace ClassLibrary4
                 foreach (ObjectId id
                     in ids)
                 {
-                    Entity ent =
-                        tr.GetObject(
-                            id,
-                            OpenMode.ForRead,
-                            false) as Entity;
+                    if (id.IsNull ||
+                        !id.IsValid ||
+                        id.IsErased)
+                    {
+                        continue;
+                    }
+
+                    Entity ent = null;
+
+                    try
+                    {
+                        ent =
+                            tr.GetObject(
+                                id,
+                                OpenMode.ForRead,
+                                false) as Entity;
+                    }
+                    catch
+                    {
+                        // Object đã bị erase giữa các bước AI => bỏ qua, không làm hỏng graph.
+                        continue;
+                    }
 
                     if (ent == null ||
                         ent.IsErased)
@@ -2293,16 +2311,82 @@ namespace ClassLibrary4
                                     })
                     };
 
-                File.WriteAllText(
-                    path,
+                string json =
                     JsonSerializer.Serialize(
                         dto,
                         new JsonSerializerOptions
                         {
                             WriteIndented =
                                 true
-                        }),
+                        });
+
+                File.WriteAllText(
+                    path,
+                    json,
                     Encoding.UTF8);
+
+                // STEP22D FIX:
+                // last_graph.json chỉ là snapshot gần nhất. GNN training cần History
+                // tích lũy ổn định qua nhiều lần quét. Dùng canonical hash của
+                // Graph Cloud để cùng topology/DN không sinh file mới chỉ vì
+                // built_utc / tên DWG / Handle thay đổi.
+                try
+                {
+                    string historyFolder =
+                        Path.Combine(
+                            folder,
+                            "History");
+
+                    Directory.CreateDirectory(
+                        historyFolder);
+
+                    string canonicalHash =
+                        new AiGraphCloudClient()
+                            .GetStructureHashForGraphFile(
+                                path);
+
+                    if (string.IsNullOrWhiteSpace(
+                            canonicalHash))
+                    {
+                        using (System.Security.Cryptography.SHA256 sha =
+                            System.Security.Cryptography.SHA256.Create())
+                        {
+                            byte[] hashBytes =
+                                sha.ComputeHash(
+                                    Encoding.UTF8.GetBytes(
+                                        json));
+
+                            canonicalHash =
+                                BitConverter.ToString(
+                                        hashBytes)
+                                    .Replace(
+                                        "-",
+                                        "")
+                                    .ToLowerInvariant();
+                        }
+                    }
+
+                    if (!string.IsNullOrWhiteSpace(
+                            canonicalHash))
+                    {
+                        string historyPath =
+                            Path.Combine(
+                                historyFolder,
+                                canonicalHash +
+                                ".json");
+
+                        // Cùng canonical graph thì cập nhật bản mới nhất để
+                        // confidence/source sửa tốt hơn vẫn đi vào training.
+                        File.WriteAllText(
+                            historyPath,
+                            json,
+                            Encoding.UTF8);
+                    }
+                }
+                catch
+                {
+                    // History là tầng học bổ sung. Không bao giờ làm fail Graph chính.
+                }
 
                 return path;
             }
