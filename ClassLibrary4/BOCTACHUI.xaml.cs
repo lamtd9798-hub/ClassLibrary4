@@ -41525,6 +41525,396 @@ namespace ClassLibrary4
             public double Diagonal => Math.Sqrt(Width * Width + Height * Height);
         }
 
+
+        // ============================================================
+        // STEP28B - SYMBOL CONTEXT ENGINE
+        // Pure-data scorer: không giữ DBObject/Transaction trong engine.
+        // Chỉ chạy sau Exact Block + Vector; mục tiêu là xử lý ONNX mơ hồ
+        // bằng Legend hiện tại + Pipe/Graph/GNN context + layer + lân cận.
+        // ============================================================
+        private sealed class SmartContextNeighbor
+        {
+            public string Label { get; set; } = "";
+            public Point3d Point { get; set; } = Point3d.Origin;
+            public double Confidence { get; set; } = 0.0;
+        }
+
+        private sealed class SmartSymbolContextCandidate
+        {
+            public SmartSymbolRule Rule { get; set; } = null;
+            public string Label { get; set; } = "";
+            public double VisualConfidence { get; set; } = 0.0;
+            public bool IsVisualTop1 { get; set; } = false;
+            public bool InCurrentLegend { get; set; } = false;
+            public bool FollowDn { get; set; } = false;
+            public double LayerAffinity { get; set; } = 0.0;
+            public double NeighborAffinity { get; set; } = 0.0;
+        }
+
+        private sealed class SmartSymbolContextInput
+        {
+            public List<SmartSymbolContextCandidate> Candidates { get; set; } =
+                new List<SmartSymbolContextCandidate>();
+
+            public bool HasPipe { get; set; } = false;
+            public bool PipeAmbiguous { get; set; } = false;
+            public string PipeDn { get; set; } = "";
+        }
+
+        private sealed class SmartSymbolContextDecision
+        {
+            public bool Evaluated { get; set; } = false;
+            public bool SwitchedFromVisualTop1 { get; set; } = false;
+            public bool ContextConflict { get; set; } = false;
+            public SmartSymbolRule SelectedRule { get; set; } = null;
+            public string SelectedLabel { get; set; } = "";
+            public double SelectedVisualConfidence { get; set; } = 0.0;
+            public double SelectedScore { get; set; } = 0.0;
+            public double RunnerUpScore { get; set; } = 0.0;
+            public string Reason { get; set; } = "";
+        }
+
+        private static class SmartSymbolContextEngine
+        {
+            private const double VisualWeight = 0.80;
+            private const double LegendBonus = 0.075;
+            private const double MissingLegendPenalty = 0.015;
+            private const double PipeFollowBonus = 0.055;
+            private const double PipeFollowAmbiguousBonus = 0.020;
+            private const double MissingPipeFollowPenalty = 0.050;
+            private const double LayerWeight = 0.045;
+            private const double NeighborWeight = 0.080;
+
+            public static SmartSymbolContextDecision Evaluate(
+                SmartSymbolContextInput input)
+            {
+                SmartSymbolContextDecision decision =
+                    new SmartSymbolContextDecision();
+
+                if (input == null ||
+                    input.Candidates == null ||
+                    input.Candidates.Count < 2)
+                {
+                    return decision;
+                }
+
+                List<SmartSymbolContextCandidate> candidates =
+                    input.Candidates
+                        .Where(
+                            x =>
+                                x != null &&
+                                x.Rule != null &&
+                                !string.IsNullOrWhiteSpace(x.Label))
+                        .OrderByDescending(
+                            x => x.VisualConfidence)
+                        .Take(2)
+                        .ToList();
+
+                if (candidates.Count < 2)
+                    return decision;
+
+                SmartSymbolContextCandidate visualTop =
+                    candidates.FirstOrDefault(x => x.IsVisualTop1) ??
+                    candidates[0];
+
+                SmartSymbolContextCandidate visualSecond =
+                    candidates.FirstOrDefault(x => !ReferenceEquals(x, visualTop)) ??
+                    candidates[1];
+
+                double visualMargin =
+                    Math.Max(
+                        0.0,
+                        visualTop.VisualConfidence -
+                        visualSecond.VisualConfidence);
+
+                // Visual quá rõ thì context chỉ đứng sau, không can thiệp.
+                // Tránh "thông minh quá mức" làm hỏng prediction chắc chắn.
+                if (visualTop.VisualConfidence >= 0.94 &&
+                    visualMargin >= 0.28)
+                {
+                    decision.Evaluated = true;
+                    decision.SelectedRule = visualTop.Rule;
+                    decision.SelectedLabel = visualTop.Label;
+                    decision.SelectedVisualConfidence =
+                        visualTop.VisualConfidence;
+                    decision.SelectedScore =
+                        visualTop.VisualConfidence;
+                    decision.RunnerUpScore =
+                        visualSecond.VisualConfidence;
+                    decision.Reason =
+                        "Visual ONNX đủ mạnh, Context giữ nguyên #1.";
+                    return decision;
+                }
+
+                Dictionary<SmartSymbolContextCandidate, double> scores =
+                    new Dictionary<SmartSymbolContextCandidate, double>();
+
+                foreach (SmartSymbolContextCandidate candidate
+                    in candidates)
+                {
+                    double score =
+                        Clamp01(candidate.VisualConfidence) *
+                        VisualWeight;
+
+                    score +=
+                        candidate.InCurrentLegend
+                            ? LegendBonus
+                            : -MissingLegendPenalty;
+
+                    if (input.HasPipe)
+                    {
+                        if (candidate.FollowDn)
+                        {
+                            score +=
+                                input.PipeAmbiguous
+                                    ? PipeFollowAmbiguousBonus
+                                    : PipeFollowBonus;
+                        }
+                    }
+                    else if (candidate.FollowDn)
+                    {
+                        score -=
+                            MissingPipeFollowPenalty;
+                    }
+
+                    score +=
+                        Clamp01(candidate.LayerAffinity) *
+                        LayerWeight;
+
+                    score +=
+                        Clamp01(candidate.NeighborAffinity) *
+                        NeighborWeight;
+
+                    scores[candidate] =
+                        score;
+                }
+
+                List<KeyValuePair<SmartSymbolContextCandidate, double>> ranked =
+                    scores
+                        .OrderByDescending(x => x.Value)
+                        .ToList();
+
+                SmartSymbolContextCandidate best =
+                    ranked[0].Key;
+
+                double bestScore =
+                    ranked[0].Value;
+
+                double secondScore =
+                    ranked.Count > 1
+                        ? ranked[1].Value
+                        : 0.0;
+
+                bool wantsSwitch =
+                    !ReferenceEquals(best, visualTop);
+
+                double visualTopScore =
+                    scores[visualTop];
+
+                double improvement =
+                    bestScore - visualTopScore;
+
+                int supportingSignals =
+                    CountContextSignalsFavoring(
+                        best,
+                        visualTop,
+                        input);
+
+                // Chỉ đảo #1 -> #2 khi Context thực sự có bằng chứng.
+                // Một tín hiệu đơn lẻ yếu không đủ quyền đổi label.
+                bool allowSwitch =
+                    wantsSwitch &&
+                    improvement >= 0.045 &&
+                    (supportingSignals >= 2 ||
+                     best.NeighborAffinity >= 0.72);
+
+                SmartSymbolContextCandidate selected =
+                    allowSwitch
+                        ? best
+                        : visualTop;
+
+                if (!allowSwitch)
+                {
+                    bestScore =
+                        scores[selected];
+
+                    SmartSymbolContextCandidate other =
+                        ReferenceEquals(selected, candidates[0])
+                            ? candidates[1]
+                            : candidates[0];
+
+                    secondScore =
+                        scores[other];
+                }
+
+                double scoreMargin =
+                    Math.Abs(
+                        bestScore -
+                        secondScore);
+
+                bool conflict =
+                    scoreMargin < 0.022 &&
+                    !string.Equals(
+                        candidates[0].Label,
+                        candidates[1].Label,
+                        StringComparison.OrdinalIgnoreCase);
+
+                decision.Evaluated = true;
+                decision.SwitchedFromVisualTop1 =
+                    allowSwitch;
+                decision.ContextConflict =
+                    conflict;
+                decision.SelectedRule =
+                    selected.Rule;
+                decision.SelectedLabel =
+                    selected.Label;
+                decision.SelectedVisualConfidence =
+                    selected.VisualConfidence;
+                decision.SelectedScore =
+                    scores[selected];
+                decision.RunnerUpScore =
+                    scores[
+                        ReferenceEquals(selected, candidates[0])
+                            ? candidates[1]
+                            : candidates[0]];
+
+                if (allowSwitch)
+                {
+                    decision.Reason =
+                        "Context đổi #1 visual sang #2 nhờ " +
+                        BuildSignalText(
+                            selected,
+                            visualTop,
+                            input) +
+                        ".";
+                }
+                else if (conflict)
+                {
+                    decision.Reason =
+                        "Context gần hòa giữa 2 nhãn, giữ #1 visual để an toàn.";
+                }
+                else
+                {
+                    decision.Reason =
+                        "Context đã kiểm tra nhưng chưa đủ mạnh để đảo #1 visual.";
+                }
+
+                return decision;
+            }
+
+            private static int CountContextSignalsFavoring(
+                SmartSymbolContextCandidate challenger,
+                SmartSymbolContextCandidate visualTop,
+                SmartSymbolContextInput input)
+            {
+                int count = 0;
+
+                if (challenger.InCurrentLegend &&
+                    !visualTop.InCurrentLegend)
+                {
+                    count++;
+                }
+
+                if (input.HasPipe &&
+                    !input.PipeAmbiguous &&
+                    challenger.FollowDn &&
+                    !visualTop.FollowDn)
+                {
+                    count++;
+                }
+
+                if (!input.HasPipe &&
+                    !challenger.FollowDn &&
+                    visualTop.FollowDn)
+                {
+                    count++;
+                }
+
+                if (challenger.LayerAffinity >=
+                        visualTop.LayerAffinity + 0.25)
+                {
+                    count++;
+                }
+
+                if (challenger.NeighborAffinity >=
+                        visualTop.NeighborAffinity + 0.25)
+                {
+                    count++;
+                }
+
+                return count;
+            }
+
+            private static string BuildSignalText(
+                SmartSymbolContextCandidate challenger,
+                SmartSymbolContextCandidate visualTop,
+                SmartSymbolContextInput input)
+            {
+                List<string> parts =
+                    new List<string>();
+
+                if (challenger.InCurrentLegend &&
+                    !visualTop.InCurrentLegend)
+                {
+                    parts.Add("Legend dự án");
+                }
+
+                if (input.HasPipe &&
+                    challenger.FollowDn &&
+                    !visualTop.FollowDn)
+                {
+                    parts.Add(
+                        input.PipeAmbiguous
+                            ? "ống gần (DN còn mơ hồ)"
+                            : "Pipe/Graph/GNN context");
+                }
+
+                if (!input.HasPipe &&
+                    !challenger.FollowDn &&
+                    visualTop.FollowDn)
+                {
+                    parts.Add("không có ống phù hợp");
+                }
+
+                if (challenger.LayerAffinity >=
+                    visualTop.LayerAffinity + 0.15)
+                {
+                    parts.Add("layer");
+                }
+
+                if (challenger.NeighborAffinity >=
+                    visualTop.NeighborAffinity + 0.15)
+                {
+                    parts.Add("thiết bị lân cận");
+                }
+
+                if (parts.Count == 0)
+                    parts.Add("tổng hợp context");
+
+                return string.Join(
+                    " + ",
+                    parts);
+            }
+
+            private static double Clamp01(
+                double value)
+            {
+                if (double.IsNaN(value) ||
+                    double.IsInfinity(value))
+                {
+                    return 0.0;
+                }
+
+                if (value < 0.0)
+                    return 0.0;
+
+                if (value > 1.0)
+                    return 1.0;
+
+                return value;
+            }
+        }
+
         private class SmartAuditRow
         {
             public string Status { get; set; } = "OK";
@@ -41603,6 +41993,11 @@ namespace ClassLibrary4
 
         // STEP24B: số detection bị NMS gộp ở lần rà soát gần nhất.
         private int _lastSmartNmsSuppressedCount = 0;
+
+        // STEP28B - context diagnostics cho phiên scan gần nhất.
+        private int _lastSmartContextEvaluatedCount = 0;
+        private int _lastSmartContextAdjustedCount = 0;
+        private int _lastSmartContextConflictCount = 0;
 
         private List<string> _lastSmartLegendZero =
             new List<string>();
@@ -54564,6 +54959,10 @@ namespace ClassLibrary4
             if (doc == null)
                 return;
 
+            _lastSmartContextEvaluatedCount = 0;
+            _lastSmartContextAdjustedCount = 0;
+            _lastSmartContextConflictCount = 0;
+
             if (rules == null ||
                 rules.Count == 0)
             {
@@ -55283,6 +55682,21 @@ namespace ClassLibrary4
                     geometryRules,
                     rules);
 
+            // STEP28B:
+            // Chỉ dùng nguồn đáng tin làm "hàng xóm context":
+            // Exact Block / Vector / POINT / Geometry-vector.
+            // ONNX và Vision không tự làm bằng chứng cho ONNX khác.
+            List<SmartContextNeighbor> smartContextNeighbors =
+                BuildSmartContextNeighbors(
+                    db,
+                    matchedBlocks,
+                    ruleMap,
+                    matchedBlockRuleOverrides,
+                    matchedBlockByOnnx,
+                    matchedBlockByRaster,
+                    geometryMatches,
+                    auditRows);
+
             _smartValveStage =
                 "SCAN_INFER_DN";
 
@@ -55339,6 +55753,72 @@ namespace ClassLibrary4
                             out rule))
                     {
                         continue;
+                    }
+
+                    SmartSymbolContextDecision contextDecision =
+                        null;
+
+                    string contextAuditSuffix =
+                        "";
+
+                    if (onnxFallbackMatch &&
+                        matchedBlockOnnxPredictions.TryGetValue(
+                            blockId,
+                            out MepSymbolClassifier.Prediction blockOnnxPrediction))
+                    {
+                        if (TryApplySmartSymbolContext(
+                                tr,
+                                br.Position,
+                                br.Layer ?? "",
+                                blockOnnxPrediction,
+                                rules,
+                                pipeCandidates,
+                                currentLegendNames,
+                                smartContextNeighbors,
+                                rule,
+                                out SmartSymbolRule contextRule,
+                                out contextDecision))
+                        {
+                            _lastSmartContextEvaluatedCount++;
+
+                            if (contextDecision != null &&
+                                contextDecision.ContextConflict)
+                            {
+                                _lastSmartContextConflictCount++;
+                            }
+
+                            if (contextDecision != null &&
+                                contextDecision.SwitchedFromVisualTop1 &&
+                                contextRule != null)
+                            {
+                                rule =
+                                    contextRule;
+
+                                matchedBlockRuleOverrides[
+                                    blockId] =
+                                    contextRule;
+
+                                _lastSmartContextAdjustedCount++;
+                            }
+
+                            if (contextDecision != null &&
+                                !string.IsNullOrWhiteSpace(
+                                    contextDecision.Reason))
+                            {
+                                contextAuditSuffix =
+                                    " CONTEXT: " +
+                                    contextDecision.Reason +
+                                    " score=" +
+                                    contextDecision.SelectedScore.ToString(
+                                        "0.000",
+                                        CultureInfo.InvariantCulture) +
+                                    "/" +
+                                    contextDecision.RunnerUpScore.ToString(
+                                        "0.000",
+                                        CultureInfo.InvariantCulture) +
+                                    ".";
+                            }
+                        }
                     }
 
                     string recognizedBlockMatchMode =
@@ -55471,7 +55951,10 @@ namespace ClassLibrary4
                                 size,
                             Source =
                                 onnxFallbackMatch
-                                    ? "BLOCK - ONNX"
+                                    ? (contextDecision != null &&
+                                       contextDecision.SwitchedFromVisualTop1
+                                        ? "BLOCK - ONNX + CONTEXT"
+                                        : "BLOCK - ONNX")
                                     : rasterFallbackMatch
                                         ? "BLOCK - VISION"
                                         : geometryFallbackMatch
@@ -55499,7 +55982,12 @@ namespace ClassLibrary4
                                             matchedBlockOnnxPredictions[blockId].SecondConfidence.ToString(
                                                 "P1",
                                                 CultureInfo.InvariantCulture)) +
-                                      ". " + auditNote
+                                      (matchedBlockOnnxPredictions[blockId].CacheHit
+                                          ? " | cache=" +
+                                            (matchedBlockOnnxPredictions[blockId].CacheMode ?? "HIT")
+                                          : "") +
+                                      ". " + auditNote +
+                                      contextAuditSuffix
                                     : rasterFallbackMatch
                                         ? "Tên/vector/ONNX chưa chốt trực tiếp nhưng silhouette Vision Lite khớp Legend. Vision score=" +
                                           (matchedBlockRasterScores.ContainsKey(blockId)
@@ -55551,7 +56039,10 @@ namespace ClassLibrary4
                             DetectionConfidence =
                                 onnxFallbackMatch &&
                                 matchedBlockOnnxPredictions.ContainsKey(blockId)
-                                    ? matchedBlockOnnxPredictions[blockId].Confidence
+                                    ? (contextDecision != null &&
+                                       contextDecision.Evaluated
+                                        ? contextDecision.SelectedVisualConfidence
+                                        : matchedBlockOnnxPredictions[blockId].Confidence)
                                     : rasterFallbackMatch
                                         ? 0.70
                                         : geometryFallbackMatch
@@ -55597,17 +56088,85 @@ namespace ClassLibrary4
                         continue;
                     }
 
-                    string size =
-                        "-";
-
-                    string auditStatus =
-                        "OK";
-
                     bool geometryOnnxMatch =
                         string.Equals(
                             match.Source,
                             "ONNX",
                             StringComparison.OrdinalIgnoreCase);
+
+                    SmartSymbolContextDecision geometryContextDecision =
+                        null;
+
+                    string geometryContextAuditSuffix =
+                        "";
+
+                    if (geometryOnnxMatch &&
+                        match.OnnxPrediction != null)
+                    {
+                        string geometryLayer =
+                            GetSmartContextDominantLayer(
+                                tr,
+                                match.ObjectIds);
+
+                        if (TryApplySmartSymbolContext(
+                                tr,
+                                match.Center,
+                                geometryLayer,
+                                match.OnnxPrediction,
+                                rules,
+                                pipeCandidates,
+                                currentLegendNames,
+                                smartContextNeighbors,
+                                rule,
+                                out SmartSymbolRule contextRule,
+                                out geometryContextDecision))
+                        {
+                            _lastSmartContextEvaluatedCount++;
+
+                            if (geometryContextDecision != null &&
+                                geometryContextDecision.ContextConflict)
+                            {
+                                _lastSmartContextConflictCount++;
+                            }
+
+                            if (geometryContextDecision != null &&
+                                geometryContextDecision.SwitchedFromVisualTop1 &&
+                                contextRule != null)
+                            {
+                                rule =
+                                    contextRule;
+
+                                match.Rule =
+                                    contextRule;
+
+                                _lastSmartContextAdjustedCount++;
+                            }
+
+                            if (geometryContextDecision != null &&
+                                !string.IsNullOrWhiteSpace(
+                                    geometryContextDecision.Reason))
+                            {
+                                geometryContextAuditSuffix =
+                                    " CONTEXT: " +
+                                    geometryContextDecision.Reason +
+                                    " score=" +
+                                    geometryContextDecision.SelectedScore.ToString(
+                                        "0.000",
+                                        CultureInfo.InvariantCulture) +
+                                    "/" +
+                                    geometryContextDecision.RunnerUpScore.ToString(
+                                        "0.000",
+                                        CultureInfo.InvariantCulture) +
+                                    ".";
+                            }
+                        }
+                    }
+
+                    string size =
+                        "-";
+
+                    string auditStatus =
+                        "OK";
 
                     string auditNote =
                         geometryOnnxMatch &&
@@ -55622,7 +56181,12 @@ namespace ClassLibrary4
                               match.OnnxPrediction.Margin.ToString(
                                   "P1",
                                   CultureInfo.InvariantCulture) +
-                              "."
+                              (match.OnnxPrediction.CacheHit
+                                  ? " | cache=" +
+                                    (match.OnnxPrediction.CacheMode ?? "HIT")
+                                  : "") +
+                              "." +
+                              geometryContextAuditSuffix
                             : "Đã nhận diện HÌNH EXPLODE bằng vector fingerprint.";
 
                     if (string.Equals(
@@ -55678,6 +56242,16 @@ namespace ClassLibrary4
                         }
                     }
 
+                    if (!string.IsNullOrWhiteSpace(
+                            geometryContextAuditSuffix) &&
+                        (auditNote ?? "").IndexOf(
+                            "CONTEXT:",
+                            StringComparison.OrdinalIgnoreCase) < 0)
+                    {
+                        auditNote +=
+                            geometryContextAuditSuffix;
+                    }
+
                     string countKey =
                         rule.DisplayName +
                         "\u001F" +
@@ -55706,7 +56280,10 @@ namespace ClassLibrary4
                                 size,
                             Source =
                                 geometryOnnxMatch
-                                    ? "HÌNH EXPLODE - ONNX"
+                                    ? (geometryContextDecision != null &&
+                                       geometryContextDecision.SwitchedFromVisualTop1
+                                        ? "HÌNH EXPLODE - ONNX + CONTEXT"
+                                        : "HÌNH EXPLODE - ONNX")
                                     : "HÌNH EXPLODE",
                             Note =
                                 auditNote,
@@ -55737,7 +56314,10 @@ namespace ClassLibrary4
                             DetectionConfidence =
                                 geometryOnnxMatch &&
                                 match.OnnxPrediction != null
-                                    ? match.OnnxPrediction.Confidence
+                                    ? (geometryContextDecision != null &&
+                                       geometryContextDecision.Evaluated
+                                        ? geometryContextDecision.SelectedVisualConfidence
+                                        : match.OnnxPrediction.Confidence)
                                     : Math.Max(
                                         0.0,
                                         Math.Min(1.0, 1.0 - match.Score))
@@ -58189,7 +58769,7 @@ namespace ClassLibrary4
                         System.Windows.Forms.DockStyle.Top;
 
                     summary.Height =
-                        88;
+                        112;
 
                     summary.Font =
                         new System.Drawing.Font(
@@ -58216,6 +58796,14 @@ namespace ClassLibrary4
                         legendZero.Count +
                         "    |    NMS GỘP TRÙNG: " +
                         _lastSmartNmsSuppressedCount +
+                        "\r\nCONTEXT XÉT: " +
+                        _lastSmartContextEvaluatedCount +
+                        "    |    ĐỔI NHÃN: " +
+                        _lastSmartContextAdjustedCount +
+                        "    |    XUNG ĐỘT: " +
+                        _lastSmartContextConflictCount +
+                        "    |    " +
+                        GetSmartSymbolCacheSummaryText() +
                         "\r\nBỎ QUA nhầm: bấm HOÀN TÁC. Muốn thêm lại mục cũ / thêm thủ công: bấm + THÊM THIẾT BỊ.";
 
                     bottomPanel.Dock =
@@ -66369,6 +66957,945 @@ namespace ClassLibrary4
                 destinationFull,
                 true);
         }
+
+        // ============================================================
+        // STEP28B - CONTEXT BRIDGE
+        // Thu context từ AutoCAD ở lớp ngoài, sau đó đưa dữ liệu thuần vào
+        // SmartSymbolContextEngine. Exact Block / Vector vẫn luôn ưu tiên.
+        // ============================================================
+        private List<SmartContextNeighbor> BuildSmartContextNeighbors(
+            Database db,
+            List<ObjectId> matchedBlocks,
+            Dictionary<string, SmartSymbolRule> ruleMap,
+            Dictionary<ObjectId, SmartSymbolRule> overrides,
+            HashSet<ObjectId> matchedByOnnx,
+            HashSet<ObjectId> matchedByRaster,
+            List<SmartGeometryMatch> geometryMatches,
+            List<SmartAuditRow> existingAuditRows)
+        {
+            List<SmartContextNeighbor> result =
+                new List<SmartContextNeighbor>();
+
+            if (existingAuditRows != null)
+            {
+                foreach (SmartAuditRow row
+                    in existingAuditRows)
+                {
+                    if (row == null ||
+                        !string.Equals(
+                            row.Status,
+                            "OK",
+                            StringComparison.OrdinalIgnoreCase) ||
+                        string.IsNullOrWhiteSpace(
+                            row.Name))
+                    {
+                        continue;
+                    }
+
+                    if (!string.Equals(
+                            row.Source,
+                            "POINT",
+                            StringComparison.OrdinalIgnoreCase))
+                    {
+                        continue;
+                    }
+
+                    AddSmartContextNeighborUnique(
+                        result,
+                        new SmartContextNeighbor
+                        {
+                            Label = row.Name,
+                            Point = row.Point,
+                            Confidence = 1.0
+                        });
+                }
+            }
+
+            if (db != null &&
+                matchedBlocks != null &&
+                matchedBlocks.Count > 0)
+            {
+                try
+                {
+                    using (Transaction tr =
+                        db.TransactionManager.StartTransaction())
+                    {
+                        foreach (ObjectId id
+                            in matchedBlocks)
+                        {
+                            if (id.IsNull ||
+                                (matchedByOnnx != null &&
+                                 matchedByOnnx.Contains(id)) ||
+                                (matchedByRaster != null &&
+                                 matchedByRaster.Contains(id)))
+                            {
+                                continue;
+                            }
+
+                            BlockReference br =
+                                tr.GetObject(
+                                    id,
+                                    OpenMode.ForRead,
+                                    false) as BlockReference;
+
+                            if (br == null ||
+                                br.IsErased)
+                            {
+                                continue;
+                            }
+
+                            SmartSymbolRule rule =
+                                null;
+
+                            double confidence =
+                                1.0;
+
+                            if (overrides != null &&
+                                overrides.TryGetValue(
+                                    id,
+                                    out SmartSymbolRule overrideRule))
+                            {
+                                rule =
+                                    overrideRule;
+
+                                // Geometry override đã qua vector fingerprint:
+                                // mạnh nhưng thấp hơn Exact Block một chút.
+                                confidence =
+                                    0.90;
+                            }
+                            else
+                            {
+                                string key =
+                                    GetSmartBlockIdentityKey(
+                                        tr,
+                                        br);
+
+                                if (ruleMap != null)
+                                {
+                                    ruleMap.TryGetValue(
+                                        key,
+                                        out rule);
+                                }
+                            }
+
+                            if (rule == null ||
+                                string.IsNullOrWhiteSpace(
+                                    rule.DisplayName))
+                            {
+                                continue;
+                            }
+
+                            AddSmartContextNeighborUnique(
+                                result,
+                                new SmartContextNeighbor
+                                {
+                                    Label =
+                                        rule.DisplayName,
+                                    Point =
+                                        new Point3d(
+                                            br.Position.X,
+                                            br.Position.Y,
+                                            0.0),
+                                    Confidence =
+                                        confidence
+                                });
+                        }
+
+                        tr.Commit();
+                    }
+                }
+                catch
+                {
+                    // Context chỉ là tăng cường; lỗi không được chặn scan chính.
+                }
+            }
+
+            if (geometryMatches != null)
+            {
+                foreach (SmartGeometryMatch match
+                    in geometryMatches)
+                {
+                    if (match == null ||
+                        match.Rule == null ||
+                        string.IsNullOrWhiteSpace(
+                            match.Rule.DisplayName) ||
+                        string.Equals(
+                            match.Source,
+                            "ONNX",
+                            StringComparison.OrdinalIgnoreCase))
+                    {
+                        continue;
+                    }
+
+                    double confidence =
+                        Math.Max(
+                            0.78,
+                            Math.Min(
+                                0.96,
+                                1.0 -
+                                Math.Max(
+                                    0.0,
+                                    match.Score)));
+
+                    AddSmartContextNeighborUnique(
+                        result,
+                        new SmartContextNeighbor
+                        {
+                            Label =
+                                match.Rule.DisplayName,
+                            Point =
+                                match.Center,
+                            Confidence =
+                                confidence
+                        });
+                }
+            }
+
+            return result;
+        }
+
+        private static void AddSmartContextNeighborUnique(
+            List<SmartContextNeighbor> target,
+            SmartContextNeighbor item)
+        {
+            if (target == null ||
+                item == null ||
+                string.IsNullOrWhiteSpace(
+                    item.Label))
+            {
+                return;
+            }
+
+            foreach (SmartContextNeighbor existing
+                in target)
+            {
+                if (existing == null ||
+                    !string.Equals(
+                        existing.Label,
+                        item.Label,
+                        StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                try
+                {
+                    if (existing.Point.DistanceTo(
+                            item.Point) <= 1.0)
+                    {
+                        if (item.Confidence >
+                            existing.Confidence)
+                        {
+                            existing.Confidence =
+                                item.Confidence;
+                        }
+
+                        return;
+                    }
+                }
+                catch
+                {
+                }
+            }
+
+            target.Add(
+                item);
+        }
+
+        private bool TryApplySmartSymbolContext(
+            Transaction tr,
+            Point3d center,
+            string entityLayer,
+            MepSymbolClassifier.Prediction prediction,
+            List<SmartSymbolRule> rules,
+            List<SmartPipeCandidate> pipeCandidates,
+            List<string> currentLegendNames,
+            List<SmartContextNeighbor> neighbors,
+            SmartSymbolRule currentRule,
+            out SmartSymbolRule selectedRule,
+            out SmartSymbolContextDecision decision)
+        {
+            selectedRule =
+                currentRule;
+
+            decision =
+                null;
+
+            if (prediction == null ||
+                !prediction.Success ||
+                rules == null ||
+                rules.Count == 0 ||
+                string.IsNullOrWhiteSpace(
+                    prediction.SecondLabel) ||
+                prediction.SecondConfidence < 0.06)
+            {
+                return false;
+            }
+
+            SmartSymbolRule top1Rule =
+                FindBestSmartRuleForOnnxLabel(
+                    prediction.Label,
+                    rules) ??
+                currentRule;
+
+            SmartSymbolRule top2Rule =
+                FindBestSmartRuleForOnnxLabel(
+                    prediction.SecondLabel,
+                    rules);
+
+            if (top1Rule == null ||
+                top2Rule == null ||
+                string.Equals(
+                    NormalizeOnnxDisplayKey(
+                        top1Rule.DisplayName),
+                    NormalizeOnnxDisplayKey(
+                        top2Rule.DisplayName),
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            // Fast path: visual quá rõ thì không chạy lại Pipe/Graph/GNN context.
+            // Giảm đáng kể chi phí khi quét nhiều ký hiệu giống nhau.
+            if (prediction.Confidence >= 0.94 &&
+                prediction.Margin >= 0.28)
+            {
+                decision =
+                    new SmartSymbolContextDecision
+                    {
+                        Evaluated = true,
+                        SelectedRule = top1Rule,
+                        SelectedLabel = top1Rule.DisplayName,
+                        SelectedVisualConfidence = prediction.Confidence,
+                        SelectedScore = prediction.Confidence,
+                        RunnerUpScore = prediction.SecondConfidence,
+                        Reason = "Visual ONNX đủ mạnh, Context giữ nguyên #1."
+                    };
+
+                selectedRule =
+                    top1Rule;
+
+                return true;
+            }
+
+            string pipeDn =
+                "";
+
+            bool pipeAmbiguous =
+                false;
+
+            bool hasPipe =
+                false;
+
+            try
+            {
+                hasPipe =
+                    TryInferSmartBlockPipeSize(
+                        tr,
+                        center,
+                        pipeCandidates,
+                        out pipeDn,
+                        out pipeAmbiguous);
+            }
+            catch
+            {
+                // Không có pipe context vẫn có thể dùng Legend/layer/lân cận.
+                hasPipe =
+                    false;
+
+                pipeDn =
+                    "";
+
+                pipeAmbiguous =
+                    false;
+            }
+
+            SmartSymbolContextCandidate first =
+                new SmartSymbolContextCandidate
+                {
+                    Rule =
+                        top1Rule,
+                    Label =
+                        top1Rule.DisplayName,
+                    VisualConfidence =
+                        prediction.Confidence,
+                    IsVisualTop1 =
+                        true,
+                    InCurrentLegend =
+                        IsSmartContextCurrentLegendLabel(
+                            top1Rule.DisplayName,
+                            currentLegendNames),
+                    FollowDn =
+                        string.Equals(
+                            top1Rule.SizeRule,
+                            "THEO_ONG",
+                            StringComparison.OrdinalIgnoreCase),
+                    LayerAffinity =
+                        GetSmartContextLayerAffinity(
+                            entityLayer,
+                            top1Rule),
+                    NeighborAffinity =
+                        GetSmartContextNeighborAffinity(
+                            center,
+                            top1Rule.DisplayName,
+                            neighbors)
+                };
+
+            SmartSymbolContextCandidate second =
+                new SmartSymbolContextCandidate
+                {
+                    Rule =
+                        top2Rule,
+                    Label =
+                        top2Rule.DisplayName,
+                    VisualConfidence =
+                        prediction.SecondConfidence,
+                    IsVisualTop1 =
+                        false,
+                    InCurrentLegend =
+                        IsSmartContextCurrentLegendLabel(
+                            top2Rule.DisplayName,
+                            currentLegendNames),
+                    FollowDn =
+                        string.Equals(
+                            top2Rule.SizeRule,
+                            "THEO_ONG",
+                            StringComparison.OrdinalIgnoreCase),
+                    LayerAffinity =
+                        GetSmartContextLayerAffinity(
+                            entityLayer,
+                            top2Rule),
+                    NeighborAffinity =
+                        GetSmartContextNeighborAffinity(
+                            center,
+                            top2Rule.DisplayName,
+                            neighbors)
+                };
+
+            SmartSymbolContextInput input =
+                new SmartSymbolContextInput
+                {
+                    HasPipe =
+                        hasPipe,
+                    PipeAmbiguous =
+                        pipeAmbiguous,
+                    PipeDn =
+                        pipeDn ?? "",
+                    Candidates =
+                        new List<SmartSymbolContextCandidate>
+                        {
+                            first,
+                            second
+                        }
+                };
+
+            decision =
+                SmartSymbolContextEngine.Evaluate(
+                    input);
+
+            if (decision == null ||
+                !decision.Evaluated ||
+                decision.SelectedRule == null)
+            {
+                decision =
+                    null;
+
+                return false;
+            }
+
+            selectedRule =
+                decision.SelectedRule;
+
+            return true;
+        }
+
+        private SmartSymbolRule FindBestSmartRuleForOnnxLabel(
+            string rawLabel,
+            List<SmartSymbolRule> rules)
+        {
+            if (rules == null ||
+                rules.Count == 0)
+            {
+                return null;
+            }
+
+            string predictedName =
+                GetOnnxDisplayLabel(
+                    rawLabel);
+
+            string predictedKey =
+                NormalizeOnnxDisplayKey(
+                    predictedName);
+
+            if (string.IsNullOrWhiteSpace(
+                    predictedKey))
+            {
+                return null;
+            }
+
+            return
+                rules
+                    .Where(
+                        r =>
+                            r != null &&
+                            !string.IsNullOrWhiteSpace(
+                                r.DisplayName) &&
+                            string.Equals(
+                                NormalizeOnnxDisplayKey(
+                                    r.DisplayName),
+                                predictedKey,
+                                StringComparison.OrdinalIgnoreCase))
+                    .OrderBy(
+                        r =>
+                            string.Equals(
+                                r.MatchMode,
+                                "BLOCK",
+                                StringComparison.OrdinalIgnoreCase)
+                                ? 0
+                                : string.Equals(
+                                      r.MatchMode,
+                                      "GEOMETRY",
+                                      StringComparison.OrdinalIgnoreCase)
+                                    ? 1
+                                    : 2)
+                    .FirstOrDefault();
+        }
+
+        private bool IsSmartContextCurrentLegendLabel(
+            string label,
+            List<string> currentLegendNames)
+        {
+            if (currentLegendNames == null ||
+                currentLegendNames.Count == 0 ||
+                string.IsNullOrWhiteSpace(
+                    label))
+            {
+                return false;
+            }
+
+            string key =
+                NormalizeOnnxDisplayKey(
+                    label);
+
+            if (string.IsNullOrWhiteSpace(
+                    key))
+            {
+                return false;
+            }
+
+            foreach (string name
+                in currentLegendNames)
+            {
+                if (string.Equals(
+                        NormalizeOnnxDisplayKey(
+                            name),
+                        key,
+                        StringComparison.OrdinalIgnoreCase))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private double GetSmartContextNeighborAffinity(
+            Point3d center,
+            string label,
+            List<SmartContextNeighbor> neighbors)
+        {
+            if (neighbors == null ||
+                neighbors.Count == 0 ||
+                string.IsNullOrWhiteSpace(
+                    label))
+            {
+                return 0.0;
+            }
+
+            string key =
+                NormalizeOnnxDisplayKey(
+                    label);
+
+            if (string.IsNullOrWhiteSpace(
+                    key))
+            {
+                return 0.0;
+            }
+
+            const double radius =
+                2500.0;
+
+            double best =
+                0.0;
+
+            foreach (SmartContextNeighbor neighbor
+                in neighbors)
+            {
+                if (neighbor == null ||
+                    string.IsNullOrWhiteSpace(
+                        neighbor.Label) ||
+                    !string.Equals(
+                        NormalizeOnnxDisplayKey(
+                            neighbor.Label),
+                        key,
+                        StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                double distance;
+
+                try
+                {
+                    distance =
+                        PlanDistance(
+                            center,
+                            neighbor.Point);
+                }
+                catch
+                {
+                    continue;
+                }
+
+                if (distance <= 1.0 ||
+                    distance > radius)
+                {
+                    continue;
+                }
+
+                double proximity =
+                    1.0 -
+                    distance / radius;
+
+                // Neighbor rất gần được ưu tiên, nhưng không bao giờ tự đủ
+                // quyền đổi label nếu các context khác phản đối.
+                double value =
+                    Math.Max(
+                        0.0,
+                        Math.Min(
+                            1.0,
+                            proximity *
+                            Math.Max(
+                                0.0,
+                                Math.Min(
+                                    1.0,
+                                    neighbor.Confidence))));
+
+                if (value > best)
+                    best = value;
+            }
+
+            return best;
+        }
+
+        private double GetSmartContextLayerAffinity(
+            string layer,
+            SmartSymbolRule rule)
+        {
+            if (rule == null ||
+                string.IsNullOrWhiteSpace(
+                    layer))
+            {
+                return 0.0;
+            }
+
+            string layerKey =
+                NormalizeOnnxDisplayKey(
+                    layer);
+
+            string candidateKey =
+                NormalizeOnnxDisplayKey(
+                    (rule.DisplayName ?? "") +
+                    " " +
+                    (rule.BlockKey ?? ""));
+
+            if (string.IsNullOrWhiteSpace(
+                    layerKey) ||
+                string.IsNullOrWhiteSpace(
+                    candidateKey))
+            {
+                return 0.0;
+            }
+
+            HashSet<string> stop =
+                new HashSet<string>(
+                    new[]
+                    {
+                        "TDL",
+                        "AI",
+                        "BLOCK",
+                        "LAYER",
+                        "MODEL",
+                        "PIPE",
+                        "ONG",
+                        "DN",
+                        "FF",
+                        "PCCC"
+                    },
+                    StringComparer.OrdinalIgnoreCase);
+
+            HashSet<string> layerTokens =
+                new HashSet<string>(
+                    layerKey
+                        .Split(
+                            new[] { ' ' },
+                            StringSplitOptions.RemoveEmptyEntries)
+                        .Where(
+                            x =>
+                                x.Length >= 2 &&
+                                !stop.Contains(x)),
+                    StringComparer.OrdinalIgnoreCase);
+
+            HashSet<string> candidateTokens =
+                new HashSet<string>(
+                    candidateKey
+                        .Split(
+                            new[] { ' ' },
+                            StringSplitOptions.RemoveEmptyEntries)
+                        .Where(
+                            x =>
+                                x.Length >= 2 &&
+                                !stop.Contains(x)),
+                    StringComparer.OrdinalIgnoreCase);
+
+            double tokenScore =
+                0.0;
+
+            if (layerTokens.Count > 0 &&
+                candidateTokens.Count > 0)
+            {
+                int overlap =
+                    candidateTokens.Count(
+                        x =>
+                            layerTokens.Contains(x));
+
+                if (overlap > 0)
+                {
+                    tokenScore =
+                        Math.Min(
+                            1.0,
+                            overlap /
+                            (double)Math.Max(
+                                1,
+                                Math.Min(
+                                    3,
+                                    candidateTokens.Count)));
+                }
+            }
+
+            // Alias MEP/PCCC nhẹ để map layer tiếng Anh viết tắt với nhãn tiếng Việt.
+            // Đây chỉ là bonus nhỏ; không bao giờ tự quyết định label.
+            double aliasScore =
+                GetSmartContextLayerAliasAffinity(
+                    layerKey,
+                    NormalizeOnnxDisplayKey(
+                        rule.DisplayName));
+
+            return
+                Math.Max(
+                    tokenScore,
+                    aliasScore);
+        }
+
+        private static double GetSmartContextLayerAliasAffinity(
+            string layerKey,
+            string labelKey)
+        {
+            if (string.IsNullOrWhiteSpace(
+                    layerKey) ||
+                string.IsNullOrWhiteSpace(
+                    labelKey))
+            {
+                return 0.0;
+            }
+
+            if ((layerKey.Contains("SPRINKLER") ||
+                 SmartContextContainsToken(layerKey, "SPK")) &&
+                (labelKey.Contains("SPRINKLER") ||
+                 labelKey.Contains("DAU PHUN")))
+            {
+                return 0.95;
+            }
+
+            if ((layerKey.Contains("FLOW") ||
+                 layerKey.Contains("FLOWSWITCH") ||
+                 SmartContextContainsToken(layerKey, "FS")) &&
+                (labelKey.Contains("FLOW") ||
+                 labelKey.Contains("DONG CHAY")))
+            {
+                return 0.90;
+            }
+
+            if ((layerKey.Contains("SMOKE") ||
+                 SmartContextContainsToken(layerKey, "SD")) &&
+                (labelKey.Contains("SMOKE") ||
+                 labelKey.Contains("BAO KHOI")))
+            {
+                return 0.90;
+            }
+
+            if ((layerKey.Contains("HEAT") ||
+                 SmartContextContainsToken(layerKey, "HD")) &&
+                (labelKey.Contains("HEAT") ||
+                 labelKey.Contains("BAO NHIET")))
+            {
+                return 0.90;
+            }
+
+            if (layerKey.Contains("EXIT") &&
+                labelKey.Contains("EXIT"))
+            {
+                return 0.95;
+            }
+
+            if ((layerKey.Contains("EMERGENCY") ||
+                 SmartContextContainsToken(layerKey, "EMG")) &&
+                (labelKey.Contains("EMERGENCY") ||
+                 labelKey.Contains("KHAN CAP")))
+            {
+                return 0.90;
+            }
+
+            if ((layerKey.Contains("VALVE") ||
+                 layerKey.Contains("VAN")) &&
+                labelKey.Contains("VAN"))
+            {
+                return 0.75;
+            }
+
+            if ((layerKey.Contains("BELL") ||
+                 layerKey.Contains("HORN") ||
+                 layerKey.Contains("COI")) &&
+                (labelKey.Contains("CHUONG") ||
+                 labelKey.Contains("COI") ||
+                 labelKey.Contains("HORN") ||
+                 labelKey.Contains("BELL")))
+            {
+                return 0.85;
+            }
+
+            return 0.0;
+        }
+
+        private static bool SmartContextContainsToken(
+            string normalizedText,
+            string token)
+        {
+            if (string.IsNullOrWhiteSpace(
+                    normalizedText) ||
+                string.IsNullOrWhiteSpace(
+                    token))
+            {
+                return false;
+            }
+
+            return
+                normalizedText
+                    .Split(
+                        new[] { ' ' },
+                        StringSplitOptions.RemoveEmptyEntries)
+                    .Any(
+                        x =>
+                            string.Equals(
+                                x,
+                                token,
+                                StringComparison.OrdinalIgnoreCase));
+        }
+
+        private string GetSmartContextDominantLayer(
+            Transaction tr,
+            List<ObjectId> ids)
+        {
+            if (tr == null ||
+                ids == null ||
+                ids.Count == 0)
+            {
+                return "";
+            }
+
+            Dictionary<string, int> counts =
+                new Dictionary<string, int>(
+                    StringComparer.OrdinalIgnoreCase);
+
+            foreach (ObjectId id
+                in ids)
+            {
+                if (id.IsNull)
+                    continue;
+
+                try
+                {
+                    Entity ent =
+                        tr.GetObject(
+                            id,
+                            OpenMode.ForRead,
+                            false) as Entity;
+
+                    if (ent == null ||
+                        ent.IsErased)
+                    {
+                        continue;
+                    }
+
+                    string layer =
+                        (ent.Layer ?? "")
+                            .Trim();
+
+                    if (string.IsNullOrWhiteSpace(
+                            layer))
+                    {
+                        continue;
+                    }
+
+                    if (!counts.ContainsKey(layer))
+                        counts[layer] = 0;
+
+                    counts[layer]++;
+                }
+                catch
+                {
+                }
+            }
+
+            return
+                counts
+                    .OrderByDescending(
+                        x => x.Value)
+                    .ThenBy(
+                        x => x.Key,
+                        StringComparer.OrdinalIgnoreCase)
+                    .Select(
+                        x => x.Key)
+                    .FirstOrDefault() ??
+                "";
+        }
+
+        private string GetSmartSymbolCacheSummaryText()
+        {
+            try
+            {
+                if (_onnxSymbolClassifier == null)
+                    return "CACHE: chưa nạp";
+
+                MepSymbolClassifier.SymbolCacheStats stats =
+                    _onnxSymbolClassifier.CacheStats;
+
+                return
+                    "CACHE HIT: " +
+                    stats.TotalCacheHits +
+                    " | ONNX RUN: " +
+                    stats.OnnxRuns +
+                    " | HIT RATE: " +
+                    stats.HitRate.ToString(
+                        "P0",
+                        CultureInfo.InvariantCulture);
+            }
+            catch
+            {
+                return "CACHE: -";
+            }
+        }
+
 
         private bool TryResolveOnnxPredictionToRule(
             MepSymbolClassifier.Prediction prediction,
