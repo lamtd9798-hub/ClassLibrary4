@@ -26,7 +26,7 @@ namespace ClassLibrary4
     }
 
     /// <summary>
-    /// STEP22B - gom Graph History local thành training pack cho GNN.
+    /// STEP22B2 - gom Graph History local + CloudApproved thành training pack cho GNN.
     /// Không train trong AutoCAD.
     /// </summary>
     internal sealed class MepGraphTrainingPackExporter
@@ -58,6 +58,11 @@ namespace ClassLibrary4
             Path.Combine(
                 GraphRoot,
                 "History");
+
+        public string CloudApprovedFolder =>
+            Path.Combine(
+                GraphRoot,
+                "CloudApproved");
 
         public string DefaultTrainingRoot
         {
@@ -92,12 +97,67 @@ namespace ClassLibrary4
                 Directory.CreateDirectory(
                     HistoryFolder);
 
+                Directory.CreateDirectory(
+                    CloudApprovedFolder);
+
+                Dictionary<string, string> graphByKey =
+                    new Dictionary<string, string>(
+                        StringComparer.OrdinalIgnoreCase);
+
+                AiGraphCloudClient canonical =
+                    new AiGraphCloudClient();
+
+                foreach (string file
+                    in Directory.GetFiles(
+                        HistoryFolder,
+                        "*.json",
+                        SearchOption.TopDirectoryOnly))
+                {
+                    string key =
+                        canonical.GetCanonicalHashForGraphFile(
+                            file);
+
+                    if (string.IsNullOrWhiteSpace(
+                            key))
+                    {
+                        key =
+                            Path.GetFileNameWithoutExtension(
+                                file);
+                    }
+
+                    if (!graphByKey.ContainsKey(
+                            key))
+                    {
+                        graphByKey[key] =
+                            file;
+                    }
+                }
+
+                // Approved Cloud ưu tiên hơn local nếu cùng canonical hash.
+                foreach (string file
+                    in Directory.GetFiles(
+                        CloudApprovedFolder,
+                        "*.json",
+                        SearchOption.TopDirectoryOnly))
+                {
+                    string key =
+                        canonical.GetCanonicalHashForGraphFile(
+                            file);
+
+                    if (string.IsNullOrWhiteSpace(
+                            key))
+                    {
+                        key =
+                            Path.GetFileNameWithoutExtension(
+                                file);
+                    }
+
+                    graphByKey[key] =
+                        file;
+                }
+
                 List<string> graphFiles =
-                    Directory
-                        .GetFiles(
-                            HistoryFolder,
-                            "*.json",
-                            SearchOption.TopDirectoryOnly)
+                    graphByKey.Values
                         .OrderBy(
                             x =>
                                 x,

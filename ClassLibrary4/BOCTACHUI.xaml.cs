@@ -322,6 +322,9 @@ namespace ClassLibrary4
             // STEP22B: thử restore GNN model local; lỗi GNN không chặn các AI cũ.
             TryRestoreMepGraphGnnModel();
             UpdateAiGnnStatusUi();
+
+            // STEP22B2: chỉ đọc trạng thái Graph Cloud local, không gọi Internet.
+            UpdateAiGraphCloudStatusUi();
         }
 
         private WpfComboBox TimComboBox(string name)
@@ -41496,6 +41499,13 @@ namespace ClassLibrary4
         private string _mepGraphGnnLastError = "";
         private string _lastMepGnnTrainingFolder = "";
 
+        // ============================================================
+        // STEP22B2 - GRAPH DATASET CLOUD
+        // Privacy-sanitized + canonical SHA256 + multi-machine sync.
+        // ============================================================
+        private AiGraphCloudClient _aiGraphCloudClient = null;
+        private bool _aiGraphCloudBusy = false;
+
         private string SmartSymbolLibraryPath
         {
             get
@@ -42400,6 +42410,310 @@ namespace ClassLibrary4
             }
         }
 
+        private AiGraphCloudClient GetAiGraphCloudClient()
+        {
+            if (_aiGraphCloudClient == null)
+            {
+                _aiGraphCloudClient =
+                    new AiGraphCloudClient();
+            }
+
+            return
+                _aiGraphCloudClient;
+        }
+
+        private void UpdateAiGraphCloudStatusUi()
+        {
+            try
+            {
+                if (TxtAiGraphCloudStatus == null)
+                    return;
+
+                AiCloudConfig config =
+                    GetAiCloudClient()
+                        .LoadConfig();
+
+                AiGraphCloudLocalSummary local =
+                    GetAiGraphCloudClient()
+                        .GetLocalSummary(
+                            config);
+
+                if (config == null ||
+                    !config.IsConfigured)
+                {
+                    TxtAiGraphCloudStatus.Text =
+                        "GNN CLOUD: CHƯA CẤU HÌNH • LOCAL " +
+                        local.LocalUniqueGraphs +
+                        " • CHỜ " +
+                        local.PendingUpload;
+
+                    TxtAiGraphCloudStatus.Foreground =
+                        new System.Windows.Media.SolidColorBrush(
+                            System.Windows.Media.Color.FromRgb(
+                                180,
+                                83,
+                                9));
+
+                    return;
+                }
+
+                string syncText =
+                    string.IsNullOrWhiteSpace(
+                        local.LastSyncUtc)
+                        ? "CHƯA SYNC"
+                        : "SẴN SÀNG";
+
+                TxtAiGraphCloudStatus.Text =
+                    "GNN CLOUD: " +
+                    syncText +
+                    " • LOCAL " +
+                    local.LocalUniqueGraphs +
+                    " • CHỜ " +
+                    local.PendingUpload +
+                    " • CLOUD " +
+                    local.LastCloudTotal +
+                    " • APPROVED " +
+                    local.LastCloudApproved +
+                    " • PENDING " +
+                    local.LastCloudPending;
+
+                TxtAiGraphCloudStatus.Foreground =
+                    new System.Windows.Media.SolidColorBrush(
+                        System.Windows.Media.Color.FromRgb(
+                            4,
+                            120,
+                            87));
+            }
+            catch
+            {
+            }
+        }
+
+        private async void BtnAiGraphCloudSync_Click(
+            object sender,
+            RoutedEventArgs e)
+        {
+            if (_aiGraphCloudBusy)
+                return;
+
+            AiCloudConfig config =
+                GetAiCloudClient()
+                    .LoadConfig();
+
+            if (config == null ||
+                !config.IsConfigured)
+            {
+                MessageBox.Show(
+                    "AI Cloud chưa cấu hình.\n\n" +
+                    "Bấm CẤU HÌNH CLOUD trước, sau đó quay lại ĐỒNG BỘ GRAPH.",
+                    "GNN GRAPH CLOUD");
+
+                return;
+            }
+
+            _aiGraphCloudBusy =
+                true;
+
+            try
+            {
+                if (BtnAiGraphCloudSync != null)
+                {
+                    BtnAiGraphCloudSync.IsEnabled =
+                        false;
+
+                    BtnAiGraphCloudSync.Content =
+                        "ĐANG ĐỒNG BỘ...";
+                }
+
+                if (TxtAiGraphCloudStatus != null)
+                {
+                    TxtAiGraphCloudStatus.Text =
+                        "GNN CLOUD: đang canonical + upload + kéo Approved...";
+                }
+
+                AiGraphCloudSyncResult result =
+                    await GetAiGraphCloudClient()
+                        .SyncAsync(
+                            config);
+
+                UpdateAiGraphCloudStatusUi();
+
+                if (!result.Success)
+                {
+                    MessageBox.Show(
+                        "Đồng bộ Graph Cloud chưa thành công:\n\n" +
+                        result.Message +
+                        "\n\nGraph local vẫn được giữ nguyên; GNN/AutoCAD vẫn chạy bình thường.",
+                        "GNN GRAPH CLOUD");
+
+                    return;
+                }
+
+                MessageBox.Show(
+                    "ĐỒNG BỘ GRAPH CLOUD XONG\n\n" +
+                    "Upload mới: " +
+                    result.Uploaded +
+                    "\n" +
+                    "Còn chờ: " +
+                    result.PendingAfterSync +
+                    "\n" +
+                    "Approved kéo về: " +
+                    result.PulledApproved +
+                    "\n\n" +
+                    "Cloud Graph: " +
+                    result.CloudSummary.TotalGraphs +
+                    "\n" +
+                    "Approved: " +
+                    result.CloudSummary.Approved +
+                    "\n" +
+                    "Pending: " +
+                    result.CloudSummary.Pending +
+                    "\n" +
+                    "Rejected: " +
+                    result.CloudSummary.Rejected +
+                    "\n" +
+                    "Reliable DN targets: " +
+                    result.CloudSummary.TotalReliableTargets +
+                    "\n\n" +
+                    "Upload đã bỏ tên DWG/Handle/layer thô và tọa độ tuyệt đối.",
+                    "GNN GRAPH CLOUD");
+            }
+            catch (System.Exception ex)
+            {
+                MessageBox.Show(
+                    "Graph Cloud lỗi:\n\n" +
+                    ex.Message,
+                    "GNN GRAPH CLOUD");
+            }
+            finally
+            {
+                _aiGraphCloudBusy =
+                    false;
+
+                if (BtnAiGraphCloudSync != null)
+                {
+                    BtnAiGraphCloudSync.IsEnabled =
+                        true;
+
+                    BtnAiGraphCloudSync.Content =
+                        "ĐỒNG BỘ GRAPH";
+                }
+
+                UpdateAiGraphCloudStatusUi();
+            }
+        }
+
+        private void BtnAiGraphCloudManage_Click(
+            object sender,
+            RoutedEventArgs e)
+        {
+            AiCloudConfig config =
+                GetAiCloudClient()
+                    .LoadConfig();
+
+            if (config == null ||
+                !config.IsConfigured)
+            {
+                MessageBox.Show(
+                    "AI Cloud chưa cấu hình.",
+                    "GNN GRAPH CLOUD");
+
+                return;
+            }
+
+            try
+            {
+                using (AiGraphCloudManagerForm form =
+                    new AiGraphCloudManagerForm(
+                        config,
+                        GetAiGraphCloudClient()))
+                {
+                    form.ShowDialog();
+                }
+
+                UpdateAiGraphCloudStatusUi();
+            }
+            catch (System.Exception ex)
+            {
+                MessageBox.Show(
+                    "Không mở được Graph Cloud Manager:\n\n" +
+                    ex.Message,
+                    "GNN GRAPH CLOUD");
+            }
+        }
+
+        private async void BtnAiGraphCloudPull_Click(
+            object sender,
+            RoutedEventArgs e)
+        {
+            if (_aiGraphCloudBusy)
+                return;
+
+            AiCloudConfig config =
+                GetAiCloudClient()
+                    .LoadConfig();
+
+            if (config == null ||
+                !config.IsConfigured)
+            {
+                MessageBox.Show(
+                    "AI Cloud chưa cấu hình.",
+                    "GNN GRAPH CLOUD");
+
+                return;
+            }
+
+            _aiGraphCloudBusy =
+                true;
+
+            try
+            {
+                if (BtnAiGraphCloudPull != null)
+                {
+                    BtnAiGraphCloudPull.IsEnabled =
+                        false;
+
+                    BtnAiGraphCloudPull.Content =
+                        "ĐANG KÉO...";
+                }
+
+                int saved =
+                    await GetAiGraphCloudClient()
+                        .PullApprovedAsync(
+                            config);
+
+                UpdateAiGraphCloudStatusUi();
+
+                MessageBox.Show(
+                    "Đã kéo Approved Graph về máy.\n\n" +
+                    "File mới/cập nhật: " +
+                    saved +
+                    "\n\n" +
+                    "XUẤT GNN DATASET sẽ tự gộp LOCAL HISTORY + CLOUD APPROVED.",
+                    "GNN GRAPH CLOUD");
+            }
+            catch (System.Exception ex)
+            {
+                MessageBox.Show(
+                    ex.Message,
+                    "GNN GRAPH CLOUD");
+            }
+            finally
+            {
+                _aiGraphCloudBusy =
+                    false;
+
+                if (BtnAiGraphCloudPull != null)
+                {
+                    BtnAiGraphCloudPull.IsEnabled =
+                        true;
+
+                    BtnAiGraphCloudPull.Content =
+                        "KÉO APPROVED GRAPH VỀ MÁY";
+                }
+            }
+        }
+
         private string MepGraphGnnStatePath
         {
             get
@@ -42785,7 +43099,8 @@ namespace ClassLibrary4
                     : "\n\nZIP:\n" +
                       result.ZipPath) +
                 warning +
-                "\n\nCopy 3 file STEP22B vào folder rồi chạy RUN_TRAIN_GNN_PY312.bat.",
+                "\n\nBộ train đã gộp LOCAL HISTORY + CLOUD APPROVED.\n" +
+                "Copy 3 file STEP22B vào folder rồi chạy RUN_TRAIN_GNN_PY312.bat.",
                 "GNN DATASET");
         }
 
@@ -42937,6 +43252,9 @@ namespace ClassLibrary4
                     snapshot;
 
                 UpdateAiGraphStatusUi();
+
+                // STEP22B2: Graph History vừa tăng => cập nhật LOCAL/CHỜ.
+                UpdateAiGraphCloudStatusUi();
 
                 if (showSummary)
                 {

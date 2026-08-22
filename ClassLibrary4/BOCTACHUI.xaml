@@ -1992,6 +1992,75 @@
                                 </StackPanel>
                             </Border>
 
+
+                            <Border Margin="0,0,0,8"
+                                    Padding="8"
+                                    Background="#FFECFDF5"
+                                    BorderBrush="#FF86EFAC"
+                                    BorderThickness="1"
+                                    CornerRadius="5">
+                                <StackPanel>
+                                    <TextBlock x:Name="TxtAiGraphCloudStatus"
+                                               Text="GNN CLOUD: CHƯA ĐỒNG BỘ • LOCAL 0 • CHỜ 0"
+                                               FontSize="10.2"
+                                               FontWeight="Bold"
+                                               Foreground="#FF047857"
+                                               TextAlignment="Center"
+                                               TextWrapping="Wrap"/>
+
+                                    <Grid Margin="0,7,0,0">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="8"/>
+                                            <ColumnDefinition Width="*"/>
+                                        </Grid.ColumnDefinitions>
+
+                                        <Button x:Name="BtnAiGraphCloudSync"
+                                                Grid.Column="0"
+                                                Content="ĐỒNG BỘ GRAPH"
+                                                Height="31"
+                                                FontSize="10"
+                                                FontWeight="SemiBold"
+                                                Background="#FFD1FAE5"
+                                                Foreground="#FF047857"
+                                                BorderBrush="#FF6EE7B7"
+                                                Cursor="Hand"
+                                                Click="BtnAiGraphCloudSync_Click"/>
+
+                                        <Button x:Name="BtnAiGraphCloudManage"
+                                                Grid.Column="2"
+                                                Content="QUẢN LÝ CLOUD"
+                                                Height="31"
+                                                FontSize="10"
+                                                FontWeight="SemiBold"
+                                                Background="#FFF0FDF4"
+                                                Foreground="#FF15803D"
+                                                BorderBrush="#FF86EFAC"
+                                                Cursor="Hand"
+                                                Click="BtnAiGraphCloudManage_Click"/>
+                                    </Grid>
+
+                                    <Button x:Name="BtnAiGraphCloudPull"
+                                            Content="KÉO APPROVED GRAPH VỀ MÁY"
+                                            Height="29"
+                                            Margin="0,7,0,0"
+                                            FontSize="9.8"
+                                            FontWeight="SemiBold"
+                                            Background="#FFFFFFFF"
+                                            Foreground="#FF047857"
+                                            BorderBrush="#FFA7F3D0"
+                                            Cursor="Hand"
+                                            Click="BtnAiGraphCloudPull_Click"/>
+
+                                    <TextBlock Margin="0,6,0,0"
+                                               FontSize="9.3"
+                                               Foreground="#FF45635A"
+                                               TextAlignment="Center"
+                                               TextWrapping="Wrap"
+                                               Text="STEP22B2: chỉ upload Graph đã ẩn tên DWG/Handle/layer thô và đổi tọa độ về local. SHA256 canonical chống trùng giữa nhiều máy."/>
+                                </StackPanel>
+                            </Border>
+
                             <Border Margin="0,0,0,8"
                                     Padding="8"
                                     Background="#FFF8FAFC"
@@ -2281,7 +2350,7 @@
                                 <TextBlock FontSize="10.5"
                                            TextWrapping="Wrap"
                                            Foreground="#FF664D10"
-                                           Text="STEP22B: Graph/Topology + GNN Context Model. Graph History được tích lũy theo SHA256; GNN học DN theo topology nhưng vẫn đứng sau bằng chứng geometry/CAD mạnh."/>
+                                           Text="STEP22B2: Graph/GNN + Cloud Dataset. Graph được privacy-sanitize, canonical SHA256, đồng bộ nhiều máy và kéo Approved Graph về bộ train chung."/>
                             </Border>
 
                         </StackPanel>
