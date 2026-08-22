@@ -315,6 +315,13 @@ namespace ClassLibrary4
 
             // STEP21F: chỉ đọc trạng thái export local, không chạy training.
             UpdateAiTrainingStatusUi();
+
+            // STEP22A: Graph chỉ build khi user quét vùng / chạy AI.
+            UpdateAiGraphStatusUi();
+
+            // STEP22B: thử restore GNN model local; lỗi GNN không chặn các AI cũ.
+            TryRestoreMepGraphGnnModel();
+            UpdateAiGnnStatusUi();
         }
 
         private WpfComboBox TimComboBox(string name)
@@ -41469,6 +41476,26 @@ namespace ClassLibrary4
         private int _lastAiTrainingSampleCount = 0;
         private int _lastAiTrainingClassCount = 0;
 
+        // ============================================================
+        // STEP22A - GRAPH / TOPOLOGY ENGINE
+        // Đọc trực tiếp vector CAD, không raster hóa.
+        // Đây là nền deterministic cho STEP22B train GNN thật.
+        // ============================================================
+        private MepGraphEngine _mepGraphEngine = null;
+        private MepGraphSnapshot _lastMepGraphSnapshot = null;
+
+        // ============================================================
+        // STEP22B - GNN CONTEXT MODEL
+        // GraphSAGE-style ONNX model. GNN là bằng chứng bổ sung,
+        // không được ghi đè mù quáng geometry/CAD evidence mạnh.
+        // ============================================================
+        private MepGraphGnnClassifier _mepGraphGnnClassifier = null;
+        private MepGraphTrainingPackExporter _mepGraphTrainingPackExporter = null;
+        private string _mepGraphGnnModelPath = "";
+        private string _mepGraphGnnLabelsPath = "";
+        private string _mepGraphGnnLastError = "";
+        private string _lastMepGnnTrainingFolder = "";
+
         private string SmartSymbolLibraryPath
         {
             get
@@ -42370,6 +42397,666 @@ namespace ClassLibrary4
             }
             catch
             {
+            }
+        }
+
+        private string MepGraphGnnStatePath
+        {
+            get
+            {
+                string appData =
+                    Environment.GetFolderPath(
+                        Environment.SpecialFolder.ApplicationData);
+
+                if (string.IsNullOrWhiteSpace(
+                        appData))
+                {
+                    appData =
+                        Path.GetTempPath();
+                }
+
+                string folder =
+                    Path.Combine(
+                        appData,
+                        "TDL_MEP",
+                        "Graph");
+
+                Directory.CreateDirectory(
+                    folder);
+
+                return
+                    Path.Combine(
+                        folder,
+                        "gnn_model_state.txt");
+            }
+        }
+
+        private MepGraphTrainingPackExporter GetMepGraphTrainingPackExporter()
+        {
+            if (_mepGraphTrainingPackExporter == null)
+            {
+                _mepGraphTrainingPackExporter =
+                    new MepGraphTrainingPackExporter();
+            }
+
+            return
+                _mepGraphTrainingPackExporter;
+        }
+
+        private void SaveMepGraphGnnState()
+        {
+            try
+            {
+                File.WriteAllLines(
+                    MepGraphGnnStatePath,
+                    new[]
+                    {
+                        _mepGraphGnnModelPath ?? "",
+                        _mepGraphGnnLabelsPath ?? ""
+                    },
+                    new UTF8Encoding(
+                        true));
+            }
+            catch
+            {
+            }
+        }
+
+        private void TryRestoreMepGraphGnnModel()
+        {
+            try
+            {
+                if (!File.Exists(
+                        MepGraphGnnStatePath))
+                {
+                    return;
+                }
+
+                string[] lines =
+                    File.ReadAllLines(
+                        MepGraphGnnStatePath);
+
+                if (lines.Length < 2)
+                    return;
+
+                string modelPath =
+                    (lines[0] ?? "")
+                        .Trim();
+
+                string labelsPath =
+                    (lines[1] ?? "")
+                        .Trim();
+
+                if (!File.Exists(
+                        modelPath) ||
+                    !File.Exists(
+                        labelsPath))
+                {
+                    return;
+                }
+
+                LoadMepGraphGnnModel(
+                    modelPath,
+                    labelsPath,
+                    false);
+            }
+            catch
+            {
+            }
+        }
+
+        private bool LoadMepGraphGnnModel(
+            string modelPath,
+            string labelsPath,
+            bool showMessage)
+        {
+            try
+            {
+                DisposeMepGraphGnnClassifier();
+
+                _mepGraphGnnClassifier =
+                    new MepGraphGnnClassifier(
+                        modelPath,
+                        labelsPath);
+
+                _mepGraphGnnModelPath =
+                    Path.GetFullPath(
+                        modelPath);
+
+                _mepGraphGnnLabelsPath =
+                    Path.GetFullPath(
+                        labelsPath);
+
+                _mepGraphGnnLastError =
+                    "";
+
+                SaveMepGraphGnnState();
+                UpdateAiGnnStatusUi();
+
+                if (showMessage)
+                {
+                    MessageBox.Show(
+                        "GNN CONTEXT MODEL ĐÃ NẠP\n\n" +
+                        "Model:\n" +
+                        _mepGraphGnnModelPath +
+                        "\n\nDN classes: " +
+                        _mepGraphGnnClassifier.ClassCount +
+                        "\nContext nodes: " +
+                        _mepGraphGnnClassifier.MaxNodes +
+                        "\nFeatures: " +
+                        _mepGraphGnnClassifier.FeatureCount +
+                        "\n\nGNN sẽ tự tham gia khi AI suy DN VAN / THIẾT BỊ.",
+                        "GNN CONTEXT");
+                }
+
+                return true;
+            }
+            catch (System.Exception ex)
+            {
+                _mepGraphGnnLastError =
+                    ex.GetType().Name +
+                    ": " +
+                    ex.Message;
+
+                DisposeMepGraphGnnClassifier();
+                UpdateAiGnnStatusUi();
+
+                if (showMessage)
+                {
+                    MessageBox.Show(
+                        "Không nạp được GNN ONNX:\n\n" +
+                        _mepGraphGnnLastError +
+                        "\n\nGraph deterministic + AI cũ vẫn chạy bình thường.",
+                        "GNN CONTEXT");
+                }
+
+                return false;
+            }
+        }
+
+        private void DisposeMepGraphGnnClassifier()
+        {
+            try
+            {
+                _mepGraphGnnClassifier?.Dispose();
+            }
+            catch
+            {
+            }
+
+            _mepGraphGnnClassifier =
+                null;
+        }
+
+        private void UpdateAiGnnStatusUi()
+        {
+            try
+            {
+                if (TxtAiGnnStatus == null)
+                    return;
+
+                if (_mepGraphGnnClassifier != null)
+                {
+                    TxtAiGnnStatus.Text =
+                        "GNN CONTEXT: SẴN SÀNG • " +
+                        _mepGraphGnnClassifier.ClassCount +
+                        " DN class • N=" +
+                        _mepGraphGnnClassifier.MaxNodes;
+
+                    TxtAiGnnStatus.Foreground =
+                        new System.Windows.Media.SolidColorBrush(
+                            System.Windows.Media.Color.FromRgb(
+                                91,
+                                33,
+                                182));
+
+                    return;
+                }
+
+                if (!string.IsNullOrWhiteSpace(
+                        _mepGraphGnnLastError))
+                {
+                    TxtAiGnnStatus.Text =
+                        "GNN: LỖI LOAD • " +
+                        _mepGraphGnnLastError;
+
+                    TxtAiGnnStatus.Foreground =
+                        new System.Windows.Media.SolidColorBrush(
+                            System.Windows.Media.Color.FromRgb(
+                                185,
+                                28,
+                                28));
+
+                    return;
+                }
+
+                TxtAiGnnStatus.Text =
+                    "GNN CONTEXT: CHƯA CÓ MODEL • GRAPH cũ vẫn chạy";
+
+                TxtAiGnnStatus.Foreground =
+                    new System.Windows.Media.SolidColorBrush(
+                        System.Windows.Media.Color.FromRgb(
+                            109,
+                            40,
+                            217));
+            }
+            catch
+            {
+            }
+        }
+
+        private void BtnAiGnnLoad_Click(
+            object sender,
+            RoutedEventArgs e)
+        {
+            Microsoft.Win32.OpenFileDialog dialog =
+                new Microsoft.Win32.OpenFileDialog();
+
+            dialog.Title =
+                "Chọn mep_graph_context.onnx";
+
+            dialog.Filter =
+                "ONNX model (*.onnx)|*.onnx|All files (*.*)|*.*";
+
+            dialog.Multiselect =
+                false;
+
+            if (dialog.ShowDialog() !=
+                true)
+            {
+                return;
+            }
+
+            string modelPath =
+                dialog.FileName;
+
+            string folder =
+                Path.GetDirectoryName(
+                    modelPath) ??
+                "";
+
+            string labelsPath =
+                Path.Combine(
+                    folder,
+                    "mep_graph_dn_labels.txt");
+
+            if (!File.Exists(
+                    labelsPath))
+            {
+                Microsoft.Win32.OpenFileDialog labelsDialog =
+                    new Microsoft.Win32.OpenFileDialog();
+
+                labelsDialog.Title =
+                    "Chọn mep_graph_dn_labels.txt";
+
+                labelsDialog.Filter =
+                    "Text labels (*.txt)|*.txt|All files (*.*)|*.*";
+
+                labelsDialog.Multiselect =
+                    false;
+
+                if (labelsDialog.ShowDialog() !=
+                    true)
+                {
+                    return;
+                }
+
+                labelsPath =
+                    labelsDialog.FileName;
+            }
+
+            LoadMepGraphGnnModel(
+                modelPath,
+                labelsPath,
+                true);
+        }
+
+        private void BtnAiGnnExport_Click(
+            object sender,
+            RoutedEventArgs e)
+        {
+            MepGraphTrainingPackResult result =
+                GetMepGraphTrainingPackExporter()
+                    .Export();
+
+            if (!result.Success)
+            {
+                MessageBox.Show(
+                    "Chưa xuất được GNN Dataset:\n\n" +
+                    result.Message,
+                    "GNN DATASET");
+
+                return;
+            }
+
+            _lastMepGnnTrainingFolder =
+                result.ExportFolder ?? "";
+
+            List<string> low =
+                result.DnCounts
+                    .Where(
+                        kv =>
+                            kv.Value < 10)
+                    .OrderBy(
+                        kv =>
+                            kv.Key)
+                    .Select(
+                        kv =>
+                            kv.Key +
+                            "=" +
+                            kv.Value)
+                    .ToList();
+
+            string warning =
+                "";
+
+            if (result.DnClassCount < 2)
+            {
+                warning =
+                    "\n\n⚠ Chưa đủ 2 DN class để train GNN.";
+            }
+            else if (low.Count > 0)
+            {
+                warning =
+                    "\n\n⚠ DN dưới 10 target đáng tin:\n" +
+                    string.Join(
+                        ", ",
+                        low);
+            }
+
+            MessageBox.Show(
+                "ĐÃ XUẤT GNN TRAINING PACK\n\n" +
+                "Graphs: " +
+                result.GraphCount +
+                "\n" +
+                "Pipes: " +
+                result.PipeCount +
+                "\n" +
+                "Ground-truth DN: " +
+                result.ExplicitLabelCount +
+                "\n" +
+                "DN classes: " +
+                result.DnClassCount +
+                "\n\nFolder:\n" +
+                result.ExportFolder +
+                (string.IsNullOrWhiteSpace(
+                     result.ZipPath)
+                    ? ""
+                    : "\n\nZIP:\n" +
+                      result.ZipPath) +
+                warning +
+                "\n\nCopy 3 file STEP22B vào folder rồi chạy RUN_TRAIN_GNN_PY312.bat.",
+                "GNN DATASET");
+        }
+
+        private void BtnAiGnnOpenFolder_Click(
+            object sender,
+            RoutedEventArgs e)
+        {
+            try
+            {
+                string folder =
+                    !string.IsNullOrWhiteSpace(
+                        _lastMepGnnTrainingFolder)
+                        ? _lastMepGnnTrainingFolder
+                        : GetMepGraphTrainingPackExporter()
+                            .DefaultTrainingRoot;
+
+                Directory.CreateDirectory(
+                    folder);
+
+                System.Diagnostics.Process.Start(
+                    new System.Diagnostics.ProcessStartInfo
+                    {
+                        FileName =
+                            "explorer.exe",
+                        Arguments =
+                            "\"" +
+                            folder +
+                            "\"",
+                        UseShellExecute =
+                            true
+                    });
+            }
+            catch (System.Exception ex)
+            {
+                MessageBox.Show(
+                    "Không mở được thư mục GNN train:\n" +
+                    ex.Message,
+                    "GNN DATASET");
+            }
+        }
+
+        private MepGraphGnnClassifier.Prediction GetGnnDnPrediction(
+            Point3d position,
+            Extents3d? deviceExtents)
+        {
+            if (_mepGraphGnnClassifier == null ||
+                _lastMepGraphSnapshot == null)
+            {
+                return null;
+            }
+
+            try
+            {
+                return
+                    _mepGraphGnnClassifier
+                        .PredictDn(
+                            _lastMepGraphSnapshot,
+                            position,
+                            deviceExtents);
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private MepGraphEngine GetMepGraphEngine()
+        {
+            if (_mepGraphEngine == null)
+            {
+                _mepGraphEngine =
+                    new MepGraphEngine();
+            }
+
+            return
+                _mepGraphEngine;
+        }
+
+        private void UpdateAiGraphStatusUi()
+        {
+            try
+            {
+                if (TxtAiGraphStatus == null)
+                    return;
+
+                if (_lastMepGraphSnapshot == null)
+                {
+                    TxtAiGraphStatus.Text =
+                        "GRAPH ENGINE: CHƯA PHÂN TÍCH • GNN FOUNDATION";
+
+                    TxtAiGraphStatus.Foreground =
+                        new System.Windows.Media.SolidColorBrush(
+                            System.Windows.Media.Color.FromRgb(
+                                3,
+                                105,
+                                161));
+
+                    return;
+                }
+
+                TxtAiGraphStatus.Text =
+                    "GRAPH: " +
+                    _lastMepGraphSnapshot.Pipes.Count +
+                    " ống • DN " +
+                    _lastMepGraphSnapshot.KnownDnPipeCount +
+                    "/" +
+                    _lastMepGraphSnapshot.Pipes.Count +
+                    " • nối " +
+                    _lastMepGraphSnapshot.PipeConnectionCount +
+                    " • TB→ống " +
+                    _lastMepGraphSnapshot.DeviceOnPipeCount +
+                    " • mơ hồ " +
+                    _lastMepGraphSnapshot.AmbiguousDeviceCount;
+
+                TxtAiGraphStatus.Foreground =
+                    new System.Windows.Media.SolidColorBrush(
+                        System.Windows.Media.Color.FromRgb(
+                            3,
+                            105,
+                            161));
+            }
+            catch
+            {
+            }
+        }
+
+        private MepGraphSnapshot BuildMepGraphFromSelection(
+            Document doc,
+            ObjectId[] ids,
+            bool showSummary)
+        {
+            if (doc == null ||
+                ids == null ||
+                ids.Length == 0)
+            {
+                return null;
+            }
+
+            try
+            {
+                MepGraphSnapshot snapshot =
+                    GetMepGraphEngine()
+                        .BuildSnapshot(
+                            doc,
+                            ids,
+                            true);
+
+                _lastMepGraphSnapshot =
+                    snapshot;
+
+                UpdateAiGraphStatusUi();
+
+                if (showSummary)
+                {
+                    string graphPath =
+                        GetMepGraphEngine()
+                            .SaveSnapshotToLocalJson(
+                                snapshot);
+
+                    MessageBox.Show(
+                        "AI GRAPH / TOPOLOGY ĐÃ PHÂN TÍCH\n\n" +
+                        "Ống trong graph: " +
+                        snapshot.Pipes.Count +
+                        "\n" +
+                        "Ống có DN: " +
+                        snapshot.KnownDnPipeCount +
+                        "\n" +
+                        "DN kế thừa graph: " +
+                        snapshot.InheritedDnCount +
+                        "\n" +
+                        "Liên kết topology: " +
+                        snapshot.PipeConnectionCount +
+                        "\n" +
+                        "Thiết bị / block: " +
+                        snapshot.Devices.Count +
+                        "\n" +
+                        "Thiết bị gắn được vào ống: " +
+                        snapshot.DeviceOnPipeCount +
+                        "\n" +
+                        "DN thiết bị còn mơ hồ: " +
+                        snapshot.AmbiguousDeviceCount +
+                        (string.IsNullOrWhiteSpace(
+                             graphPath)
+                            ? ""
+                            : "\n\nGraph local:\n" +
+                              graphPath) +
+                        "\n\nGraph này đã được dùng làm context cho nhận diện VAN / THIẾT BỊ.",
+                        "AI GRAPH / TOPOLOGY");
+                }
+
+                return snapshot;
+            }
+            catch (System.Exception ex)
+            {
+                if (showSummary)
+                {
+                    MessageBox.Show(
+                        "Graph Engine gặp lỗi nhưng các AI cũ vẫn hoạt động:\n\n" +
+                        ex.Message,
+                        "AI GRAPH / TOPOLOGY");
+                }
+
+                return null;
+            }
+        }
+
+        private void BtnAiGraphAnalyze_Click(
+            object sender,
+            RoutedEventArgs e)
+        {
+            Document doc =
+                Autodesk.AutoCAD.ApplicationServices.Core.Application
+                    .DocumentManager
+                    .MdiActiveDocument;
+
+            if (doc == null)
+                return;
+
+            try
+            {
+                Autodesk.AutoCAD.ApplicationServices.Core.Application
+                    .MainWindow
+                    .Focus();
+            }
+            catch
+            {
+            }
+
+            PromptSelectionOptions options =
+                new PromptSelectionOptions();
+
+            options.MessageForAdding =
+                "\n[AI GRAPH] Quét vùng gồm đường ống + TEXT DN + VAN / THIẾT BỊ: ";
+
+            PromptSelectionResult result =
+                doc.Editor.GetSelection(
+                    options);
+
+            if (result.Status !=
+                    PromptStatus.OK ||
+                result.Value == null ||
+                result.Value.Count == 0)
+            {
+                return;
+            }
+
+            BuildMepGraphFromSelection(
+                doc,
+                result.Value.GetObjectIds(),
+                true);
+        }
+
+        private MepGraphDnInference GetGraphDnInference(
+            Point3d position,
+            Extents3d? deviceExtents)
+        {
+            if (_lastMepGraphSnapshot == null)
+                return null;
+
+            try
+            {
+                return
+                    GetMepGraphEngine()
+                        .InferDevicePipeSize(
+                            _lastMepGraphSnapshot,
+                            position,
+                            deviceExtents);
+            }
+            catch
+            {
+                return null;
             }
         }
 
@@ -52023,6 +52710,17 @@ namespace ClassLibrary4
                 return;
             }
 
+            // STEP22A:
+            // Build graph ngay trên đúng vùng user vừa quét.
+            // Các bước nhận diện phía dưới sẽ dùng graph này để suy DN/context.
+            _smartValveStage =
+                "GRAPH_BUILD";
+
+            BuildMepGraphFromSelection(
+                doc,
+                psr.Value.GetObjectIds(),
+                false);
+
             rules =
                 rules
                     .Where(
@@ -56397,6 +57095,27 @@ namespace ClassLibrary4
                         deviceDiagonal * 1.25 +
                         250.0));
 
+            // STEP22A/22B - GRAPH + GNN CONTEXT:
+            // lấy thêm phiếu từ topology graph. Graph không thay thế phép đo hình học;
+            // nó chỉ tăng context và xử lý các trường hợp nhiều đoạn/nhánh giống nhau.
+            MepGraphDnInference graphInference =
+                GetGraphDnInference(
+                    insertionPoint,
+                    deviceExtents);
+
+            MepGraphGnnClassifier.Prediction gnnPrediction =
+                GetGnnDnPrediction(
+                    insertionPoint,
+                    deviceExtents);
+
+            bool gnnStrong =
+                gnnPrediction != null &&
+                gnnPrediction.Success &&
+                gnnPrediction.Confidence >=
+                    0.84 &&
+                gnnPrediction.Margin >=
+                    0.08;
+
             Dictionary<string, SmartPipeSizeVote> votes =
                 new Dictionary<string, SmartPipeSizeVote>(
                     StringComparer.OrdinalIgnoreCase);
@@ -56534,7 +57253,75 @@ namespace ClassLibrary4
             }
 
             if (votes.Count == 0)
+            {
+                if (graphInference != null &&
+                    graphInference.Found)
+                {
+                    size =
+                        graphInference.Dn;
+
+                    uncertain =
+                        graphInference.Ambiguous ||
+                        graphInference.Confidence <
+                            0.72;
+
+                    if (gnnStrong)
+                    {
+                        bool agrees =
+                            string.Equals(
+                                gnnPrediction.Dn,
+                                graphInference.Dn,
+                                StringComparison.OrdinalIgnoreCase);
+
+                        if (agrees)
+                        {
+                            if (gnnPrediction.Confidence >=
+                                    0.90 &&
+                                gnnPrediction.Margin >=
+                                    0.12)
+                            {
+                                uncertain =
+                                    false;
+                            }
+                        }
+                        else if (graphInference.Ambiguous &&
+                                 gnnPrediction.Confidence >=
+                                    0.90 &&
+                                 gnnPrediction.Margin >=
+                                    0.12)
+                        {
+                            size =
+                                gnnPrediction.Dn;
+
+                            uncertain =
+                                false;
+                        }
+                        else
+                        {
+                            uncertain =
+                                true;
+                        }
+                    }
+
+                    return true;
+                }
+
+                if (gnnStrong &&
+                    gnnPrediction.Confidence >=
+                        0.88)
+                {
+                    size =
+                        gnnPrediction.Dn;
+
+                    uncertain =
+                        gnnPrediction.Margin <
+                            0.12;
+
+                    return true;
+                }
+
                 return false;
+            }
 
             List<SmartPipeSizeVote> ordered =
                 votes.Values
@@ -56562,8 +57349,59 @@ namespace ClassLibrary4
             size =
                 best.Size;
 
+            // Graph đồng ý với geometry vote => tăng độ chắc chắn.
+            // Graph khác với geometry vote mạnh => không ép, chỉ đánh dấu cần kiểm tra.
+            if (graphInference != null &&
+                graphInference.Found &&
+                graphInference.Confidence >=
+                    0.82)
+            {
+                bool graphAgrees =
+                    string.Equals(
+                        graphInference.Dn,
+                        best.Size,
+                        StringComparison.OrdinalIgnoreCase);
+
+                if (!graphAgrees &&
+                    graphInference.Confidence >=
+                        0.90)
+                {
+                    bool bestPhysicalStrong =
+                        best.CrossesDeviceBox ||
+                        best.AiSupportCount > 0 ||
+                        best.SupportCount >= 2;
+
+                    if (!bestPhysicalStrong)
+                    {
+                        size =
+                            graphInference.Dn;
+
+                        uncertain =
+                            graphInference.Ambiguous;
+
+                        return true;
+                    }
+
+                    uncertain =
+                        true;
+                }
+            }
+
             if (ordered.Count == 1)
             {
+                if (graphInference != null &&
+                    graphInference.Found &&
+                    !string.Equals(
+                        graphInference.Dn,
+                        size,
+                        StringComparison.OrdinalIgnoreCase) &&
+                    graphInference.Confidence >=
+                        0.90)
+                {
+                    uncertain =
+                        true;
+                }
+
                 return true;
             }
 
@@ -56582,6 +57420,53 @@ namespace ClassLibrary4
                 second.AiSupportCount > 0 ||
                 second.SupportCount >= 2;
 
+            if (gnnStrong)
+            {
+                bool gnnAgreesBest =
+                    string.Equals(
+                        gnnPrediction.Dn,
+                        best.Size,
+                        StringComparison.OrdinalIgnoreCase);
+
+                bool graphAgreesGnn =
+                    graphInference != null &&
+                    graphInference.Found &&
+                    string.Equals(
+                        graphInference.Dn,
+                        gnnPrediction.Dn,
+                        StringComparison.OrdinalIgnoreCase);
+
+                if (!gnnAgreesBest &&
+                    gnnPrediction.Confidence >=
+                        0.92 &&
+                    gnnPrediction.Margin >=
+                        0.15)
+                {
+                    if (!bestIsStrong &&
+                        (graphAgreesGnn ||
+                         graphInference == null ||
+                         !graphInference.Found ||
+                         graphInference.Ambiguous))
+                    {
+                        size =
+                            gnnPrediction.Dn;
+
+                        uncertain =
+                            false;
+
+                        return true;
+                    }
+
+                    // Geometry mạnh mà GNN phản đối => bắt user kiểm tra,
+                    // tuyệt đối không cho GNN ghi đè mù quáng.
+                    if (bestIsStrong)
+                    {
+                        uncertain =
+                            true;
+                    }
+                }
+            }
+
             double scoreGap =
                 second.EffectiveScore -
                 best.EffectiveScore;
@@ -56589,6 +57474,53 @@ namespace ClassLibrary4
             if (secondIsStrong &&
                 scoreGap < 90.0)
             {
+                if (graphInference != null &&
+                    graphInference.Found &&
+                    !graphInference.Ambiguous &&
+                    graphInference.Confidence >=
+                        0.90 &&
+                    string.Equals(
+                        graphInference.Dn,
+                        best.Size,
+                        StringComparison.OrdinalIgnoreCase))
+                {
+                    uncertain =
+                        false;
+
+                    return true;
+                }
+
+                if (gnnStrong &&
+                    gnnPrediction.Confidence >=
+                        0.90 &&
+                    gnnPrediction.Margin >=
+                        0.12)
+                {
+                    bool gnnAgreesBest =
+                        string.Equals(
+                            gnnPrediction.Dn,
+                            best.Size,
+                            StringComparison.OrdinalIgnoreCase);
+
+                    bool graphCompatible =
+                        graphInference == null ||
+                        !graphInference.Found ||
+                        graphInference.Ambiguous ||
+                        string.Equals(
+                            graphInference.Dn,
+                            gnnPrediction.Dn,
+                            StringComparison.OrdinalIgnoreCase);
+
+                    if (gnnAgreesBest &&
+                        graphCompatible)
+                    {
+                        uncertain =
+                            false;
+
+                        return true;
+                    }
+                }
+
                 uncertain =
                     true;
 
@@ -56600,6 +57532,48 @@ namespace ClassLibrary4
             if (!bestIsStrong &&
                 scoreGap < 150.0)
             {
+                if (graphInference != null &&
+                    graphInference.Found &&
+                    !graphInference.Ambiguous &&
+                    graphInference.Confidence >=
+                        0.88)
+                {
+                    size =
+                        graphInference.Dn;
+
+                    uncertain =
+                        false;
+
+                    return true;
+                }
+
+                if (gnnStrong &&
+                    gnnPrediction.Confidence >=
+                        0.88 &&
+                    gnnPrediction.Margin >=
+                        0.10)
+                {
+                    bool graphCompatible =
+                        graphInference == null ||
+                        !graphInference.Found ||
+                        graphInference.Ambiguous ||
+                        string.Equals(
+                            graphInference.Dn,
+                            gnnPrediction.Dn,
+                            StringComparison.OrdinalIgnoreCase);
+
+                    if (graphCompatible)
+                    {
+                        size =
+                            gnnPrediction.Dn;
+
+                        uncertain =
+                            false;
+
+                        return true;
+                    }
+                }
+
                 uncertain =
                     true;
 
@@ -60771,6 +61745,7 @@ namespace ClassLibrary4
             StopReview3DEscapeWatcher();
 
             DisposeOnnxSymbolClassifier();
+            DisposeMepGraphGnnClassifier();
         }
 
         /// <summary>
@@ -62687,6 +63662,14 @@ namespace ClassLibrary4
                 AnalyzeAndDrawAiPipeTakeoff(
                     doc,
                     psr.Value);
+
+            // STEP22A:
+            // Sau khi AI PIPE tạo overlay DN, build graph lại để graph lấy luôn
+            // nguồn TDL_AI_PIPE_DN... có confidence cao.
+            BuildMepGraphFromSelection(
+                doc,
+                psr.Value.GetObjectIds(),
+                false);
 
             if (run == null ||
                 run.OutputSegmentCount <= 0)

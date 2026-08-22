@@ -1831,7 +1831,7 @@
                                                FontWeight="Bold"
                                                Foreground="#FF223A5E"
                                                HorizontalAlignment="Center"/>
-                                    <TextBlock Text="CAD Native + Vector + ONNX Vision + Topology + Local/Cloud Learning"
+                                    <TextBlock Text="CAD Native + GRAPH/Topology + ONNX Vision + Local/Cloud Learning"
                                                Margin="0,5,0,0"
                                                FontSize="10.5"
                                                TextWrapping="Wrap"
@@ -1877,6 +1877,120 @@
                                     </ToolTip>
                                 </Button.ToolTip>
                             </Button>
+
+
+                            <Border Margin="0,0,0,8"
+                                    Padding="8"
+                                    Background="#FFF0F9FF"
+                                    BorderBrush="#FF7DD3FC"
+                                    BorderThickness="1"
+                                    CornerRadius="5">
+                                <StackPanel>
+                                    <TextBlock x:Name="TxtAiGraphStatus"
+                                               Text="GRAPH ENGINE: CHƯA PHÂN TÍCH • GNN FOUNDATION"
+                                               FontSize="10.5"
+                                               FontWeight="Bold"
+                                               Foreground="#FF0369A1"
+                                               TextAlignment="Center"
+                                               TextWrapping="Wrap"/>
+
+                                    <Button x:Name="BtnAiGraphAnalyze"
+                                            Content="AI GRAPH / TOPOLOGY"
+                                            Height="32"
+                                            Margin="0,7,0,0"
+                                            FontSize="10.5"
+                                            FontWeight="SemiBold"
+                                            Background="#FFE0F2FE"
+                                            Foreground="#FF0369A1"
+                                            BorderBrush="#FF7DD3FC"
+                                            Cursor="Hand"
+                                            Click="BtnAiGraphAnalyze_Click">
+                                        <Button.ToolTip>
+                                            <ToolTip>
+                                                <TextBlock MaxWidth="320"
+                                                           TextWrapping="Wrap"
+                                                           Text="Đọc trực tiếp Line/Polyline/Arc/Block/Text từ CAD, tạo graph CONNECTED / ON_PIPE / HAS_DN. Không raster hóa. Graph tự hỗ trợ suy DN cho van/thiết bị."/>
+                                            </ToolTip>
+                                        </Button.ToolTip>
+                                    </Button>
+
+                                    <TextBlock Margin="0,6,0,0"
+                                               FontSize="9.5"
+                                               Foreground="#FF475569"
+                                               TextAlignment="Center"
+                                               TextWrapping="Wrap"
+                                               Text="STEP22A: graph deterministic chạy ngay. Dữ liệu graph được lưu local để STEP22B train GNN thật."/>
+                                </StackPanel>
+                            </Border>
+
+
+                            <Border Margin="0,0,0,8"
+                                    Padding="8"
+                                    Background="#FFF5F3FF"
+                                    BorderBrush="#FFC4B5FD"
+                                    BorderThickness="1"
+                                    CornerRadius="5">
+                                <StackPanel>
+                                    <TextBlock x:Name="TxtAiGnnStatus"
+                                               Text="GNN CONTEXT: CHƯA CÓ MODEL • GRAPH cũ vẫn chạy"
+                                               FontSize="10.5"
+                                               FontWeight="Bold"
+                                               Foreground="#FF6D28D9"
+                                               TextAlignment="Center"
+                                               TextWrapping="Wrap"/>
+
+                                    <Grid Margin="0,7,0,0">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="8"/>
+                                            <ColumnDefinition Width="*"/>
+                                        </Grid.ColumnDefinitions>
+
+                                        <Button x:Name="BtnAiGnnLoad"
+                                                Grid.Column="0"
+                                                Content="NẠP GNN ONNX"
+                                                Height="31"
+                                                FontSize="10"
+                                                FontWeight="SemiBold"
+                                                Background="#FFEDE9FE"
+                                                Foreground="#FF6D28D9"
+                                                BorderBrush="#FFC4B5FD"
+                                                Cursor="Hand"
+                                                Click="BtnAiGnnLoad_Click"/>
+
+                                        <Button x:Name="BtnAiGnnExport"
+                                                Grid.Column="2"
+                                                Content="XUẤT GNN DATASET"
+                                                Height="31"
+                                                FontSize="10"
+                                                FontWeight="SemiBold"
+                                                Background="#FFFAF5FF"
+                                                Foreground="#FF7E22CE"
+                                                BorderBrush="#FFD8B4FE"
+                                                Cursor="Hand"
+                                                Click="BtnAiGnnExport_Click"/>
+                                    </Grid>
+
+                                    <Button x:Name="BtnAiGnnOpenFolder"
+                                            Content="MỞ THƯ MỤC GNN TRAIN"
+                                            Height="29"
+                                            Margin="0,7,0,0"
+                                            FontSize="9.8"
+                                            FontWeight="SemiBold"
+                                            Background="#FFFFFFFF"
+                                            Foreground="#FF6D28D9"
+                                            BorderBrush="#FFE9D5FF"
+                                            Cursor="Hand"
+                                            Click="BtnAiGnnOpenFolder_Click"/>
+
+                                    <TextBlock Margin="0,6,0,0"
+                                               FontSize="9.5"
+                                               Foreground="#FF6B5B7A"
+                                               TextAlignment="Center"
+                                               TextWrapping="Wrap"
+                                               Text="STEP22B: GraphSAGE-style context model. GNN chỉ thêm bằng chứng cho DN; geometry mạnh không bị ghi đè mù quáng."/>
+                                </StackPanel>
+                            </Border>
 
                             <Border Margin="0,0,0,8"
                                     Padding="8"
@@ -2167,7 +2281,7 @@
                                 <TextBlock FontSize="10.5"
                                            TextWrapping="Wrap"
                                            Foreground="#FF664D10"
-                                           Text="STEP21F: Approved Dataset → Training Pack → train classifier → export mep_symbol_classifier.onnx. Plugin chỉ xuất dữ liệu; việc train chạy trên 1 máy riêng để không làm treo AutoCAD."/>
+                                           Text="STEP22B: Graph/Topology + GNN Context Model. Graph History được tích lũy theo SHA256; GNN học DN theo topology nhưng vẫn đứng sau bằng chứng geometry/CAD mạnh."/>
                             </Border>
 
                         </StackPanel>
