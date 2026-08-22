@@ -1,14 +1,16 @@
-#nullable disable
+#nullable enable
 using System;
 using System.Collections.Generic;
-using System.ComponentModel;
 using System.Globalization;
 using System.IO;
 using System.Net;
+using System.Net.Http;
+using System.Net.Http.Headers;
 using System.Reflection;
 using System.Security.Cryptography;
 using System.Text;
-using System.Text.RegularExpressions;
+using System.Text.Json;
+using System.Threading;
 using System.Windows;
 using Microsoft.Win32;
 
@@ -30,42 +32,86 @@ namespace ClassLibrary4
     internal sealed class LicenseApiResult
     {
         public LicenseRequestState State { get; set; }
-        public string Message { get; set; }
-        public string Plan { get; set; }
+        public string Message { get; set; } = "";
+        public string Plan { get; set; } = "";
         public DateTimeOffset? ExpiresAtUtc { get; set; }
         public DateTimeOffset ServerTimeUtc { get; set; }
     }
 
     internal sealed class LicenseCacheData
     {
-        public string LicenseKey { get; set; }
-        public string MachineId { get; set; }
-        public string Plan { get; set; }
+        public string LicenseKey { get; set; } = "";
+        public string MachineId { get; set; } = "";
+        public string Plan { get; set; } = "";
         public DateTimeOffset? ExpiresAtUtc { get; set; }
         public DateTimeOffset LastOnlineCheckUtc { get; set; }
         public DateTimeOffset LastServerTimeUtc { get; set; }
     }
 
+    internal sealed class LicenseClientConfig
+    {
+        public string SupabaseProjectUrl { get; set; } = "";
+        public string SupabasePublishableKey { get; set; } = "";
+        public string LicenseFunctionName { get; set; } = "license";
+        public int HttpTimeoutSeconds { get; set; } = 12;
+
+        public void Normalize()
+        {
+            SupabaseProjectUrl =
+                (SupabaseProjectUrl ?? "").Trim().TrimEnd('/');
+
+            SupabasePublishableKey =
+                (SupabasePublishableKey ?? "").Trim();
+
+            LicenseFunctionName =
+                string.IsNullOrWhiteSpace(LicenseFunctionName)
+                    ? "license"
+                    : LicenseFunctionName.Trim().Trim('/');
+
+            if (HttpTimeoutSeconds < 3)
+                HttpTimeoutSeconds = 3;
+            else if (HttpTimeoutSeconds > 60)
+                HttpTimeoutSeconds = 60;
+        }
+
+        public bool IsConfigured =>
+            Uri.TryCreate(
+                SupabaseProjectUrl,
+                UriKind.Absolute,
+                out Uri? uri) &&
+            (uri.Scheme == Uri.UriSchemeHttps ||
+             uri.Scheme == Uri.UriSchemeHttp) &&
+            !string.IsNullOrWhiteSpace(SupabasePublishableKey) &&
+            !string.IsNullOrWhiteSpace(LicenseFunctionName);
+    }
+
     public static class OnlineLicenseManager
     {
-        // Chỉ chứa Project URL và Publishable key công khai.
-        // KHÔNG đặt sb_secret hoặc service_role trong file DLL này.
-        private const string SupabaseProjectUrl =
-            "https://qjcjljbkkmzzsqjnmyzn.supabase.co";
+        private const string LicenseConfigFileName =
+            "license_client_config.json";
 
-        private const string SupabasePublishableKey =
-            "sb_publishable_YdPKZ38JjLr237rGk1MxrA_bT2AMG7_";
-
-        private const string LicenseFunctionName = "license";
         private const int OfflineGraceDays = 3;
-        private const int HttpTimeoutMilliseconds = 12000;
+
+        // Giữ nguyên version/salt để cache license cũ vẫn đọc được sau khi nâng cấp.
         private const string CacheSignatureSalt =
             "TDL-MEP-LICENSE-CACHE-20260811-V1";
 
+        private static readonly HttpClient Http =
+            new HttpClient
+            {
+                // Timeout quản lý theo từng request bằng CancellationTokenSource.
+                Timeout = Timeout.InfiniteTimeSpan
+            };
+
+        private static readonly JsonSerializerOptions JsonOptions =
+            new JsonSerializerOptions
+            {
+                PropertyNameCaseInsensitive = true,
+                WriteIndented = true
+            };
+
         // Chỉ kiểm tra online một lần trong mỗi phiên AutoCAD.
-        // Lệnh HIENBANG kiểm tra trước; constructor BOCTACHUI gọi lại sẽ
-        // nhận true ngay, không phát sinh thêm một request mạng.
-        private static bool _sessionActivated = false;
+        private static bool _sessionActivated;
 
         public static bool EnsureActivated()
         {
@@ -73,8 +119,8 @@ namespace ClassLibrary4
                 return true;
 
             string machineId = GetMachineId();
-            LicenseCacheData cache = LoadCache(machineId);
-            string initialKey = cache != null ? cache.LicenseKey : "";
+            LicenseCacheData? cache = LoadCache(machineId);
+            string initialKey = cache?.LicenseKey ?? "";
             string initialMessage = "";
 
             if (cache != null &&
@@ -91,6 +137,7 @@ namespace ClassLibrary4
                         cache.LicenseKey,
                         machineId,
                         validation);
+
                     _sessionActivated = true;
                     return true;
                 }
@@ -117,8 +164,10 @@ namespace ClassLibrary4
             bool? result = activationWindow.ShowDialog();
             bool activated =
                 result == true && activationWindow.IsActivated;
+
             if (activated)
                 _sessionActivated = true;
+
             return activated;
         }
 
@@ -159,28 +208,28 @@ namespace ClassLibrary4
 
             try
             {
-                using (RegistryKey baseKey = RegistryKey.OpenBaseKey(
+                using RegistryKey baseKey = RegistryKey.OpenBaseKey(
                     RegistryHive.LocalMachine,
-                    RegistryView.Registry64))
-                using (RegistryKey key = baseKey.OpenSubKey(
-                    @"SOFTWARE\Microsoft\Cryptography"))
-                {
-                    machineGuid = Convert.ToString(
-                        key != null ? key.GetValue("MachineGuid") : null,
-                        CultureInfo.InvariantCulture) ?? "";
-                }
+                    RegistryView.Registry64);
+
+                using RegistryKey? key = baseKey.OpenSubKey(
+                    @"SOFTWARE\Microsoft\Cryptography");
+
+                machineGuid = Convert.ToString(
+                    key?.GetValue("MachineGuid"),
+                    CultureInfo.InvariantCulture) ?? "";
             }
             catch
             {
                 try
                 {
-                    using (RegistryKey key = Registry.LocalMachine.OpenSubKey(
-                        @"SOFTWARE\Microsoft\Cryptography"))
-                    {
-                        machineGuid = Convert.ToString(
-                            key != null ? key.GetValue("MachineGuid") : null,
-                            CultureInfo.InvariantCulture) ?? "";
-                    }
+                    using RegistryKey? key =
+                        Registry.LocalMachine.OpenSubKey(
+                            @"SOFTWARE\Microsoft\Cryptography");
+
+                    machineGuid = Convert.ToString(
+                        key?.GetValue("MachineGuid"),
+                        CultureInfo.InvariantCulture) ?? "";
                 }
                 catch
                 {
@@ -207,6 +256,7 @@ namespace ClassLibrary4
                 return "UNKNOWN";
 
             string value = machineId.Trim().ToUpperInvariant();
+
             if (value.Length < 16)
                 return value;
 
@@ -221,7 +271,9 @@ namespace ClassLibrary4
 
             return expiresAtUtc.Value
                 .ToLocalTime()
-                .ToString("dd/MM/yyyy HH:mm", CultureInfo.InvariantCulture);
+                .ToString(
+                    "dd/MM/yyyy HH:mm",
+                    CultureInfo.InvariantCulture);
         }
 
         private static LicenseApiResult RequestLicense(
@@ -229,86 +281,136 @@ namespace ClassLibrary4
             string licenseKey,
             string machineId)
         {
+            LicenseClientConfig config = LoadClientConfig();
+
+            if (!config.IsConfigured)
+            {
+                return new LicenseApiResult
+                {
+                    State = LicenseRequestState.NetworkError,
+                    Message =
+                        "Thiếu cấu hình license_client_config.json. " +
+                        "Hãy kiểm tra file này nằm cùng thư mục DLL của plugin."
+                };
+            }
+
+            string endpoint =
+                config.SupabaseProjectUrl +
+                "/functions/v1/" +
+                config.LicenseFunctionName;
+
+            string appVersion = GetCurrentAppVersion();
+
+            string json = JsonSerializer.Serialize(
+                new
+                {
+                    action,
+                    license_key = NormalizeDisplayKey(licenseKey),
+                    machine_id = machineId,
+                    app_version = appVersion
+                },
+                JsonOptions);
+
+            using HttpRequestMessage request =
+                new HttpRequestMessage(
+                    HttpMethod.Post,
+                    endpoint);
+
+            request.Headers.TryAddWithoutValidation(
+                "apikey",
+                config.SupabasePublishableKey);
+
+            request.Headers.TryAddWithoutValidation(
+                "Accept",
+                "application/json");
+
+            // Legacy anon key là JWT (eyJ...). Publishable key mới
+            // sb_publishable_* KHÔNG gửi làm Bearer.
+            if (config.SupabasePublishableKey.StartsWith(
+                    "eyJ",
+                    StringComparison.Ordinal))
+            {
+                request.Headers.Authorization =
+                    new AuthenticationHeaderValue(
+                        "Bearer",
+                        config.SupabasePublishableKey);
+            }
+
+            request.Content =
+                new StringContent(
+                    json,
+                    Encoding.UTF8,
+                    "application/json");
+
+            using CancellationTokenSource cts =
+                new CancellationTokenSource(
+                    TimeSpan.FromSeconds(
+                        config.HttpTimeoutSeconds));
+
             try
             {
-                ServicePointManager.SecurityProtocol |=
-                    SecurityProtocolType.Tls12;
+                using HttpResponseMessage response =
+                    Http.SendAsync(
+                            request,
+                            HttpCompletionOption.ResponseContentRead,
+                            cts.Token)
+                        .ConfigureAwait(false)
+                        .GetAwaiter()
+                        .GetResult();
 
-                string endpoint =
-                    SupabaseProjectUrl.TrimEnd('/') +
-                    "/functions/v1/" + LicenseFunctionName;
+                string responseBody =
+                    response.Content
+                        .ReadAsStringAsync(cts.Token)
+                        .ConfigureAwait(false)
+                        .GetAwaiter()
+                        .GetResult();
 
-                string appVersion = "";
-                try
+                if (response.IsSuccessStatusCode)
+                    return ParseLicenseResponse(responseBody);
+
+                int statusCode = (int)response.StatusCode;
+
+                // 429/5xx là lỗi tạm thời của mạng/server -> giữ quyền offline grace.
+                if (response.StatusCode == HttpStatusCode.TooManyRequests ||
+                    statusCode >= 500)
                 {
-                    Version version = Assembly
-                        .GetExecutingAssembly()
-                        .GetName()
-                        .Version;
-                    appVersion = version != null
-                        ? version.ToString()
-                        : "";
-                }
-                catch
-                {
-                    appVersion = "";
-                }
-
-                string body =
-                    "{" +
-                    "\"action\":\"" + JsonEscape(action) + "\"," +
-                    "\"license_key\":\"" +
-                        JsonEscape(NormalizeDisplayKey(licenseKey)) + "\"," +
-                    "\"machine_id\":\"" +
-                        JsonEscape(machineId) + "\"," +
-                    "\"app_version\":\"" +
-                        JsonEscape(appVersion) + "\"" +
-                    "}";
-
-                byte[] bodyBytes = Encoding.UTF8.GetBytes(body);
-                HttpWebRequest request =
-                    (HttpWebRequest)WebRequest.Create(endpoint);
-
-                request.Method = "POST";
-                request.ContentType = "application/json; charset=utf-8";
-                request.Accept = "application/json";
-                request.Timeout = HttpTimeoutMilliseconds;
-                request.ReadWriteTimeout = HttpTimeoutMilliseconds;
-                request.KeepAlive = false;
-                request.ContentLength = bodyBytes.Length;
-                request.Headers["apikey"] = SupabasePublishableKey;
-                request.Headers[HttpRequestHeader.Authorization] =
-                    "Bearer " + SupabasePublishableKey;
-
-                using (Stream requestStream = request.GetRequestStream())
-                {
-                    requestStream.Write(
-                        bodyBytes,
-                        0,
-                        bodyBytes.Length);
+                    return new LicenseApiResult
+                    {
+                        State = LicenseRequestState.NetworkError,
+                        Message =
+                            "Máy chủ kích hoạt đang tạm thời không sẵn sàng " +
+                            "(" + statusCode.ToString(
+                                CultureInfo.InvariantCulture) + ")."
+                    };
                 }
 
-                using (HttpWebResponse response =
-                    (HttpWebResponse)request.GetResponse())
-                using (Stream responseStream = response.GetResponseStream())
-                using (StreamReader reader = new StreamReader(
-                    responseStream,
-                    Encoding.UTF8))
+                LicenseApiResult rejected =
+                    ParseLicenseResponse(responseBody);
+
+                rejected.State = LicenseRequestState.Rejected;
+
+                if (string.IsNullOrWhiteSpace(rejected.Message))
                 {
-                    return ParseLicenseResponse(reader.ReadToEnd());
+                    rejected.Message =
+                        "Key không hợp lệ hoặc yêu cầu bị từ chối " +
+                        "(" + statusCode.ToString(
+                            CultureInfo.InvariantCulture) + ").";
                 }
+
+                return rejected;
             }
-            catch (WebException ex)
+            catch (OperationCanceledException)
             {
-                string serverBody = ReadWebExceptionBody(ex);
-                if (!string.IsNullOrWhiteSpace(serverBody))
+                return new LicenseApiResult
                 {
-                    LicenseApiResult rejected =
-                        ParseLicenseResponse(serverBody);
-                    if (rejected.State != LicenseRequestState.Success)
-                        return rejected;
-                }
-
+                    State = LicenseRequestState.NetworkError,
+                    Message =
+                        "Kết nối máy chủ kích hoạt quá thời gian. " +
+                        "Vui lòng kiểm tra Internet rồi thử lại."
+                };
+            }
+            catch (HttpRequestException)
+            {
                 return new LicenseApiResult
                 {
                     State = LicenseRequestState.NetworkError,
@@ -329,19 +431,125 @@ namespace ClassLibrary4
             }
         }
 
+        private static string GetCurrentAppVersion()
+        {
+            try
+            {
+                Version? version =
+                    Assembly.GetExecutingAssembly()
+                        .GetName()
+                        .Version;
+
+                return version?.ToString() ?? "";
+            }
+            catch
+            {
+                return "";
+            }
+        }
+
+        private static LicenseClientConfig LoadClientConfig()
+        {
+            LicenseClientConfig config = new LicenseClientConfig();
+
+            try
+            {
+                string? assemblyPath =
+                    Assembly.GetExecutingAssembly().Location;
+
+                string baseFolder =
+                    !string.IsNullOrWhiteSpace(assemblyPath)
+                        ? Path.GetDirectoryName(assemblyPath) ?? AppContext.BaseDirectory
+                        : AppContext.BaseDirectory;
+
+                string configPath =
+                    Path.Combine(
+                        baseFolder,
+                        LicenseConfigFileName);
+
+                if (File.Exists(configPath))
+                {
+                    config =
+                        JsonSerializer.Deserialize<LicenseClientConfig>(
+                            File.ReadAllText(
+                                configPath,
+                                Encoding.UTF8),
+                            JsonOptions) ??
+                        new LicenseClientConfig();
+                }
+            }
+            catch
+            {
+                config = new LicenseClientConfig();
+            }
+
+            // Cho phép IT/deployment override mà không cần sửa file/DLL.
+            string? envUrl =
+                Environment.GetEnvironmentVariable(
+                    "TDL_MEP_SUPABASE_URL");
+
+            string? envKey =
+                Environment.GetEnvironmentVariable(
+                    "TDL_MEP_SUPABASE_PUBLISHABLE_KEY");
+
+            string? envFunction =
+                Environment.GetEnvironmentVariable(
+                    "TDL_MEP_LICENSE_FUNCTION");
+
+            if (!string.IsNullOrWhiteSpace(envUrl))
+                config.SupabaseProjectUrl = envUrl;
+
+            if (!string.IsNullOrWhiteSpace(envKey))
+                config.SupabasePublishableKey = envKey;
+
+            if (!string.IsNullOrWhiteSpace(envFunction))
+                config.LicenseFunctionName = envFunction;
+
+            config.Normalize();
+            return config;
+        }
+
         private static LicenseApiResult ParseLicenseResponse(string json)
         {
-            bool ok = Regex.IsMatch(
-                json ?? "",
-                "\\\"ok\\\"\\s*:\\s*true",
-                RegexOptions.IgnoreCase);
+            bool ok = false;
+            string message = "";
+            string plan = "";
+            string expires = "";
+            string serverTime = "";
 
-            string message = GetJsonString(json, "message");
-            string plan = GetJsonString(json, "plan");
-            string expires = GetJsonString(json, "expires_at");
-            string serverTime = GetJsonString(json, "server_time");
+            try
+            {
+                using JsonDocument document =
+                    JsonDocument.Parse(
+                        string.IsNullOrWhiteSpace(json)
+                            ? "{}"
+                            : json);
+
+                JsonElement root = document.RootElement;
+
+                if (root.ValueKind == JsonValueKind.Object)
+                {
+                    if (root.TryGetProperty("ok", out JsonElement okElement))
+                    {
+                        if (okElement.ValueKind == JsonValueKind.True)
+                            ok = true;
+                        else if (okElement.ValueKind == JsonValueKind.False)
+                            ok = false;
+                    }
+
+                    message = GetJsonString(root, "message");
+                    plan = GetJsonString(root, "plan");
+                    expires = GetJsonString(root, "expires_at");
+                    serverTime = GetJsonString(root, "server_time");
+                }
+            }
+            catch
+            {
+                // Server trả nội dung không phải JSON -> xử lý như rejected.
+            }
 
             DateTimeOffset parsedServerTime;
+
             if (!DateTimeOffset.TryParse(
                     serverTime,
                     CultureInfo.InvariantCulture,
@@ -351,13 +559,13 @@ namespace ClassLibrary4
                 parsedServerTime = DateTimeOffset.UtcNow;
             }
 
-            DateTimeOffset parsedExpiry;
             DateTimeOffset? expiry = null;
+
             if (DateTimeOffset.TryParse(
                     expires,
                     CultureInfo.InvariantCulture,
                     DateTimeStyles.RoundtripKind,
-                    out parsedExpiry))
+                    out DateTimeOffset parsedExpiry))
             {
                 expiry = parsedExpiry.ToUniversalTime();
             }
@@ -367,85 +575,43 @@ namespace ClassLibrary4
                 State = ok
                     ? LicenseRequestState.Success
                     : LicenseRequestState.Rejected,
+
                 Message = !string.IsNullOrWhiteSpace(message)
                     ? message
                     : (ok
                         ? "Kích hoạt thành công."
                         : "Key không hợp lệ hoặc đã hết hạn."),
-                Plan = plan ?? "",
+
+                Plan = plan,
                 ExpiresAtUtc = expiry,
                 ServerTimeUtc = parsedServerTime.ToUniversalTime()
             };
         }
 
-        private static string ReadWebExceptionBody(WebException ex)
-        {
-            try
-            {
-                if (ex == null || ex.Response == null)
-                    return "";
-
-                using (WebResponse response = ex.Response)
-                using (Stream stream = response.GetResponseStream())
-                using (StreamReader reader = new StreamReader(
-                    stream,
-                    Encoding.UTF8))
-                {
-                    return reader.ReadToEnd();
-                }
-            }
-            catch
-            {
-                return "";
-            }
-        }
-
         private static string GetJsonString(
-            string json,
+            JsonElement root,
             string propertyName)
         {
-            if (string.IsNullOrWhiteSpace(json))
+            if (!root.TryGetProperty(
+                    propertyName,
+                    out JsonElement value))
+            {
                 return "";
+            }
 
-            Match match = Regex.Match(
-                json,
-                "\\\"" + Regex.Escape(propertyName) +
-                "\\\"\\s*:\\s*\\\"((?:\\\\.|[^\\\"])*)\\\"",
-                RegexOptions.IgnoreCase);
+            if (value.ValueKind == JsonValueKind.String)
+                return value.GetString() ?? "";
 
-            if (!match.Success)
+            if (value.ValueKind == JsonValueKind.Null ||
+                value.ValueKind == JsonValueKind.Undefined)
+            {
                 return "";
+            }
 
-            return JsonUnescape(match.Groups[1].Value);
+            return value.ToString();
         }
 
-        private static string JsonEscape(string value)
-        {
-            if (value == null)
-                return "";
-
-            return value
-                .Replace("\\", "\\\\")
-                .Replace("\"", "\\\"")
-                .Replace("\r", "\\r")
-                .Replace("\n", "\\n")
-                .Replace("\t", "\\t");
-        }
-
-        private static string JsonUnescape(string value)
-        {
-            if (value == null)
-                return "";
-
-            return value
-                .Replace("\\r", "\r")
-                .Replace("\\n", "\n")
-                .Replace("\\t", "\t")
-                .Replace("\\\"", "\"")
-                .Replace("\\\\", "\\");
-        }
-
-        private static string NormalizeDisplayKey(string value)
+        private static string NormalizeDisplayKey(string? value)
         {
             return (value ?? "")
                 .Trim()
@@ -455,9 +621,6 @@ namespace ClassLibrary4
 
         private static bool IsOfflineGraceValid(LicenseCacheData cache)
         {
-            if (cache == null)
-                return false;
-
             DateTimeOffset now = DateTimeOffset.UtcNow;
 
             if (cache.ExpiresAtUtc.HasValue &&
@@ -487,7 +650,9 @@ namespace ClassLibrary4
                 "ThaiDinhLam",
                 "MEPTool");
 
-            return Path.Combine(folder, "license.cache");
+            return Path.Combine(
+                folder,
+                "license.cache");
         }
 
         private static void SaveCache(
@@ -498,19 +663,23 @@ namespace ClassLibrary4
             try
             {
                 string path = GetCacheFilePath();
-                string folder = Path.GetDirectoryName(path);
-                if (!Directory.Exists(folder))
-                    Directory.CreateDirectory(folder);
+                string? folder = Path.GetDirectoryName(path);
 
-                DateTimeOffset serverTime = result.ServerTimeUtc == default(
-                    DateTimeOffset)
-                    ? DateTimeOffset.UtcNow
-                    : result.ServerTimeUtc.ToUniversalTime();
+                if (!string.IsNullOrWhiteSpace(folder) &&
+                    !Directory.Exists(folder))
+                {
+                    Directory.CreateDirectory(folder);
+                }
+
+                DateTimeOffset serverTime =
+                    result.ServerTimeUtc == default
+                        ? DateTimeOffset.UtcNow
+                        : result.ServerTimeUtc.ToUniversalTime();
 
                 string payload = BuildCachePayload(
                     NormalizeDisplayKey(licenseKey),
                     machineId,
-                    result.Plan ?? "",
+                    result.Plan,
                     result.ExpiresAtUtc,
                     DateTimeOffset.UtcNow,
                     serverTime);
@@ -521,7 +690,8 @@ namespace ClassLibrary4
 
                 File.WriteAllText(
                     path,
-                    payload + "signature=" + signature + Environment.NewLine,
+                    payload +
+                    "signature=" + signature + Environment.NewLine,
                     new UTF8Encoding(false));
             }
             catch
@@ -530,15 +700,20 @@ namespace ClassLibrary4
             }
         }
 
-        private static LicenseCacheData LoadCache(string machineId)
+        private static LicenseCacheData? LoadCache(string machineId)
         {
             try
             {
                 string path = GetCacheFilePath();
+
                 if (!File.Exists(path))
                     return null;
 
-                string[] lines = File.ReadAllLines(path, Encoding.UTF8);
+                string[] lines =
+                    File.ReadAllLines(
+                        path,
+                        Encoding.UTF8);
+
                 Dictionary<string, string> values =
                     new Dictionary<string, string>(
                         StringComparer.OrdinalIgnoreCase);
@@ -546,6 +721,7 @@ namespace ClassLibrary4
                 foreach (string line in lines)
                 {
                     int separator = line.IndexOf('=');
+
                     if (separator <= 0)
                         continue;
 
@@ -569,20 +745,27 @@ namespace ClassLibrary4
                     return null;
                 }
 
-                DateTimeOffset lastOnline;
-                DateTimeOffset lastServer;
-                if (!TryParseUtc(checkedText, out lastOnline) ||
-                    !TryParseUtc(serverText, out lastServer))
+                if (!TryParseUtc(
+                        checkedText,
+                        out DateTimeOffset lastOnline) ||
+                    !TryParseUtc(
+                        serverText,
+                        out DateTimeOffset lastServer))
                 {
                     return null;
                 }
 
-                DateTimeOffset parsedExpiry;
                 DateTimeOffset? expiry = null;
+
                 if (!string.IsNullOrWhiteSpace(expiresText))
                 {
-                    if (!TryParseUtc(expiresText, out parsedExpiry))
+                    if (!TryParseUtc(
+                            expiresText,
+                            out DateTimeOffset parsedExpiry))
+                    {
                         return null;
+                    }
+
                     expiry = parsedExpiry;
                 }
 
@@ -630,27 +813,38 @@ namespace ClassLibrary4
             DateTimeOffset serverTime)
         {
             StringBuilder builder = new StringBuilder();
+
             builder.AppendLine("version=1");
             builder.AppendLine("key=" + (key ?? ""));
             builder.AppendLine("machine=" + (machine ?? ""));
             builder.AppendLine("plan=" + (plan ?? ""));
+
             builder.AppendLine(
                 "expires=" +
                 (expires.HasValue
-                    ? expires.Value.ToUniversalTime().ToString(
-                        "O",
-                        CultureInfo.InvariantCulture)
+                    ? expires.Value
+                        .ToUniversalTime()
+                        .ToString(
+                            "O",
+                            CultureInfo.InvariantCulture)
                     : ""));
+
             builder.AppendLine(
                 "last_online=" +
-                lastOnline.ToUniversalTime().ToString(
-                    "O",
-                    CultureInfo.InvariantCulture));
+                lastOnline
+                    .ToUniversalTime()
+                    .ToString(
+                        "O",
+                        CultureInfo.InvariantCulture));
+
             builder.AppendLine(
                 "server_time=" +
-                serverTime.ToUniversalTime().ToString(
-                    "O",
-                    CultureInfo.InvariantCulture));
+                serverTime
+                    .ToUniversalTime()
+                    .ToString(
+                        "O",
+                        CultureInfo.InvariantCulture));
+
             return builder.ToString();
         }
 
@@ -658,8 +852,11 @@ namespace ClassLibrary4
             Dictionary<string, string> values,
             string key)
         {
-            string value;
-            return values.TryGetValue(key, out value) ? value : "";
+            return values.TryGetValue(
+                    key,
+                    out string? value)
+                ? value
+                : "";
         }
 
         private static bool TryParseUtc(
@@ -676,7 +873,7 @@ namespace ClassLibrary4
                 return true;
             }
 
-            result = default(DateTimeOffset);
+            result = default;
             return false;
         }
 
@@ -684,44 +881,48 @@ namespace ClassLibrary4
             string payload,
             string machineId)
         {
-            byte[] key = SHA256.Create().ComputeHash(
+            byte[] key = SHA256.HashData(
                 Encoding.UTF8.GetBytes(
                     CacheSignatureSalt + "|" + machineId));
 
-            using (HMACSHA256 hmac = new HMACSHA256(key))
-            {
-                return BytesToHex(hmac.ComputeHash(
+            using HMACSHA256 hmac =
+                new HMACSHA256(key);
+
+            return BytesToHex(
+                hmac.ComputeHash(
                     Encoding.UTF8.GetBytes(payload ?? "")));
-            }
         }
 
         private static string Sha256Hex(string value)
         {
-            using (SHA256 sha = SHA256.Create())
-            {
-                return BytesToHex(sha.ComputeHash(
+            return BytesToHex(
+                SHA256.HashData(
                     Encoding.UTF8.GetBytes(value ?? "")));
-            }
         }
 
         private static string BytesToHex(byte[] bytes)
         {
-            StringBuilder builder = new StringBuilder(bytes.Length * 2);
-            foreach (byte value in bytes)
-                builder.Append(value.ToString("x2", CultureInfo.InvariantCulture));
-            return builder.ToString();
+            return Convert.ToHexString(bytes)
+                .ToLowerInvariant();
         }
 
-        private static bool ConstantTimeEquals(string left, string right)
+        private static bool ConstantTimeEquals(
+            string? left,
+            string? right)
         {
-            if (left == null || right == null || left.Length != right.Length)
+            if (left == null ||
+                right == null ||
+                left.Length != right.Length)
+            {
                 return false;
+            }
 
-            int difference = 0;
-            for (int index = 0; index < left.Length; index++)
-                difference |= left[index] ^ right[index];
+            byte[] leftBytes = Encoding.ASCII.GetBytes(left);
+            byte[] rightBytes = Encoding.ASCII.GetBytes(right);
 
-            return difference == 0;
+            return CryptographicOperations.FixedTimeEquals(
+                leftBytes,
+                rightBytes);
         }
 
         private static void DeleteCache()
@@ -729,12 +930,13 @@ namespace ClassLibrary4
             try
             {
                 string path = GetCacheFilePath();
+
                 if (File.Exists(path))
                     File.Delete(path);
             }
             catch
             {
-                // Bỏ qua lỗi dọn cache; máy chủ vẫn là nguồn xác thực chính.
+                // Bỏ qua lỗi dọn cache; server vẫn là nguồn xác thực chính.
             }
         }
     }
@@ -768,25 +970,42 @@ namespace ClassLibrary4
 
             System.Windows.Controls.Grid root =
                 new System.Windows.Controls.Grid();
-            root.RowDefinitions.Add(new System.Windows.Controls.RowDefinition
-            {
-                Height = new GridLength(72)
-            });
-            root.RowDefinitions.Add(new System.Windows.Controls.RowDefinition
-            {
-                Height = new GridLength(1, GridUnitType.Star)
-            });
+
+            root.RowDefinitions.Add(
+                new System.Windows.Controls.RowDefinition
+                {
+                    Height = new GridLength(72)
+                });
+
+            root.RowDefinitions.Add(
+                new System.Windows.Controls.RowDefinition
+                {
+                    Height = new GridLength(
+                        1,
+                        GridUnitType.Star)
+                });
 
             System.Windows.Controls.Border header =
                 new System.Windows.Controls.Border
                 {
-                    Background = new System.Windows.Media.SolidColorBrush(
-                        System.Windows.Media.Color.FromRgb(0, 120, 215)),
-                    Padding = new Thickness(20, 12, 20, 10)
+                    Background =
+                        new System.Windows.Media.SolidColorBrush(
+                            System.Windows.Media.Color.FromRgb(
+                                0,
+                                120,
+                                215)),
+
+                    Padding =
+                        new Thickness(
+                            20,
+                            12,
+                            20,
+                            10)
                 };
 
             System.Windows.Controls.StackPanel headerContent =
                 new System.Windows.Controls.StackPanel();
+
             headerContent.Children.Add(
                 new System.Windows.Controls.TextBlock
                 {
@@ -795,14 +1014,17 @@ namespace ClassLibrary4
                     FontSize = 18,
                     FontWeight = FontWeights.Bold
                 });
+
             headerContent.Children.Add(
                 new System.Windows.Controls.TextBlock
                 {
-                    Text = "Key được khóa theo máy và kiểm tra hạn dùng từ máy chủ.",
+                    Text =
+                        "Key được khóa theo máy và kiểm tra hạn dùng từ máy chủ.",
                     Foreground = System.Windows.Media.Brushes.White,
                     FontSize = 12,
                     Margin = new Thickness(0, 5, 0, 0)
                 });
+
             header.Child = headerContent;
             root.Children.Add(header);
 
@@ -811,9 +1033,13 @@ namespace ClassLibrary4
                 {
                     Margin = new Thickness(22, 16, 22, 16)
                 };
-            System.Windows.Controls.Grid.SetRow(body, 1);
 
-            body.Children.Add(CreateLabel("Mã máy:"));
+            System.Windows.Controls.Grid.SetRow(
+                body,
+                1);
+
+            body.Children.Add(
+                CreateLabel("Mã máy:"));
 
             System.Windows.Controls.DockPanel machinePanel =
                 new System.Windows.Controls.DockPanel
@@ -821,42 +1047,48 @@ namespace ClassLibrary4
                     Margin = new Thickness(0, 4, 0, 13)
                 };
 
-            WpfButton copyMachineButton = new WpfButton
-            {
-                Content = "SAO CHÉP",
-                Width = 88,
-                Height = 28,
-                Margin = new Thickness(8, 0, 0, 0),
-                FontWeight = FontWeights.Bold
-            };
+            WpfButton copyMachineButton =
+                new WpfButton
+                {
+                    Content = "SAO CHÉP",
+                    Width = 88,
+                    Height = 28,
+                    Margin = new Thickness(8, 0, 0, 0),
+                    FontWeight = FontWeights.Bold
+                };
+
             System.Windows.Controls.DockPanel.SetDock(
                 copyMachineButton,
                 System.Windows.Controls.Dock.Right);
 
-            WpfTextBox machineTextBox = new WpfTextBox
-            {
-                Text = OnlineLicenseManager.GetShortMachineCode(machineId),
-                IsReadOnly = true,
-                Height = 28,
-                VerticalContentAlignment = VerticalAlignment.Center,
-                Background = new System.Windows.Media.SolidColorBrush(
-                    System.Windows.Media.Color.FromRgb(242, 242, 242))
-            };
+            WpfTextBox machineTextBox =
+                new WpfTextBox
+                {
+                    Text =
+                        OnlineLicenseManager.GetShortMachineCode(
+                            machineId),
+                    IsReadOnly = true,
+                    Height = 28,
+                    VerticalContentAlignment =
+                        VerticalAlignment.Center,
+                    Background =
+                        new System.Windows.Media.SolidColorBrush(
+                            System.Windows.Media.Color.FromRgb(
+                                242,
+                                242,
+                                242))
+                };
 
             copyMachineButton.Click += delegate
             {
                 try
                 {
-                    // Sao chép trực tiếp từ WPF TextBox, không tham chiếu
-                    // System.Windows.Clipboard hoặc System.Windows.Forms.Clipboard.
-                    // Cách này loại bỏ hoàn toàn lỗi CS0104 khi dự án dùng cả WPF và WinForms.
                     machineTextBox.SelectAll();
                     machineTextBox.Copy();
                     machineTextBox.Select(0, 0);
                 }
                 catch
                 {
-                    // Clipboard đang bận thì người dùng vẫn có thể bôi đen.
                 }
             };
 
@@ -864,75 +1096,108 @@ namespace ClassLibrary4
             machinePanel.Children.Add(machineTextBox);
             body.Children.Add(machinePanel);
 
-            body.Children.Add(CreateLabel("Nhập key kích hoạt:"));
+            body.Children.Add(
+                CreateLabel("Nhập key kích hoạt:"));
 
-            _keyTextBox = new WpfTextBox
-            {
-                Text = initialKey ?? "",
-                Height = 34,
-                Margin = new Thickness(0, 4, 0, 10),
-                Padding = new Thickness(8, 4, 8, 4),
-                FontSize = 14,
-                FontWeight = FontWeights.SemiBold,
-                CharacterCasing = System.Windows.Controls.CharacterCasing.Upper,
-                VerticalContentAlignment = VerticalAlignment.Center
-            };
-            _keyTextBox.KeyDown += KeyTextBox_KeyDown;
+            _keyTextBox =
+                new WpfTextBox
+                {
+                    Text = initialKey ?? "",
+                    Height = 34,
+                    Margin = new Thickness(0, 4, 0, 10),
+                    Padding = new Thickness(8, 4, 8, 4),
+                    FontSize = 14,
+                    FontWeight = FontWeights.SemiBold,
+                    CharacterCasing =
+                        System.Windows.Controls.CharacterCasing.Upper,
+                    VerticalContentAlignment =
+                        VerticalAlignment.Center
+                };
+
+            _keyTextBox.KeyDown +=
+                KeyTextBox_KeyDown;
+
             body.Children.Add(_keyTextBox);
 
-            _statusText = new System.Windows.Controls.TextBlock
-            {
-                Text = string.IsNullOrWhiteSpace(initialMessage)
-                    ? "Cần có Internet khi kích hoạt lần đầu."
-                    : initialMessage,
-                TextWrapping = TextWrapping.Wrap,
-                MinHeight = 42,
-                Foreground = string.IsNullOrWhiteSpace(initialMessage)
-                    ? System.Windows.Media.Brushes.DimGray
-                    : System.Windows.Media.Brushes.Firebrick,
-                Margin = new Thickness(0, 0, 0, 10)
-            };
+            _statusText =
+                new System.Windows.Controls.TextBlock
+                {
+                    Text =
+                        string.IsNullOrWhiteSpace(initialMessage)
+                            ? "Cần có Internet khi kích hoạt lần đầu."
+                            : initialMessage,
+
+                    TextWrapping = TextWrapping.Wrap,
+                    MinHeight = 42,
+
+                    Foreground =
+                        string.IsNullOrWhiteSpace(initialMessage)
+                            ? System.Windows.Media.Brushes.DimGray
+                            : System.Windows.Media.Brushes.Firebrick,
+
+                    Margin = new Thickness(0, 0, 0, 10)
+                };
+
             body.Children.Add(_statusText);
 
             System.Windows.Controls.Grid buttonGrid =
                 new System.Windows.Controls.Grid();
+
             buttonGrid.ColumnDefinitions.Add(
                 new System.Windows.Controls.ColumnDefinition
                 {
-                    Width = new GridLength(1, GridUnitType.Star)
+                    Width = new GridLength(
+                        1,
+                        GridUnitType.Star)
                 });
+
             buttonGrid.ColumnDefinitions.Add(
                 new System.Windows.Controls.ColumnDefinition
                 {
                     Width = new GridLength(110)
                 });
 
-            _activateButton = new WpfButton
-            {
-                Content = "KÍCH HOẠT ONLINE",
-                Height = 40,
-                Margin = new Thickness(0, 0, 8, 0),
-                Background = new System.Windows.Media.SolidColorBrush(
-                    System.Windows.Media.Color.FromRgb(0, 120, 215)),
-                Foreground = System.Windows.Media.Brushes.White,
-                FontWeight = FontWeights.Bold,
-                BorderThickness = new Thickness(0)
-            };
-            _activateButton.Click += ActivateButton_Click;
+            _activateButton =
+                new WpfButton
+                {
+                    Content = "KÍCH HOẠT ONLINE",
+                    Height = 40,
+                    Margin = new Thickness(0, 0, 8, 0),
+                    Background =
+                        new System.Windows.Media.SolidColorBrush(
+                            System.Windows.Media.Color.FromRgb(
+                                0,
+                                120,
+                                215)),
+                    Foreground = System.Windows.Media.Brushes.White,
+                    FontWeight = FontWeights.Bold,
+                    BorderThickness = new Thickness(0)
+                };
 
-            WpfButton closeButton = new WpfButton
-            {
-                Content = "ĐÓNG",
-                Height = 40,
-                FontWeight = FontWeights.Bold
-            };
+            _activateButton.Click +=
+                ActivateButton_Click;
+
+            WpfButton closeButton =
+                new WpfButton
+                {
+                    Content = "ĐÓNG",
+                    Height = 40,
+                    FontWeight = FontWeights.Bold
+                };
+
             closeButton.Click += delegate
             {
                 DialogResult = false;
             };
 
-            System.Windows.Controls.Grid.SetColumn(_activateButton, 0);
-            System.Windows.Controls.Grid.SetColumn(closeButton, 1);
+            System.Windows.Controls.Grid.SetColumn(
+                _activateButton,
+                0);
+
+            System.Windows.Controls.Grid.SetColumn(
+                closeButton,
+                1);
+
             buttonGrid.Children.Add(_activateButton);
             buttonGrid.Children.Add(closeButton);
             body.Children.Add(buttonGrid);
@@ -962,11 +1227,11 @@ namespace ClassLibrary4
             object sender,
             WpfKeyEventArgs e)
         {
-            if (e.Key == WpfKey.Enter)
-            {
-                e.Handled = true;
-                TryActivate();
-            }
+            if (e.Key != WpfKey.Enter)
+                return;
+
+            e.Handled = true;
+            TryActivate();
         }
 
         private void ActivateButton_Click(
@@ -978,22 +1243,34 @@ namespace ClassLibrary4
 
         private void TryActivate()
         {
-            string key = (_keyTextBox.Text ?? "").Trim();
+            string key =
+                (_keyTextBox.Text ?? "").Trim();
+
             if (string.IsNullOrWhiteSpace(key))
             {
-                SetStatus("Vui lòng nhập key kích hoạt.", false);
+                SetStatus(
+                    "Vui lòng nhập key kích hoạt.",
+                    false);
+
                 return;
             }
 
             _activateButton.IsEnabled = false;
             _keyTextBox.IsEnabled = false;
             Cursor = System.Windows.Input.Cursors.Wait;
-            SetStatus("Đang kết nối máy chủ và kiểm tra key...", true);
+
+            SetStatus(
+                "Đang kết nối máy chủ và kiểm tra key...",
+                true);
 
             LicenseApiResult result;
+
             try
             {
-                result = OnlineLicenseManager.Activate(key, _machineId);
+                result =
+                    OnlineLicenseManager.Activate(
+                        key,
+                        _machineId);
             }
             finally
             {
@@ -1005,30 +1282,40 @@ namespace ClassLibrary4
             if (result.State == LicenseRequestState.Success)
             {
                 IsActivated = true;
+
                 MessageBox.Show(
                     result.Message + Environment.NewLine +
                     "Hạn sử dụng: " +
-                    OnlineLicenseManager.FormatExpiry(result.ExpiresAtUtc),
+                    OnlineLicenseManager.FormatExpiry(
+                        result.ExpiresAtUtc),
                     "Kích hoạt thành công",
                     MessageBoxButton.OK,
                     MessageBoxImage.Information);
+
                 DialogResult = true;
                 return;
             }
 
-            SetStatus(result.Message, false);
+            SetStatus(
+                result.Message,
+                false);
+
             _keyTextBox.Focus();
             _keyTextBox.SelectAll();
         }
 
-        private void SetStatus(string message, bool neutral)
+        private void SetStatus(
+            string message,
+            bool neutral)
         {
             _statusText.Text = message ?? "";
-            _statusText.Foreground = neutral
-                ? System.Windows.Media.Brushes.DimGray
-                : System.Windows.Media.Brushes.Firebrick;
+
+            _statusText.Foreground =
+                neutral
+                    ? System.Windows.Media.Brushes.DimGray
+                    : System.Windows.Media.Brushes.Firebrick;
+
             _statusText.UpdateLayout();
         }
     }
-
 }

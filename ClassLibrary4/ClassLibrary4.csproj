@@ -5,14 +5,14 @@
 		<UseWPF>true</UseWPF>
 		<UseWindowsForms>true</UseWindowsForms>
 
-		<!-- AutoCAD 2025 + ONNX Runtime native đều chạy x64 -->
+		<!-- AutoCAD 2025 + ONNX Runtime: x64 -->
 		<Platforms>x64</Platforms>
 		<PlatformTarget>x64</PlatformTarget>
 
 		<!-- Giữ dependency NuGet/native cạnh DLL output để NETLOAD ổn định -->
 		<CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
 
-		<!-- STEP24: cho phép pointer LockBits trong MepSymbolClassifier để giảm GC allocation -->
+		<!-- STEP24: unsafe LockBits trong MepSymbolClassifier -->
 		<AllowUnsafeBlocks>true</AllowUnsafeBlocks>
 
 		<ImplicitUsings>enable</ImplicitUsings>
@@ -21,18 +21,27 @@
 
 	<ItemGroup>
 		<PackageReference Include="Microsoft.ML.OnnxRuntime" Version="1.29.0" />
+
+		<!--
+      STEP26A FIX:
+      AutoCAD 2025 official Autodesk NuGet.
+      Giữ toàn bộ compile/build assets; chỉ loại runtime để AutoCAD host
+      dùng AcMgd/AcDbMgd/AcCoreMgd của chính thư mục cài AutoCAD.
+    -->
+		<PackageReference Include="AutoCAD.NET" Version="25.0.1" ExcludeAssets="runtime" PrivateAssets="all" />
 	</ItemGroup>
 
+	<!-- Lệnh DEMTHIETBI thử nghiệm cũ: không compile. -->
 	<ItemGroup>
-		<Reference Include="accoremgd">
-			<HintPath>..\..\..\..\..\..\..\Program Files\Autodesk\AutoCAD 2025\accoremgd.dll</HintPath>
-		</Reference>
-		<Reference Include="Acdbmgd">
-			<HintPath>..\..\..\..\..\..\..\Program Files\Autodesk\AutoCAD 2025\acdbmgd.dll</HintPath>
-		</Reference>
-		<Reference Include="Acmgd">
-			<HintPath>..\..\..\..\..\..\..\Program Files\Autodesk\AutoCAD 2025\acmgd.dll</HintPath>
-		</Reference>
+		<Compile Remove="Class1.cs" />
+	</ItemGroup>
+
+	<!-- Config public của license được copy cạnh ClassLibrary4.dll. -->
+	<ItemGroup>
+		<None Update="license_client_config.json">
+			<CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+			<CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+		</None>
 	</ItemGroup>
 
 </Project>
