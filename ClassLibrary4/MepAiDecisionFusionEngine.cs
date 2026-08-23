@@ -52,6 +52,16 @@ namespace ClassLibrary4
             public double PatternConfidence { get; set; }
             public int PatternSupportCount { get; set; }
 
+            // STEP29F.1 - project-level prior đã được user/Legend xác nhận.
+            public string ProjectMemoryLabel { get; set; } = "";
+            public double ProjectMemoryConfidence { get; set; }
+            public int ProjectMemorySupportCount { get; set; }
+
+            // STEP29F.2 - few-shot prototype similarity từ ảnh đã xác nhận.
+            public string PrototypeLabel { get; set; } = "";
+            public double PrototypeSimilarity { get; set; }
+            public int PrototypeSupportCount { get; set; }
+
             public bool IsDeterministicCad { get; set; }
             public bool IsMissingOrUnknown { get; set; }
             public bool ExistingContextConflict { get; set; }
@@ -94,15 +104,40 @@ namespace ClassLibrary4
             string alternative = Normalize(input.AlternativeLabel);
 
             result.Evaluated = true;
+
+            bool originallyMissing =
+                input.IsMissingOrUnknown ||
+                string.IsNullOrWhiteSpace(current);
+
+            if (originallyMissing)
+            {
+                // STEP29F: UNKNOWN chỉ được seed bằng memory đã xác nhận rất mạnh.
+                // Không cho một nguồn AI đơn lẻ tự biến MISSING thành OK.
+                string memorySeed =
+                    ResolveTrustedMemorySeed(input);
+
+                if (string.IsNullOrWhiteSpace(memorySeed))
+                {
+                    result.SelectedLabel = current;
+                    result.AlternativeLabel = alternative;
+                    result.DecisionCode = "REVIEW";
+                    result.Reason = "Chưa có nhãn đủ tin cậy; Project/Prototype Memory chưa đủ mạnh để resolve UNKNOWN.";
+                    return result;
+                }
+
+                current = memorySeed;
+
+                if (string.Equals(
+                        alternative,
+                        current,
+                        StringComparison.OrdinalIgnoreCase))
+                {
+                    alternative = "";
+                }
+            }
+
             result.SelectedLabel = current;
             result.AlternativeLabel = alternative;
-
-            if (input.IsMissingOrUnknown || string.IsNullOrWhiteSpace(current))
-            {
-                result.DecisionCode = "REVIEW";
-                result.Reason = "Chưa có nhãn đủ tin cậy; giữ trong hàng đợi kiểm tra.";
-                return result;
-            }
 
             // Exact CAD / Vector fingerprint là deterministic evidence.
             if (input.IsDeterministicCad)
@@ -144,7 +179,8 @@ namespace ClassLibrary4
                 input.CurrentContextContribution,
                 input.PatternSuggestedLabel,
                 input.PatternConfidence,
-                input.PatternSupportCount);
+                input.PatternSupportCount,
+                input);
 
             double alternativeScore = string.IsNullOrWhiteSpace(alternative)
                 ? 0.0
@@ -156,7 +192,8 @@ namespace ClassLibrary4
                     input.AlternativeContextContribution,
                     input.PatternSuggestedLabel,
                     input.PatternConfidence,
-                    input.PatternSupportCount);
+                    input.PatternSupportCount,
+                    input);
 
             int currentSupport = CountSupports(
                 true,
@@ -280,7 +317,8 @@ namespace ClassLibrary4
             double contextContribution,
             string patternSuggestedLabel,
             double patternConfidence,
-            int patternSupportCount)
+            int patternSupportCount,
+            Input input)
         {
             // Visual confidence giữ nguyên thang 0..1 để dynamic gate có ý nghĩa
             // trực tiếp. Context/pattern chỉ boost/penalty nhỏ quanh confidence gốc.
@@ -304,6 +342,65 @@ namespace ClassLibrary4
                 double pattern = Clamp01(patternConfidence);
                 double supportBonus = Math.Min(0.025, Math.Max(0, patternSupportCount) * 0.005);
                 score += pattern * 0.060 + supportBonus;
+            }
+
+            // STEP29F.1 - Project Memory có thể nâng "base evidence" ngay sau
+            // một xác nhận thật. Layer prior đơn lẻ vẫn yếu do store đã gate support.
+            if (input != null &&
+                !string.IsNullOrWhiteSpace(input.ProjectMemoryLabel) &&
+                string.Equals(
+                    Normalize(input.ProjectMemoryLabel),
+                    Normalize(label),
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                double project = Clamp01(input.ProjectMemoryConfidence);
+
+                if (project >= 0.70)
+                {
+                    double projectBase =
+                        0.68 +
+                        project * 0.28;
+
+                    score = Math.Max(score, projectBase);
+
+                    score +=
+                        Math.Min(
+                            0.030,
+                            Math.Max(1, input.ProjectMemorySupportCount) * 0.006) *
+                        project;
+                }
+            }
+
+            // STEP29F.2 - Prototype Memory dùng silhouette similarity.
+            // Chỉ similarity >= 0.82 mới được tham gia; không thay deterministic CAD.
+            if (input != null &&
+                !string.IsNullOrWhiteSpace(input.PrototypeLabel) &&
+                string.Equals(
+                    Normalize(input.PrototypeLabel),
+                    Normalize(label),
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                double similarity = Clamp01(input.PrototypeSimilarity);
+
+                if (similarity >= 0.82)
+                {
+                    double normalizedSimilarity =
+                        Clamp(
+                            (similarity - 0.82) / 0.18,
+                            0.0,
+                            1.0);
+
+                    double prototypeBase =
+                        0.76 +
+                        normalizedSimilarity * 0.19;
+
+                    score = Math.Max(score, prototypeBase);
+
+                    score +=
+                        Math.Min(
+                            0.030,
+                            Math.Max(1, input.PrototypeSupportCount) * 0.006);
+                }
             }
 
             return Clamp01(score);
@@ -361,7 +458,80 @@ namespace ClassLibrary4
                 count++;
             }
 
+            if (!string.IsNullOrWhiteSpace(input.ProjectMemoryLabel) &&
+                string.Equals(
+                    Normalize(input.ProjectMemoryLabel),
+                    Normalize(candidateLabel),
+                    StringComparison.OrdinalIgnoreCase) &&
+                Clamp01(input.ProjectMemoryConfidence) >= 0.82 &&
+                input.ProjectMemorySupportCount >= 1)
+            {
+                count++;
+            }
+
+            if (!string.IsNullOrWhiteSpace(input.PrototypeLabel) &&
+                string.Equals(
+                    Normalize(input.PrototypeLabel),
+                    Normalize(candidateLabel),
+                    StringComparison.OrdinalIgnoreCase) &&
+                Clamp01(input.PrototypeSimilarity) >= 0.90 &&
+                input.PrototypeSupportCount >= 1)
+            {
+                count++;
+            }
+
             return count;
+        }
+
+
+        private static string ResolveTrustedMemorySeed(
+            Input input)
+        {
+            if (input == null)
+                return "";
+
+            string projectLabel =
+                Normalize(input.ProjectMemoryLabel);
+
+            string prototypeLabel =
+                Normalize(input.PrototypeLabel);
+
+            double projectConfidence =
+                Clamp01(input.ProjectMemoryConfidence);
+
+            double prototypeSimilarity =
+                Clamp01(input.PrototypeSimilarity);
+
+            bool agree =
+                !string.IsNullOrWhiteSpace(projectLabel) &&
+                !string.IsNullOrWhiteSpace(prototypeLabel) &&
+                string.Equals(
+                    projectLabel,
+                    prototypeLabel,
+                    StringComparison.OrdinalIgnoreCase);
+
+            if (agree &&
+                projectConfidence >= 0.90 &&
+                prototypeSimilarity >= 0.93)
+            {
+                return projectLabel;
+            }
+
+            if (!string.IsNullOrWhiteSpace(projectLabel) &&
+                projectConfidence >= 0.985 &&
+                input.ProjectMemorySupportCount >= 2)
+            {
+                return projectLabel;
+            }
+
+            if (!string.IsNullOrWhiteSpace(prototypeLabel) &&
+                prototypeSimilarity >= 0.985 &&
+                input.PrototypeSupportCount >= 2)
+            {
+                return prototypeLabel;
+            }
+
+            return "";
         }
 
         private static double BuildBaseThreshold(string source)

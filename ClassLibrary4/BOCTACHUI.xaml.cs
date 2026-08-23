@@ -1,4 +1,5 @@
-﻿// BAN DUNG: TRUC-DUNG-20260817 - COPY TOAN BO FILE NAY VAO BOCTACHUI.xaml.cs
+﻿// STEP29F.3: MEMORY PROMOTION + CONFLICT CONTROL - 20260823
+// BAN DUNG: TRUC-DUNG-20260817 - COPY TOAN BO FILE NAY VAO BOCTACHUI.xaml.cs
 // STEP29A.3: OPENCV WORLD TILING / FULL-DRAWING CANDIDATE PASS - 20260823
 // STEP29A.2: OPENCV TILE / ROI CANDIDATE GENERATOR - 20260823
 // STEP28D: GRAPH-AWARE SYMBOL GROUPING + MULTI-INSTANCE PATTERN LEARNING - 20260823
@@ -42674,6 +42675,27 @@ namespace ClassLibrary4
             public double FusionAlternativeScore { get; set; } = 0.0;
             public double FusionGateThreshold { get; set; } = 0.0;
             public string FusionReason { get; set; } = "";
+
+            // STEP29E - Active Learning / Unknown Mining trace.
+            // Chỉ xếp hạng review, KHÔNG tự đổi label và KHÔNG tự học.
+            public double ActiveLearningPriority { get; set; } = 0.0;
+            public string ActiveLearningBand { get; set; } = "";
+            public string ActiveLearningKind { get; set; } = "";
+            public string ActiveLearningReason { get; set; } = "";
+            public bool ActiveLearningUnknown { get; set; } = false;
+            public bool ActiveLearningHardNegative { get; set; } = false;
+            public bool ActiveLearningRepresentative { get; set; } = true;
+            public bool ActiveLearningHighPriority { get; set; } = false;
+            public int ActiveLearningDuplicateCount { get; set; } = 1;
+
+            // STEP29F - Project Memory + Prototype Few-shot trace.
+            public string ProjectMemorySuggestedName { get; set; } = "";
+            public double ProjectMemoryConfidence { get; set; } = 0.0;
+            public int ProjectMemorySupportCount { get; set; } = 0;
+            public string ProjectMemoryScope { get; set; } = "";
+            public string PrototypeSuggestedName { get; set; } = "";
+            public double PrototypeSimilarity { get; set; } = 0.0;
+            public int PrototypeSupportCount { get; set; } = 0;
         }
 
         private class SmartAuditIgnoreEntry
@@ -42767,6 +42789,31 @@ namespace ClassLibrary4
         private int _lastFusionKeepCount = 0;
         private int _lastFusionSwitchedCount = 0;
         private int _lastFusionReviewCount = 0;
+
+        // STEP29E - Active Learning / Unknown Mining diagnostics.
+        private int _lastActiveLearningQueuedCount = 0;
+        private int _lastActiveLearningHighPriorityCount = 0;
+        private int _lastActiveLearningUnknownCount = 0;
+        private int _lastActiveLearningHardNegativeCount = 0;
+        private int _lastActiveLearningModelDisagreementCount = 0;
+        private int _lastActiveLearningDuplicateSuppressedCount = 0;
+
+        // STEP29F.3 - Memory hierarchy diagnostics.
+        private int _lastMemorySessionHitCount = 0;
+        private int _lastMemoryProjectHitCount = 0;
+        private int _lastMemoryCompanyHitCount = 0;
+        private int _lastMemoryGlobalHitCount = 0;
+        private int _lastMemoryConflictCount = 0;
+
+        private readonly MepActiveLearningQueue _activeLearningQueue =
+            new MepActiveLearningQueue();
+
+        // STEP29F - local-first project prior + few-shot prototype memory.
+        private readonly MepProjectMemoryStore _projectMemoryStore =
+            new MepProjectMemoryStore();
+
+        private readonly MepPrototypeMemoryStore _prototypeMemoryStore =
+            new MepPrototypeMemoryStore();
 
         // STEP29C - AI CORE SERVICE + METRICS.
         // Phase 1 chỉ tách lifecycle/metrics khỏi BOCTACHUI để không đại phẫu
@@ -43597,6 +43644,12 @@ namespace ClassLibrary4
                     "POSITIVE",
                     auditDatasetSource,
                     previousLabelForHardNegative);
+
+                // STEP29F: user sửa/xác nhận -> Project Memory + Prototype dùng ngay
+                // ở lần quét sau, không chờ retrain ONNX/YOLO.
+                LearnSmartProjectAndPrototypeMemoryFromAuditRow(
+                    row,
+                    auditDatasetSource);
 
                 row.UserEdited =
                     false;
@@ -45869,6 +45922,12 @@ namespace ClassLibrary4
                     if (sample != null)
                     {
                         attempted++;
+
+                        // STEP29F: Legend đã được user duyệt là teacher rất mạnh.
+                        // Seed memory trước khi quét mặt bằng ngay trong cùng workflow.
+                        LearnSmartProjectAndPrototypeMemoryFromLegendRow(
+                            row,
+                            "LEGEND_REVIEW_ACCEPTED");
                     }
                 }
 
@@ -57777,6 +57836,18 @@ namespace ClassLibrary4
                             row.PatternConfidence,
                         PatternSupportCount =
                             row.PatternSupportCount,
+                        ProjectMemoryLabel =
+                            row.ProjectMemorySuggestedName ?? "",
+                        ProjectMemoryConfidence =
+                            row.ProjectMemoryConfidence,
+                        ProjectMemorySupportCount =
+                            row.ProjectMemorySupportCount,
+                        PrototypeLabel =
+                            row.PrototypeSuggestedName ?? "",
+                        PrototypeSimilarity =
+                            row.PrototypeSimilarity,
+                        PrototypeSupportCount =
+                            row.PrototypeSupportCount,
                         IsDeterministicCad =
                             IsSmartFusionDeterministicRow(row),
                         IsMissingOrUnknown =
@@ -57832,17 +57903,82 @@ namespace ClassLibrary4
                 {
                     _lastFusionAutoAcceptedCount++;
 
-                    if (string.Equals(
+                    bool wasMissing =
+                        string.Equals(
+                            row.Status,
+                            "MISSING",
+                            StringComparison.OrdinalIgnoreCase) ||
+                        string.IsNullOrWhiteSpace(
+                            NormalizeSmartDisplayName(row.Name)) ||
+                        string.Equals(
+                            NormalizeSmartDisplayName(row.Name),
+                            "CHƯA NHẬN DIỆN",
+                            StringComparison.OrdinalIgnoreCase);
+
+                    if (wasMissing &&
+                        !string.IsNullOrWhiteSpace(
+                            decision.SelectedLabel))
+                    {
+                        SmartSymbolRule memoryRule =
+                            FindSmartRuleByDisplayName(
+                                rules,
+                                decision.SelectedLabel);
+
+                        if (memoryRule == null)
+                        {
+                            // Memory không được tạo class ngoài rule/Legend hiện có.
+                            row.FusionDecisionCode = "REVIEW";
+                            row.Status = "FUSION_REVIEW";
+                            _lastFusionAutoAcceptedCount--;
+                            _lastFusionReviewCount++;
+                        }
+                        else
+                        {
+                            row.Name =
+                                NormalizeSmartDisplayName(
+                                    memoryRule.DisplayName);
+
+                            bool memoryFollowDn =
+                                string.Equals(
+                                    memoryRule.SizeRule,
+                                    "THEO_ONG",
+                                    StringComparison.OrdinalIgnoreCase);
+
+                            ApplySmartPatternResolvedStatus(
+                                row,
+                                null,
+                                memoryFollowDn);
+
+                            if ((row.Source ?? "").IndexOf(
+                                    "FEWSHOT",
+                                    StringComparison.OrdinalIgnoreCase) < 0)
+                            {
+                                row.Source =
+                                    (row.Source ?? "") +
+                                    " + FEWSHOT MEMORY";
+                            }
+                        }
+                    }
+
+                    if (!string.Equals(
+                            row.FusionDecisionCode,
+                            "REVIEW",
+                            StringComparison.OrdinalIgnoreCase) &&
+                        (string.Equals(
                             row.Status,
                             "CONTEXT_CONFLICT",
                             StringComparison.OrdinalIgnoreCase) ||
-                        IsSmartFusionReviewStatus(
-                            row.Status))
+                         IsSmartFusionReviewStatus(
+                            row.Status)))
                     {
                         row.Status = "OK";
                     }
 
-                    if ((row.Source ?? "").IndexOf(
+                    if (!string.Equals(
+                            row.FusionDecisionCode,
+                            "REVIEW",
+                            StringComparison.OrdinalIgnoreCase) &&
+                        (row.Source ?? "").IndexOf(
                             "FUSION",
                             StringComparison.OrdinalIgnoreCase) < 0)
                     {
@@ -59354,6 +59490,502 @@ namespace ClassLibrary4
 
 
         // ============================================================
+        // STEP29F - PROJECT MEMORY + FEW-SHOT PROTOTYPE
+        // ============================================================
+        private string GetSmartAiCompanyCodeSafe()
+        {
+            try
+            {
+                AiCloudConfig config =
+                    GetAiCloudClient()
+                        .LoadConfig();
+
+                string company =
+                    config != null
+                        ? (config.CompanyCode ?? "")
+                        : "";
+
+                return
+                    string.IsNullOrWhiteSpace(company)
+                        ? "LOCAL"
+                        : company.Trim();
+            }
+            catch
+            {
+                return "LOCAL";
+            }
+        }
+
+        private void LearnSmartProjectAndPrototypeMemoryFromAuditRow(
+            SmartAuditRow row,
+            string source)
+        {
+            if (row == null ||
+                string.IsNullOrWhiteSpace(row.Name) ||
+                string.Equals(
+                    row.Name,
+                    "CHƯA NHẬN DIỆN",
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
+
+            try
+            {
+                Document doc =
+                    Autodesk.AutoCAD.ApplicationServices.Core.Application
+                        .DocumentManager
+                        .MdiActiveDocument;
+
+                string projectKey =
+                    GetSmartAuditDrawingKey(doc);
+
+                string companyCode =
+                    GetSmartAiCompanyCodeSafe();
+
+                _projectMemoryStore.RecordConfirmation(
+                    projectKey,
+                    companyCode,
+                    row.LayerName,
+                    row.MatchMode,
+                    row.BlockKey,
+                    row.GeometryFingerprint,
+                    row.Name,
+                    row.FollowDn,
+                    source);
+
+                if (row.Preview != null)
+                {
+                    float[] descriptor =
+                        MepPrototypeMatcher.BuildDescriptor(
+                            row.Preview);
+
+                    if (descriptor != null &&
+                        descriptor.Length > 0)
+                    {
+                        _prototypeMemoryStore.Learn(
+                            projectKey,
+                            companyCode,
+                            row.Name,
+                            row.FollowDn,
+                            row.LayerName,
+                            row.MatchMode,
+                            row.BlockKey,
+                            row.GeometryFingerprint,
+                            descriptor,
+                            source);
+                    }
+                }
+            }
+            catch
+            {
+                // Few-shot memory không được làm hỏng thao tác Apply/Review.
+            }
+        }
+
+        private void LearnSmartProjectAndPrototypeMemoryFromLegendRow(
+            SmartLegendAutoRow row,
+            string source)
+        {
+            if (row == null ||
+                string.IsNullOrWhiteSpace(row.DisplayName))
+            {
+                return;
+            }
+
+            try
+            {
+                Document doc =
+                    Autodesk.AutoCAD.ApplicationServices.Core.Application
+                        .DocumentManager
+                        .MdiActiveDocument;
+
+                string projectKey =
+                    GetSmartAuditDrawingKey(doc);
+
+                string companyCode =
+                    GetSmartAiCompanyCodeSafe();
+
+                _projectMemoryStore.RecordConfirmation(
+                    projectKey,
+                    companyCode,
+                    "",
+                    row.MatchMode,
+                    row.BlockKey,
+                    row.GeometryFingerprint,
+                    row.DisplayName,
+                    row.FollowDn,
+                    source);
+
+                if (row.Preview != null)
+                {
+                    float[] descriptor =
+                        MepPrototypeMatcher.BuildDescriptor(
+                            row.Preview);
+
+                    if (descriptor != null &&
+                        descriptor.Length > 0)
+                    {
+                        _prototypeMemoryStore.Learn(
+                            projectKey,
+                            companyCode,
+                            row.DisplayName,
+                            row.FollowDn,
+                            "",
+                            row.MatchMode,
+                            row.BlockKey,
+                            row.GeometryFingerprint,
+                            descriptor,
+                            source);
+                    }
+                }
+            }
+            catch
+            {
+            }
+        }
+
+        private void ApplySmartProjectAndPrototypeMemoryEvidence(
+            List<SmartAuditRow> rows,
+            Document doc)
+        {
+            _lastMemorySessionHitCount = 0;
+            _lastMemoryProjectHitCount = 0;
+            _lastMemoryCompanyHitCount = 0;
+            _lastMemoryGlobalHitCount = 0;
+            _lastMemoryConflictCount = 0;
+
+            if (rows == null ||
+                rows.Count == 0)
+            {
+                return;
+            }
+
+            try
+            {
+                string projectKey =
+                    GetSmartAuditDrawingKey(doc);
+
+                string companyCode =
+                    GetSmartAiCompanyCodeSafe();
+
+                List<MepPrototypeRecord> prototypes =
+                    _prototypeMemoryStore.LoadForHierarchy(
+                        projectKey,
+                        companyCode);
+
+                foreach (SmartAuditRow row in rows)
+                {
+                    if (row == null)
+                        continue;
+
+                    MepProjectMemoryEvidence hierarchyEvidence =
+                        _projectMemoryStore.EvaluateHierarchy(
+                            projectKey,
+                            companyCode,
+                            row.LayerName,
+                            row.MatchMode,
+                            row.BlockKey,
+                            row.GeometryFingerprint);
+
+                    MepPrototypeMatcher.Evidence prototypeEvidence =
+                        row.Preview != null &&
+                        prototypes != null &&
+                        prototypes.Count > 0
+                            ? MepPrototypeMatcher.Match(
+                                row.Preview,
+                                prototypes,
+                                row.LayerName,
+                                row.MatchMode,
+                                row.BlockKey,
+                                row.GeometryFingerprint)
+                            : new MepPrototypeMatcher.Evidence();
+
+                    bool memoryConflict =
+                        hierarchyEvidence != null &&
+                        hierarchyEvidence.Conflict;
+
+                    if (memoryConflict)
+                    {
+                        _lastMemoryConflictCount++;
+
+                        row.Note =
+                            "STEP29F.3 MEMORY_CONFLICT: " +
+                            (hierarchyEvidence.Reason ?? "") +
+                            ". " +
+                            (row.Note ?? "");
+                    }
+
+                    bool projectUsable =
+                        hierarchyEvidence != null &&
+                        hierarchyEvidence.Success;
+
+                    bool prototypeUsable =
+                        prototypeEvidence != null &&
+                        prototypeEvidence.Success;
+
+                    // Cross-channel conflict:
+                    // - local scope (SESSION/PROJECT) được phép thắng broad scope.
+                    // - nếu hai local evidence cùng mạnh nhưng khác label: bỏ cả hai.
+                    // - nếu COMPANY/GLOBAL bất đồng: bỏ cả hai, bắt Fusion dựa evidence khác.
+                    if (projectUsable &&
+                        prototypeUsable)
+                    {
+                        string projectLabelCheck =
+                            NormalizeSmartDisplayName(
+                                hierarchyEvidence.Label);
+
+                        string prototypeLabelCheck =
+                            NormalizeSmartDisplayName(
+                                prototypeEvidence.Label);
+
+                        bool sameLabel =
+                            !string.IsNullOrWhiteSpace(projectLabelCheck) &&
+                            string.Equals(
+                                projectLabelCheck,
+                                prototypeLabelCheck,
+                                StringComparison.OrdinalIgnoreCase) &&
+                            hierarchyEvidence.FollowDn ==
+                                prototypeEvidence.FollowDn;
+
+                        if (!sameLabel &&
+                            hierarchyEvidence.Confidence >= 0.88 &&
+                            prototypeEvidence.Similarity >=
+                                MepMemoryPromotionPolicy.RequiredPrototypeSimilarity(
+                                    prototypeEvidence.Scope))
+                        {
+                            int projectRank =
+                                MepMemoryPromotionPolicy.ScopeRank(
+                                    hierarchyEvidence.Scope);
+
+                            int prototypeRank =
+                                MepMemoryPromotionPolicy.ScopeRank(
+                                    prototypeEvidence.Scope);
+
+                            bool projectLocal =
+                                projectRank >=
+                                MepMemoryPromotionPolicy.ScopeRank("PROJECT");
+
+                            bool prototypeLocal =
+                                prototypeRank >=
+                                MepMemoryPromotionPolicy.ScopeRank("PROJECT");
+
+                            if (projectLocal && !prototypeLocal)
+                            {
+                                prototypeUsable = false;
+                            }
+                            else if (prototypeLocal && !projectLocal)
+                            {
+                                projectUsable = false;
+                            }
+                            else if (hierarchyEvidence.Confidence >=
+                                     prototypeEvidence.Similarity + 0.065)
+                            {
+                                prototypeUsable = false;
+                            }
+                            else if (prototypeEvidence.Similarity >=
+                                     hierarchyEvidence.Confidence + 0.065)
+                            {
+                                projectUsable = false;
+                            }
+                            else
+                            {
+                                projectUsable = false;
+                                prototypeUsable = false;
+                                memoryConflict = true;
+                                _lastMemoryConflictCount++;
+
+                                row.Note =
+                                    "STEP29F.3 CROSS_MEMORY_CONFLICT: " +
+                                    projectLabelCheck +
+                                    "[" +
+                                    (hierarchyEvidence.Scope ?? "") +
+                                    "] vs " +
+                                    prototypeLabelCheck +
+                                    "[" +
+                                    (prototypeEvidence.Scope ?? "") +
+                                    "]. " +
+                                    (row.Note ?? "");
+                            }
+                        }
+                    }
+
+                    if (projectUsable)
+                    {
+                        row.ProjectMemorySuggestedName =
+                            NormalizeSmartDisplayName(
+                                hierarchyEvidence.Label);
+
+                        row.ProjectMemoryConfidence =
+                            hierarchyEvidence.Confidence;
+
+                        row.ProjectMemorySupportCount =
+                            hierarchyEvidence.SupportCount;
+
+                        row.ProjectMemoryScope =
+                            hierarchyEvidence.Scope ?? "PROJECT";
+
+                        string scope =
+                            MepMemoryPromotionPolicy.NormalizeScope(
+                                hierarchyEvidence.Scope);
+
+                        if (scope == "SESSION")
+                            _lastMemorySessionHitCount++;
+                        else if (scope == "PROJECT")
+                            _lastMemoryProjectHitCount++;
+                        else if (scope == "COMPANY")
+                            _lastMemoryCompanyHitCount++;
+                        else if (scope == "GLOBAL")
+                            _lastMemoryGlobalHitCount++;
+                    }
+                    else
+                    {
+                        row.ProjectMemorySuggestedName = "";
+                        row.ProjectMemoryConfidence = 0.0;
+                        row.ProjectMemorySupportCount = 0;
+                        row.ProjectMemoryScope =
+                            memoryConflict
+                                ? "CONFLICT"
+                                : "";
+                    }
+
+                    if (prototypeUsable)
+                    {
+                        row.PrototypeSuggestedName =
+                            NormalizeSmartDisplayName(
+                                prototypeEvidence.Label);
+
+                        row.PrototypeSimilarity =
+                            prototypeEvidence.Similarity;
+
+                        row.PrototypeSupportCount =
+                            prototypeEvidence.SupportCount;
+                    }
+                    else
+                    {
+                        row.PrototypeSuggestedName = "";
+                        row.PrototypeSimilarity = 0.0;
+                        row.PrototypeSupportCount = 0;
+                    }
+
+                    string current =
+                        NormalizeSmartDisplayName(
+                            row.Name);
+
+                    string projectLabel =
+                        NormalizeSmartDisplayName(
+                            row.ProjectMemorySuggestedName);
+
+                    string prototypeLabel =
+                        NormalizeSmartDisplayName(
+                            row.PrototypeSuggestedName);
+
+                    bool memoryAgree =
+                        projectUsable &&
+                        prototypeUsable &&
+                        !string.IsNullOrWhiteSpace(projectLabel) &&
+                        !string.IsNullOrWhiteSpace(prototypeLabel) &&
+                        string.Equals(
+                            projectLabel,
+                            prototypeLabel,
+                            StringComparison.OrdinalIgnoreCase) &&
+                        row.ProjectMemoryConfidence >= 0.88 &&
+                        row.PrototypeSimilarity >=
+                            MepMemoryPromotionPolicy.RequiredPrototypeSimilarity(
+                                prototypeEvidence.Scope);
+
+                    string suggestion = "";
+                    double suggestionStrength = 0.0;
+
+                    if (memoryAgree)
+                    {
+                        suggestion = projectLabel;
+                        suggestionStrength =
+                            Math.Max(
+                                row.ProjectMemoryConfidence,
+                                row.PrototypeSimilarity);
+                    }
+                    else if (projectUsable &&
+                             row.ProjectMemoryConfidence >= 0.97 &&
+                             !string.IsNullOrWhiteSpace(projectLabel))
+                    {
+                        suggestion = projectLabel;
+                        suggestionStrength =
+                            row.ProjectMemoryConfidence;
+                    }
+                    else if (prototypeUsable &&
+                             row.PrototypeSimilarity >= 0.97 &&
+                             !string.IsNullOrWhiteSpace(prototypeLabel))
+                    {
+                        suggestion = prototypeLabel;
+                        suggestionStrength =
+                            row.PrototypeSimilarity;
+                    }
+
+                    if (!string.IsNullOrWhiteSpace(suggestion) &&
+                        !string.Equals(
+                            suggestion,
+                            current,
+                            StringComparison.OrdinalIgnoreCase))
+                    {
+                        string existingAlternative =
+                            NormalizeSmartDisplayName(
+                                row.AlternativeName);
+
+                        bool replaceAlternative =
+                            string.IsNullOrWhiteSpace(existingAlternative) ||
+                            memoryAgree ||
+                            suggestionStrength >=
+                                Math.Max(
+                                    0.97,
+                                    row.AlternativeConfidence + 0.08);
+
+                        if (replaceAlternative)
+                        {
+                            row.AlternativeName =
+                                suggestion;
+
+                            // Memory chỉ cung cấp evidence; không giả visual confidence.
+                            if (!string.Equals(
+                                    existingAlternative,
+                                    suggestion,
+                                    StringComparison.OrdinalIgnoreCase))
+                            {
+                                row.AlternativeConfidence = 0.0;
+                            }
+                        }
+                    }
+
+                    if (projectUsable ||
+                        prototypeUsable ||
+                        memoryConflict)
+                    {
+                        string trace =
+                            "STEP29F.3 MEMORY: " +
+                            (projectUsable
+                                ? hierarchyEvidence.Reason
+                                : hierarchyEvidence != null &&
+                                  hierarchyEvidence.Conflict
+                                    ? hierarchyEvidence.Reason
+                                    : "HIERARCHY -") +
+                            " | " +
+                            (prototypeUsable
+                                ? prototypeEvidence.Reason
+                                : "PROTOTYPE -");
+
+                        row.Note =
+                            trace + ". " +
+                            (row.Note ?? "");
+                    }
+                }
+            }
+            catch
+            {
+                // Memory promotion/conflict chỉ bổ sung; scan chính luôn tiếp tục.
+            }
+        }
+
+        // ============================================================
         // STEP29C - MAP AUDIT -> PURE AI METRIC DTO
         // Không để MepAiPipelineService phụ thuộc AutoCAD ObjectId/Point3d.
         // ============================================================
@@ -59449,6 +60081,179 @@ namespace ClassLibrary4
                     CultureInfo.InvariantCulture);
         }
 
+        private void RefreshSmartActiveLearningQueue(
+            List<SmartAuditRow> rows,
+            bool persistLatest = true)
+        {
+            _lastActiveLearningQueuedCount = 0;
+            _lastActiveLearningHighPriorityCount = 0;
+            _lastActiveLearningUnknownCount = 0;
+            _lastActiveLearningHardNegativeCount = 0;
+            _lastActiveLearningModelDisagreementCount = 0;
+            _lastActiveLearningDuplicateSuppressedCount = 0;
+
+            if (rows == null || rows.Count == 0)
+                return;
+
+            List<MepActiveLearningCandidate> candidates =
+                new List<MepActiveLearningCandidate>();
+
+            Dictionary<string, SmartAuditRow> rowByKey =
+                new Dictionary<string, SmartAuditRow>(
+                    StringComparer.OrdinalIgnoreCase);
+
+            for (int i = 0; i < rows.Count; i++)
+            {
+                SmartAuditRow row = rows[i];
+                if (row == null)
+                    continue;
+
+                string key =
+                    BuildSmartAiMetricCandidateKey(
+                        row,
+                        i);
+
+                rowByKey[key] = row;
+
+                candidates.Add(
+                    new MepActiveLearningCandidate
+                    {
+                        CandidateKey = key,
+                        Signature = GetSmartAuditRuleSignature(row),
+                        Status = row.Status ?? "",
+                        Label = row.Name ?? "",
+                        OriginalLabel = row.OriginalName ?? "",
+                        AlternativeLabel = row.AlternativeName ?? "",
+                        Source = row.Source ?? "",
+                        MatchMode = row.MatchMode ?? "",
+                        Confidence = row.DetectionConfidence,
+                        AlternativeConfidence = row.AlternativeConfidence,
+                        VisualMargin = row.VisualMargin,
+                        ContextDecisionCode = row.ContextDecisionCode ?? "",
+                        PatternDecisionCode = row.PatternDecisionCode ?? "",
+                        PatternConfidence = row.PatternConfidence,
+                        FusionDecisionCode = row.FusionDecisionCode ?? "",
+                        FusionScore = row.FusionScore,
+                        FusionAlternativeScore = row.FusionAlternativeScore,
+                        FusionGateThreshold = row.FusionGateThreshold,
+                        UserEdited = row.UserEdited
+                    });
+            }
+
+            MepActiveLearningQueueSummary summary;
+
+            try
+            {
+                summary =
+                    _activeLearningQueue.BuildQueue(
+                        candidates,
+                        persistLatest);
+            }
+            catch
+            {
+                // Active Learning tuyệt đối không được làm hỏng scan chính.
+                return;
+            }
+
+            if (summary == null)
+                return;
+
+            foreach (MepActiveLearningDecision decision
+                in summary.Decisions ??
+                   new List<MepActiveLearningDecision>())
+            {
+                if (decision == null ||
+                    string.IsNullOrWhiteSpace(decision.CandidateKey) ||
+                    !rowByKey.TryGetValue(
+                        decision.CandidateKey,
+                        out SmartAuditRow row) ||
+                    row == null)
+                {
+                    continue;
+                }
+
+                row.ActiveLearningPriority =
+                    decision.PriorityScore;
+
+                row.ActiveLearningBand =
+                    decision.PriorityBand ?? "";
+
+                row.ActiveLearningKind =
+                    decision.Kind ?? "";
+
+                row.ActiveLearningReason =
+                    decision.Reason ?? "";
+
+                row.ActiveLearningUnknown =
+                    decision.IsUnknown;
+
+                row.ActiveLearningHardNegative =
+                    decision.IsHardNegativeCandidate;
+
+                row.ActiveLearningRepresentative =
+                    decision.IsRepresentative;
+
+                row.ActiveLearningHighPriority =
+                    decision.IsHighPriority;
+
+                row.ActiveLearningDuplicateCount =
+                    Math.Max(
+                        1,
+                        decision.DuplicateCount);
+            }
+
+            _lastActiveLearningQueuedCount = summary.Queued;
+            _lastActiveLearningHighPriorityCount = summary.HighPriority;
+            _lastActiveLearningUnknownCount = summary.Unknown;
+            _lastActiveLearningHardNegativeCount = summary.HardNegativeCandidates;
+            _lastActiveLearningModelDisagreementCount = summary.ModelDisagreements;
+            _lastActiveLearningDuplicateSuppressedCount = summary.DuplicateSuppressed;
+        }
+
+        private static string GetSmartActiveLearningPriorityText(
+            SmartAuditRow row)
+        {
+            if (row == null ||
+                row.ActiveLearningPriority < 1.0)
+            {
+                return "-";
+            }
+
+            string band =
+                string.IsNullOrWhiteSpace(row.ActiveLearningBand)
+                    ? "P4"
+                    : row.ActiveLearningBand.Trim();
+
+            string kind =
+                string.IsNullOrWhiteSpace(row.ActiveLearningKind)
+                    ? ""
+                    : row.ActiveLearningKind.Trim();
+
+            string text =
+                band + " " +
+                Math.Round(row.ActiveLearningPriority)
+                    .ToString(
+                        "0",
+                        CultureInfo.InvariantCulture);
+
+            if (!string.IsNullOrWhiteSpace(kind) &&
+                !string.Equals(
+                    kind,
+                    "OK",
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                text += " " + kind;
+            }
+
+            if (!row.ActiveLearningRepresentative &&
+                row.ActiveLearningDuplicateCount > 1)
+            {
+                text += " DUP";
+            }
+
+            return text;
+        }
+
         private MepAiScanDiagnostics BuildSmartAiScanDiagnostics()
         {
             return
@@ -59486,6 +60291,12 @@ namespace ClassLibrary4
                     FusionKept = _lastFusionKeepCount,
                     FusionSwitched = _lastFusionSwitchedCount,
                     FusionReview = _lastFusionReviewCount,
+                    ActiveLearningQueued = _lastActiveLearningQueuedCount,
+                    ActiveLearningHighPriority = _lastActiveLearningHighPriorityCount,
+                    ActiveLearningUnknown = _lastActiveLearningUnknownCount,
+                    ActiveLearningHardNegative = _lastActiveLearningHardNegativeCount,
+                    ActiveLearningModelDisagreement = _lastActiveLearningModelDisagreementCount,
+                    ActiveLearningDuplicateSuppressed = _lastActiveLearningDuplicateSuppressedCount,
                     NmsSuppressed = _lastSmartNmsSuppressedCount
                 };
         }
@@ -59549,6 +60360,13 @@ namespace ClassLibrary4
             _lastFusionKeepCount = 0;
             _lastFusionSwitchedCount = 0;
             _lastFusionReviewCount = 0;
+
+            _lastActiveLearningQueuedCount = 0;
+            _lastActiveLearningHighPriorityCount = 0;
+            _lastActiveLearningUnknownCount = 0;
+            _lastActiveLearningHardNegativeCount = 0;
+            _lastActiveLearningModelDisagreementCount = 0;
+            _lastActiveLearningDuplicateSuppressedCount = 0;
 
             _activeSmartPipeSpatialSource = null;
             _activeSmartPipeSpatialIndex = null;
@@ -61498,7 +62316,14 @@ namespace ClassLibrary4
                 DeduplicateSmartAuditRows(
                     auditRows);
 
-            // STEP29D - mọi evidence đã sẵn sàng: visual + context + pattern + legend.
+            // STEP29F - bổ sung Project prior + Prototype few-shot đã được user/Legend xác nhận.
+            // Chỉ tạo evidence; quyết định cuối vẫn đi qua Unified Fusion.
+            ApplySmartProjectAndPrototypeMemoryEvidence(
+                auditRows,
+                doc);
+
+            // STEP29D/29F - mọi evidence đã sẵn sàng:
+            // visual + context + pattern + legend + project/prototype memory.
             // Exact/Vector deterministic không bị AI xác suất ghi đè.
             RunSmartUnifiedAiFusion(
                 auditRows,
@@ -61549,6 +62374,12 @@ namespace ClassLibrary4
                             name)
                     .ToList();
 
+            // STEP29E - Active Learning: xếp hạng UNKNOWN/conflict/low-margin
+            // trước khi mở bảng review. Không đổi label, chỉ đưa mẫu đáng hỏi lên đầu.
+            RefreshSmartActiveLearningQueue(
+                auditRows,
+                true);
+
             _smartValveStage =
                 "AUDIT_DRAW_MARKERS";
 
@@ -61590,6 +62421,12 @@ namespace ClassLibrary4
             UpdateSmartRulesFromAuditRows(
                 rules,
                 auditRows);
+
+            // STEP29E: user correction vừa tạo hard-negative thật. Chấm queue lần cuối
+            // trước khi LearnAiFromAuditCorrections reset baseline/UserEdited.
+            RefreshSmartActiveLearningQueue(
+                auditRows,
+                true);
 
             // STEP 18:
             // Chỉ học mạnh khi người dùng thực sự sửa hoặc xác nhận mẫu mới.
@@ -63475,6 +64312,12 @@ namespace ClassLibrary4
 
             while (true)
             {
+                // STEP29E: sau SỬA / BỎ QUA / HOÀN TÁC, queue được chấm lại
+                // để ưu tiên luôn phản ánh đúng trạng thái hiện tại.
+                RefreshSmartActiveLearningQueue(
+                    rows,
+                    false);
+
                 SmartAuditRow zoomRow =
                     null;
 
@@ -63597,7 +64440,7 @@ namespace ClassLibrary4
                         System.Windows.Forms.DockStyle.Top;
 
                     summary.Height =
-                        176;
+                        198;
 
                     summary.Font =
                         new System.Drawing.Font(
@@ -63664,6 +64507,28 @@ namespace ClassLibrary4
                         _lastFusionSwitchedCount +
                         "    |    REVIEW: " +
                         _lastFusionReviewCount +
+                        "\r\nACTIVE LEARNING: " +
+                        _lastActiveLearningQueuedCount +
+                        "    |    P1: " +
+                        _lastActiveLearningHighPriorityCount +
+                        "    |    UNKNOWN: " +
+                        _lastActiveLearningUnknownCount +
+                        "    |    HARD NEG: " +
+                        _lastActiveLearningHardNegativeCount +
+                        "    |    DISAGREE: " +
+                        _lastActiveLearningModelDisagreementCount +
+                        "    |    DUP GIẢM: " +
+                        _lastActiveLearningDuplicateSuppressedCount +
+                        "\r\nMEMORY HIT: SESSION " +
+                        _lastMemorySessionHitCount +
+                        "    |    PROJECT " +
+                        _lastMemoryProjectHitCount +
+                        "    |    COMPANY " +
+                        _lastMemoryCompanyHitCount +
+                        "    |    GLOBAL " +
+                        _lastMemoryGlobalHitCount +
+                        "    |    CONFLICT " +
+                        _lastMemoryConflictCount +
                         "\r\nOPENCV XÉT: " +
                         _lastOpenCvAnalyzedCount +
                         "    |    REFINE: " +
@@ -63821,6 +64686,19 @@ namespace ClassLibrary4
                         true;
 
                     grid.Columns.Add(
+                        "LEARN_PRIORITY",
+                        "AI ƯU TIÊN");
+
+                    grid.Columns["LEARN_PRIORITY"].Width =
+                        118;
+
+                    grid.Columns["LEARN_PRIORITY"].ReadOnly =
+                        true;
+
+                    grid.Columns["LEARN_PRIORITY"].DefaultCellStyle.Alignment =
+                        System.Windows.Forms.DataGridViewContentAlignment.MiddleCenter;
+
+                    grid.Columns.Add(
                         "NAME",
                         "NHẬN DIỆN / SỬA TÊN");
 
@@ -63964,13 +64842,20 @@ namespace ClassLibrary4
 
                     foreach (SmartAuditRow row
                         in rows
-                            .OrderBy(
+                            .OrderByDescending(
                                 r =>
-                                    GetSmartAuditStatusOrder(
-                                        r.Status))
+                                    r != null &&
+                                    r.ActiveLearningRepresentative)
+                            .ThenByDescending(
+                                r =>
+                                    r?.ActiveLearningPriority ?? 0.0)
                             .ThenBy(
                                 r =>
-                                    r.Name))
+                                    GetSmartAuditStatusOrder(
+                                        r?.Status))
+                            .ThenBy(
+                                r =>
+                                    r?.Name))
                     {
                         if (!row.ReviewBaselineInitialized)
                         {
@@ -63993,6 +64878,7 @@ namespace ClassLibrary4
                                 stt++,
                                 row.Preview,
                                 statusText,
+                                GetSmartActiveLearningPriorityText(row),
                                 row.Name,
                                 row.FollowDn,
                                 row.Size,
@@ -64036,6 +64922,7 @@ namespace ClassLibrary4
                                 stt++,
                                 null,
                                 "LEGEND 0",
+                                "-",
                                 zeroName,
                                 false,
                                 "-",

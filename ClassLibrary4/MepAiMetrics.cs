@@ -78,6 +78,14 @@ namespace ClassLibrary4
         public int FusionSwitched { get; set; }
         public int FusionReview { get; set; }
 
+        // STEP29E - Active Learning / Unknown Mining diagnostics.
+        public int ActiveLearningQueued { get; set; }
+        public int ActiveLearningHighPriority { get; set; }
+        public int ActiveLearningUnknown { get; set; }
+        public int ActiveLearningHardNegative { get; set; }
+        public int ActiveLearningModelDisagreement { get; set; }
+        public int ActiveLearningDuplicateSuppressed { get; set; }
+
         public int NmsSuppressed { get; set; }
     }
 
