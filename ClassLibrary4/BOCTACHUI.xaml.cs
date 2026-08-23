@@ -1,4 +1,8 @@
 ﻿// BAN DUNG: TRUC-DUNG-20260817 - COPY TOAN BO FILE NAY VAO BOCTACHUI.xaml.cs
+// STEP29A.3: OPENCV WORLD TILING / FULL-DRAWING CANDIDATE PASS - 20260823
+// STEP29A.2: OPENCV TILE / ROI CANDIDATE GENERATOR - 20260823
+// STEP28D: GRAPH-AWARE SYMBOL GROUPING + MULTI-INSTANCE PATTERN LEARNING - 20260823
+// STEP28C: SPATIAL INDEX + DBSCAN SEMANTIC CLUSTERING - retained
 #nullable disable
 using System;
 using System.Collections.Generic;
@@ -41372,6 +41376,13 @@ namespace ClassLibrary4
             public ObjectId Id { get; set; }
             public Extents3d Extents { get; set; }
             public Point3d Center { get; set; }
+
+            // STEP28C - semantic hints used by spatial DBSCAN.
+            // Không dùng để "đoán" loại thiết bị; chỉ giúp gom hình học
+            // đúng cụm hơn và tránh quét O(N^2).
+            public string Layer { get; set; } = "";
+            public string Kind { get; set; } = "";
+            public double Span { get; set; } = 0.0;
         }
 
         private class SmartGeometryMatch
@@ -41391,6 +41402,19 @@ namespace ClassLibrary4
 
             // STEP24B: bbox thật của cluster EXPLODE để NMS theo IoU.
             public SmartNmsBox DetectionBox { get; set; } = null;
+        }
+
+        // STEP29A.2 - ROI sinh bởi OpenCV từ một DBSCAN cluster bị nhận diện thất bại.
+        // Đây chỉ là candidate tạm; vẫn phải qua Vector/ONNX/Context như bình thường.
+        private sealed class SmartOpenCvSubcluster
+        {
+            public List<SmartGeometryPrimitive> Primitives { get; set; } =
+                new List<SmartGeometryPrimitive>();
+
+            public SmartNmsBox WorldBox { get; set; } = null;
+            public double Score { get; set; } = 0.0;
+            public double EdgeDensity { get; set; } = 0.0;
+            public double ForegroundDensity { get; set; } = 0.0;
         }
 
         private class SmartVisionCandidateScore
@@ -41455,6 +41479,12 @@ namespace ClassLibrary4
             // AI overlay là nguồn đã được engine đường ống xác nhận nên được ưu tiên cao hơn.
             public bool IsAiGenerated { get; set; } = false;
             public double Confidence { get; set; } = 0.85;
+
+            // STEP28C - cached spatial footprint.
+            // Nhờ vậy suy DN quanh thiết bị không phải mở/quét toàn bộ ống
+            // chỉ để biết candidate nào nằm gần.
+            public SmartNmsBox SpatialBox { get; set; } = null;
+            public Point3d SpatialCenter { get; set; } = Point3d.Origin;
         }
 
         private class SmartPipeSizeVote
@@ -41527,6 +41557,429 @@ namespace ClassLibrary4
 
 
         // ============================================================
+        // STEP28C - SPATIAL INDEX + DBSCAN SEMANTIC CLUSTERING
+        // ------------------------------------------------------------
+        // 1) Uniform-grid spatial index dùng chung cho:
+        //    - DN text -> tuyến ống gần nhất
+        //    - pipe candidate -> thiết bị
+        //    - context neighbor
+        //    - primitive EXPLODE
+        // 2) DBSCAN chạy trên candidate lân cận thay vì foreach toàn bộ N.
+        // 3) Có bucket "oversized" để đường rất dài không làm nổ số cell.
+        // ============================================================
+        private struct SmartSpatialCellKey :
+            IEquatable<SmartSpatialCellKey>
+        {
+            public long X;
+            public long Y;
+
+            public SmartSpatialCellKey(
+                long x,
+                long y)
+            {
+                X = x;
+                Y = y;
+            }
+
+            public bool Equals(
+                SmartSpatialCellKey other)
+            {
+                return
+                    X == other.X &&
+                    Y == other.Y;
+            }
+
+            public override bool Equals(
+                object obj)
+            {
+                return
+                    obj is SmartSpatialCellKey &&
+                    Equals(
+                        (SmartSpatialCellKey)obj);
+            }
+
+            public override int GetHashCode()
+            {
+                unchecked
+                {
+                    return
+                        (X.GetHashCode() * 397) ^
+                        Y.GetHashCode();
+                }
+            }
+        }
+
+        private sealed class SmartSpatialGrid<T>
+            where T : class
+        {
+            private readonly double _cellSize;
+
+            private readonly Dictionary<
+                SmartSpatialCellKey,
+                List<T>> _cells =
+                    new Dictionary<
+                        SmartSpatialCellKey,
+                        List<T>>();
+
+            private readonly List<T> _oversized =
+                new List<T>();
+
+            private const long MaxCellsPerItem =
+                4096;
+
+            public SmartSpatialGrid(
+                double cellSize)
+            {
+                _cellSize =
+                    Math.Max(
+                        25.0,
+                        Math.Abs(
+                            cellSize));
+            }
+
+            public int IndexedItemCount { get; private set; }
+
+            public void Add(
+                T item,
+                SmartNmsBox box)
+            {
+                if (item == null)
+                    return;
+
+                if (box == null ||
+                    !box.IsValid)
+                {
+                    AddOversizedUnique(
+                        item);
+                    return;
+                }
+
+                long minX =
+                    CellCoord(
+                        box.MinX);
+
+                long maxX =
+                    CellCoord(
+                        box.MaxX);
+
+                long minY =
+                    CellCoord(
+                        box.MinY);
+
+                long maxY =
+                    CellCoord(
+                        box.MaxY);
+
+                long spanX =
+                    Math.Max(
+                        1,
+                        maxX - minX + 1);
+
+                long spanY =
+                    Math.Max(
+                        1,
+                        maxY - minY + 1);
+
+                bool tooLarge =
+                    spanX > MaxCellsPerItem ||
+                    spanY > MaxCellsPerItem ||
+                    (spanX > 0 &&
+                     spanY >
+                        MaxCellsPerItem /
+                        spanX);
+
+                if (tooLarge)
+                {
+                    AddOversizedUnique(
+                        item);
+                    return;
+                }
+
+                for (long x = minX;
+                    x <= maxX;
+                    x++)
+                {
+                    for (long y = minY;
+                        y <= maxY;
+                        y++)
+                    {
+                        SmartSpatialCellKey key =
+                            new SmartSpatialCellKey(
+                                x,
+                                y);
+
+                        List<T> bucket;
+
+                        if (!_cells.TryGetValue(
+                                key,
+                                out bucket))
+                        {
+                            bucket =
+                                new List<T>();
+
+                            _cells[key] =
+                                bucket;
+                        }
+
+                        bucket.Add(
+                            item);
+                    }
+                }
+
+                IndexedItemCount++;
+            }
+
+            public List<T> QueryRadius(
+                Point3d center,
+                double radius)
+            {
+                radius =
+                    Math.Max(
+                        0.0,
+                        radius);
+
+                return
+                    QueryBox(
+                        new SmartNmsBox
+                        {
+                            MinX =
+                                center.X -
+                                radius,
+                            MinY =
+                                center.Y -
+                                radius,
+                            MaxX =
+                                center.X +
+                                radius,
+                            MaxY =
+                                center.Y +
+                                radius
+                        });
+            }
+
+            public List<T> QueryBox(
+                SmartNmsBox box)
+            {
+                HashSet<T> found =
+                    new HashSet<T>();
+
+                foreach (T item
+                    in _oversized)
+                {
+                    if (item != null)
+                        found.Add(item);
+                }
+
+                if (box == null ||
+                    !box.IsValid)
+                {
+                    return
+                        found.ToList();
+                }
+
+                long minX =
+                    CellCoord(
+                        box.MinX);
+
+                long maxX =
+                    CellCoord(
+                        box.MaxX);
+
+                long minY =
+                    CellCoord(
+                        box.MinY);
+
+                long maxY =
+                    CellCoord(
+                        box.MaxY);
+
+                // Query dị thường không được phép quét hàng triệu cell.
+                long spanX =
+                    Math.Max(
+                        1,
+                        maxX - minX + 1);
+
+                long spanY =
+                    Math.Max(
+                        1,
+                        maxY - minY + 1);
+
+                if (spanX > MaxCellsPerItem ||
+                    spanY > MaxCellsPerItem ||
+                    (spanX > 0 &&
+                     spanY >
+                        MaxCellsPerItem /
+                        spanX))
+                {
+                    foreach (List<T> bucket
+                        in _cells.Values)
+                    {
+                        foreach (T item
+                            in bucket)
+                        {
+                            if (item != null)
+                                found.Add(item);
+                        }
+                    }
+
+                    return
+                        found.ToList();
+                }
+
+                for (long x = minX;
+                    x <= maxX;
+                    x++)
+                {
+                    for (long y = minY;
+                        y <= maxY;
+                        y++)
+                    {
+                        SmartSpatialCellKey key =
+                            new SmartSpatialCellKey(
+                                x,
+                                y);
+
+                        List<T> bucket;
+
+                        if (!_cells.TryGetValue(
+                                key,
+                                out bucket))
+                        {
+                            continue;
+                        }
+
+                        foreach (T item
+                            in bucket)
+                        {
+                            if (item != null)
+                                found.Add(item);
+                        }
+                    }
+                }
+
+                return
+                    found.ToList();
+            }
+
+            private long CellCoord(
+                double value)
+            {
+                if (double.IsNaN(
+                        value) ||
+                    double.IsInfinity(
+                        value))
+                {
+                    return 0;
+                }
+
+                return
+                    (long)Math.Floor(
+                        value /
+                        _cellSize);
+            }
+
+            private void AddOversizedUnique(
+                T item)
+            {
+                if (item == null)
+                    return;
+
+                if (!_oversized.Contains(
+                        item))
+                {
+                    _oversized.Add(
+                        item);
+
+                    IndexedItemCount++;
+                }
+            }
+        }
+
+        private sealed class SmartDbscanGeometryResult
+        {
+            public List<List<SmartGeometryPrimitive>> Clusters { get; set; } =
+                new List<List<SmartGeometryPrimitive>>();
+
+            public int NoiseCount { get; set; } = 0;
+            public int QueryCount { get; set; } = 0;
+        }
+
+
+        // ============================================================
+        // STEP28D - GRAPH-AWARE MULTI-INSTANCE PATTERN ENGINE
+        // ------------------------------------------------------------
+        // Pattern học TẠM trong chính phiên quét từ các teacher CAD mạnh:
+        // Exact Block / Vector / POINT / Geometry-vector.
+        // ONNX / Vision / Context không được làm teacher để tránh self-reinforcement.
+        // Graph/GNN chỉ là context bổ sung; không được một mình quyết định nhãn.
+        // ============================================================
+        private sealed class SmartPatternFeature
+        {
+            public SmartAuditRow Row { get; set; } = null;
+            public string Label { get; set; } = "";
+            public string StructureBucket { get; set; } = "";
+            public bool TrustedTeacher { get; set; } = false;
+            public double TeacherReliability { get; set; } = 0.0;
+
+            public bool GraphFound { get; set; } = false;
+            public bool GraphAmbiguous { get; set; } = false;
+            public string GraphDn { get; set; } = "";
+            public double GraphConfidence { get; set; } = 0.0;
+
+            public bool GnnStrong { get; set; } = false;
+            public string GnnDn { get; set; } = "";
+            public double GnnConfidence { get; set; } = 0.0;
+        }
+
+        private sealed class SmartPatternPairEvidence
+        {
+            public double Score { get; set; } = 0.0;
+            public double GeometryAffinity { get; set; } = 0.0;
+            public double RasterAffinity { get; set; } = 0.0;
+            public double LayerAffinity { get; set; } = 0.0;
+            public double GraphAffinity { get; set; } = 0.0;
+            public bool StrongStructure { get; set; } = false;
+            public bool ExactStructure { get; set; } = false;
+            public bool GraphConflict { get; set; } = false;
+        }
+
+        private sealed class SmartPatternSupport
+        {
+            public SmartPatternFeature Teacher { get; set; } = null;
+            public SmartPatternPairEvidence Pair { get; set; } = null;
+            public double EffectiveScore { get; set; } = 0.0;
+        }
+
+        private sealed class SmartPatternLabelEvidence
+        {
+            public string Label { get; set; } = "";
+            public double Score { get; set; } = 0.0;
+            public int SupportCount { get; set; } = 0;
+            public int StrongStructureSupportCount { get; set; } = 0;
+            public int ExactStructureSupportCount { get; set; } = 0;
+            public int GraphCompatibleCount { get; set; } = 0;
+            public int GraphConflictCount { get; set; } = 0;
+            public bool SuggestedFollowDn { get; set; } = false;
+            public string EvidenceText { get; set; } = "";
+        }
+
+        private sealed class SmartPatternDecision
+        {
+            public bool Evaluated { get; set; } = false;
+            public bool AutoResolved { get; set; } = false;
+            public bool SwitchedLabel { get; set; } = false;
+            public bool SuggestionOnly { get; set; } = false;
+            public string DecisionCode { get; set; } = "NONE";
+            public string SuggestedLabel { get; set; } = "";
+            public bool SuggestedFollowDn { get; set; } = false;
+            public double Confidence { get; set; } = 0.0;
+            public double Margin { get; set; } = 0.0;
+            public int SupportCount { get; set; } = 0;
+            public string EvidenceText { get; set; } = "";
+        }
+
+
+        // ============================================================
         // STEP28B - SYMBOL CONTEXT ENGINE
         // Pure-data scorer: không giữ DBObject/Transaction trong engine.
         // Chỉ chạy sau Exact Block + Vector; mục tiêu là xử lý ONNX mơ hồ
@@ -41551,6 +42004,28 @@ namespace ClassLibrary4
             public double NeighborAffinity { get; set; } = 0.0;
         }
 
+        // ============================================================
+        // STEP28B.2 - CONTEXT EVIDENCE TRACE
+        // Tách từng nguồn bằng chứng để audit biết chính xác vì sao
+        // Context KEEP / SWITCH / CONFLICT.
+        // ============================================================
+        private sealed class SmartSymbolContextEvidence
+        {
+            public SmartSymbolContextCandidate Candidate { get; set; } = null;
+            public double VisualContribution { get; set; } = 0.0;
+            public double LegendContribution { get; set; } = 0.0;
+            public double PipeContribution { get; set; } = 0.0;
+            public double LayerContribution { get; set; } = 0.0;
+            public double NeighborContribution { get; set; } = 0.0;
+
+            public double TotalScore =>
+                VisualContribution +
+                LegendContribution +
+                PipeContribution +
+                LayerContribution +
+                NeighborContribution;
+        }
+
         private sealed class SmartSymbolContextInput
         {
             public List<SmartSymbolContextCandidate> Candidates { get; set; } =
@@ -41564,6 +42039,12 @@ namespace ClassLibrary4
         private sealed class SmartSymbolContextDecision
         {
             public bool Evaluated { get; set; } = false;
+
+            // KEEP     = giữ #1 visual.
+            // SWITCH   = đủ bằng chứng để đổi sang #2.
+            // CONFLICT = không tự chốt; bắt buộc đưa vào bảng kiểm tra.
+            public string DecisionCode { get; set; } = "KEEP";
+
             public bool SwitchedFromVisualTop1 { get; set; } = false;
             public bool ContextConflict { get; set; } = false;
             public SmartSymbolRule SelectedRule { get; set; } = null;
@@ -41571,6 +42052,12 @@ namespace ClassLibrary4
             public double SelectedVisualConfidence { get; set; } = 0.0;
             public double SelectedScore { get; set; } = 0.0;
             public double RunnerUpScore { get; set; } = 0.0;
+            public double VisualMargin { get; set; } = 0.0;
+            public double ScoreMargin { get; set; } = 0.0;
+            public int SupportingSignals { get; set; } = 0;
+            public SmartSymbolContextEvidence SelectedEvidence { get; set; } = null;
+            public SmartSymbolContextEvidence RunnerUpEvidence { get; set; } = null;
+            public string EvidenceText { get; set; } = "";
             public string Reason { get; set; } = "";
         }
 
@@ -41584,6 +42071,17 @@ namespace ClassLibrary4
             private const double MissingPipeFollowPenalty = 0.050;
             private const double LayerWeight = 0.045;
             private const double NeighborWeight = 0.080;
+
+            // STEP28B.2:
+            // Context chỉ được đảo nhãn khi thắng đủ xa và có >=2 bằng chứng.
+            // Nếu Context phản đối visual nhưng chưa đủ quyền SWITCH, hoặc hai
+            // nhãn gần hòa, trả CONFLICT thay vì đoán.
+            private const double SwitchMinImprovement = 0.045;
+            private const double SwitchMinScoreMargin = 0.025;
+            private const double ConflictNearTieMargin = 0.022;
+            private const double ConflictChallengerImprovement = 0.015;
+            private const double StrongNeighborAffinity = 0.82;
+            private const double StrongNeighborAdvantage = 0.25;
 
             public static SmartSymbolContextDecision Evaluate(
                 SmartSymbolContextInput input)
@@ -41627,139 +42125,172 @@ namespace ClassLibrary4
                         visualTop.VisualConfidence -
                         visualSecond.VisualConfidence);
 
-                // Visual quá rõ thì context chỉ đứng sau, không can thiệp.
-                // Tránh "thông minh quá mức" làm hỏng prediction chắc chắn.
+                Dictionary<SmartSymbolContextCandidate, SmartSymbolContextEvidence>
+                    evidenceMap =
+                        candidates.ToDictionary(
+                            candidate =>
+                                candidate,
+                            candidate =>
+                                BuildEvidence(
+                                    candidate,
+                                    input));
+
+                SmartSymbolContextEvidence visualTopEvidence =
+                    evidenceMap[visualTop];
+
+                SmartSymbolContextEvidence visualSecondEvidence =
+                    evidenceMap[visualSecond];
+
+                // Visual quá rõ thì Context chỉ ghi trace, không can thiệp.
+                // Đây là hàng rào an toàn để context yếu không phá prediction chắc.
                 if (visualTop.VisualConfidence >= 0.94 &&
                     visualMargin >= 0.28)
                 {
                     decision.Evaluated = true;
+                    decision.DecisionCode = "KEEP";
                     decision.SelectedRule = visualTop.Rule;
                     decision.SelectedLabel = visualTop.Label;
                     decision.SelectedVisualConfidence =
                         visualTop.VisualConfidence;
                     decision.SelectedScore =
-                        visualTop.VisualConfidence;
+                        visualTopEvidence.TotalScore;
                     decision.RunnerUpScore =
-                        visualSecond.VisualConfidence;
+                        visualSecondEvidence.TotalScore;
+                    decision.VisualMargin =
+                        visualMargin;
+                    decision.ScoreMargin =
+                        Math.Abs(
+                            visualTopEvidence.TotalScore -
+                            visualSecondEvidence.TotalScore);
+                    decision.SelectedEvidence =
+                        visualTopEvidence;
+                    decision.RunnerUpEvidence =
+                        visualSecondEvidence;
+                    decision.EvidenceText =
+                        BuildEvidenceTrace(
+                            decision,
+                            0.0);
                     decision.Reason =
                         "Visual ONNX đủ mạnh, Context giữ nguyên #1.";
                     return decision;
                 }
 
-                Dictionary<SmartSymbolContextCandidate, double> scores =
-                    new Dictionary<SmartSymbolContextCandidate, double>();
-
-                foreach (SmartSymbolContextCandidate candidate
-                    in candidates)
-                {
-                    double score =
-                        Clamp01(candidate.VisualConfidence) *
-                        VisualWeight;
-
-                    score +=
-                        candidate.InCurrentLegend
-                            ? LegendBonus
-                            : -MissingLegendPenalty;
-
-                    if (input.HasPipe)
-                    {
-                        if (candidate.FollowDn)
-                        {
-                            score +=
-                                input.PipeAmbiguous
-                                    ? PipeFollowAmbiguousBonus
-                                    : PipeFollowBonus;
-                        }
-                    }
-                    else if (candidate.FollowDn)
-                    {
-                        score -=
-                            MissingPipeFollowPenalty;
-                    }
-
-                    score +=
-                        Clamp01(candidate.LayerAffinity) *
-                        LayerWeight;
-
-                    score +=
-                        Clamp01(candidate.NeighborAffinity) *
-                        NeighborWeight;
-
-                    scores[candidate] =
-                        score;
-                }
-
-                List<KeyValuePair<SmartSymbolContextCandidate, double>> ranked =
-                    scores
-                        .OrderByDescending(x => x.Value)
+                List<SmartSymbolContextEvidence> ranked =
+                    evidenceMap.Values
+                        .OrderByDescending(
+                            x => x.TotalScore)
                         .ToList();
 
+                SmartSymbolContextEvidence bestEvidence =
+                    ranked[0];
+
                 SmartSymbolContextCandidate best =
-                    ranked[0].Key;
-
-                double bestScore =
-                    ranked[0].Value;
-
-                double secondScore =
-                    ranked.Count > 1
-                        ? ranked[1].Value
-                        : 0.0;
+                    bestEvidence.Candidate;
 
                 bool wantsSwitch =
-                    !ReferenceEquals(best, visualTop);
-
-                double visualTopScore =
-                    scores[visualTop];
+                    !ReferenceEquals(
+                        best,
+                        visualTop);
 
                 double improvement =
-                    bestScore - visualTopScore;
+                    bestEvidence.TotalScore -
+                    visualTopEvidence.TotalScore;
 
                 int supportingSignals =
+                    wantsSwitch
+                        ? CountContextSignalsFavoring(
+                            best,
+                            visualTop,
+                            input)
+                        : 0;
+
+                int secondAgainstTopSignals =
                     CountContextSignalsFavoring(
-                        best,
+                        visualSecond,
                         visualTop,
                         input);
 
-                // Chỉ đảo #1 -> #2 khi Context thực sự có bằng chứng.
-                // Một tín hiệu đơn lẻ yếu không đủ quyền đổi label.
+                double scoreMargin =
+                    Math.Abs(
+                        visualTopEvidence.TotalScore -
+                        visualSecondEvidence.TotalScore);
+
+                bool strongNeighborOverride =
+                    wantsSwitch &&
+                    best.NeighborAffinity >=
+                        StrongNeighborAffinity &&
+                    best.NeighborAffinity >=
+                        visualTop.NeighborAffinity +
+                        StrongNeighborAdvantage;
+
                 bool allowSwitch =
                     wantsSwitch &&
-                    improvement >= 0.045 &&
+                    improvement >=
+                        SwitchMinImprovement &&
+                    scoreMargin >=
+                        SwitchMinScoreMargin &&
                     (supportingSignals >= 2 ||
-                     best.NeighborAffinity >= 0.72);
+                     strongNeighborOverride);
+
+                bool differentLabels =
+                    !string.Equals(
+                        visualTop.Label,
+                        visualSecond.Label,
+                        StringComparison.OrdinalIgnoreCase);
+
+                bool contextChallengesTop =
+                    wantsSwitch &&
+                    improvement >=
+                        ConflictChallengerImprovement;
+
+                bool nearTie =
+                    scoreMargin <
+                        ConflictNearTieMargin &&
+                    visualMargin < 0.20;
+
+                bool secondHasRealSupport =
+                    secondAgainstTopSignals >= 1 &&
+                    visualMargin < 0.12 &&
+                    scoreMargin < 0.035;
+
+                bool challengerHasMultipleSignalsButNotEnoughToSwitch =
+                    wantsSwitch &&
+                    supportingSignals >= 2 &&
+                    improvement > 0.0;
+
+                bool conflict =
+                    differentLabels &&
+                    !allowSwitch &&
+                    (nearTie ||
+                     contextChallengesTop ||
+                     secondHasRealSupport ||
+                     challengerHasMultipleSignalsButNotEnoughToSwitch);
 
                 SmartSymbolContextCandidate selected =
                     allowSwitch
                         ? best
                         : visualTop;
 
-                if (!allowSwitch)
-                {
-                    bestScore =
-                        scores[selected];
+                SmartSymbolContextCandidate runner =
+                    ReferenceEquals(
+                        selected,
+                        visualTop)
+                        ? visualSecond
+                        : visualTop;
 
-                    SmartSymbolContextCandidate other =
-                        ReferenceEquals(selected, candidates[0])
-                            ? candidates[1]
-                            : candidates[0];
+                SmartSymbolContextEvidence selectedEvidence =
+                    evidenceMap[selected];
 
-                    secondScore =
-                        scores[other];
-                }
-
-                double scoreMargin =
-                    Math.Abs(
-                        bestScore -
-                        secondScore);
-
-                bool conflict =
-                    scoreMargin < 0.022 &&
-                    !string.Equals(
-                        candidates[0].Label,
-                        candidates[1].Label,
-                        StringComparison.OrdinalIgnoreCase);
+                SmartSymbolContextEvidence runnerEvidence =
+                    evidenceMap[runner];
 
                 decision.Evaluated = true;
+                decision.DecisionCode =
+                    allowSwitch
+                        ? "SWITCH"
+                        : conflict
+                            ? "CONFLICT"
+                            : "KEEP";
                 decision.SwitchedFromVisualTop1 =
                     allowSwitch;
                 decision.ContextConflict =
@@ -41771,12 +42302,23 @@ namespace ClassLibrary4
                 decision.SelectedVisualConfidence =
                     selected.VisualConfidence;
                 decision.SelectedScore =
-                    scores[selected];
+                    selectedEvidence.TotalScore;
                 decision.RunnerUpScore =
-                    scores[
-                        ReferenceEquals(selected, candidates[0])
-                            ? candidates[1]
-                            : candidates[0]];
+                    runnerEvidence.TotalScore;
+                decision.VisualMargin =
+                    visualMargin;
+                decision.ScoreMargin =
+                    Math.Abs(
+                        selectedEvidence.TotalScore -
+                        runnerEvidence.TotalScore);
+                decision.SupportingSignals =
+                    allowSwitch || wantsSwitch
+                        ? supportingSignals
+                        : secondAgainstTopSignals;
+                decision.SelectedEvidence =
+                    selectedEvidence;
+                decision.RunnerUpEvidence =
+                    runnerEvidence;
 
                 if (allowSwitch)
                 {
@@ -41791,15 +42333,162 @@ namespace ClassLibrary4
                 else if (conflict)
                 {
                     decision.Reason =
-                        "Context gần hòa giữa 2 nhãn, giữ #1 visual để an toàn.";
+                        "Context chưa đủ nhất quán giữa 2 nhãn; không tự chốt và đưa vào KIỂM TRA.";
                 }
                 else
                 {
                     decision.Reason =
-                        "Context đã kiểm tra nhưng chưa đủ mạnh để đảo #1 visual.";
+                        "Context đã kiểm tra và giữ #1 visual.";
                 }
 
+                decision.EvidenceText =
+                    BuildEvidenceTrace(
+                        decision,
+                        improvement);
+
                 return decision;
+            }
+
+            private static SmartSymbolContextEvidence BuildEvidence(
+                SmartSymbolContextCandidate candidate,
+                SmartSymbolContextInput input)
+            {
+                SmartSymbolContextEvidence evidence =
+                    new SmartSymbolContextEvidence
+                    {
+                        Candidate =
+                            candidate
+                    };
+
+                if (candidate == null)
+                    return evidence;
+
+                evidence.VisualContribution =
+                    Clamp01(
+                        candidate.VisualConfidence) *
+                    VisualWeight;
+
+                evidence.LegendContribution =
+                    candidate.InCurrentLegend
+                        ? LegendBonus
+                        : -MissingLegendPenalty;
+
+                if (input != null &&
+                    input.HasPipe)
+                {
+                    if (candidate.FollowDn)
+                    {
+                        evidence.PipeContribution =
+                            input.PipeAmbiguous
+                                ? PipeFollowAmbiguousBonus
+                                : PipeFollowBonus;
+                    }
+                }
+                else if (candidate.FollowDn)
+                {
+                    evidence.PipeContribution =
+                        -MissingPipeFollowPenalty;
+                }
+
+                evidence.LayerContribution =
+                    Clamp01(
+                        candidate.LayerAffinity) *
+                    LayerWeight;
+
+                evidence.NeighborContribution =
+                    Clamp01(
+                        candidate.NeighborAffinity) *
+                    NeighborWeight;
+
+                return evidence;
+            }
+
+            private static string BuildEvidenceTrace(
+                SmartSymbolContextDecision decision,
+                double improvement)
+            {
+                if (decision == null)
+                    return "";
+
+                SmartSymbolContextEvidence selected =
+                    decision.SelectedEvidence;
+
+                SmartSymbolContextEvidence runner =
+                    decision.RunnerUpEvidence;
+
+                if (selected == null ||
+                    selected.Candidate == null)
+                {
+                    return
+                        "mode=" +
+                        (decision.DecisionCode ?? "KEEP");
+                }
+
+                string text =
+                    "mode=" +
+                    (decision.DecisionCode ?? "KEEP") +
+                    " | " +
+                    selected.Candidate.Label +
+                    " [" +
+                    "V=" + FormatContribution(selected.VisualContribution) +
+                    " L=" + FormatContribution(selected.LegendContribution) +
+                    " P=" + FormatContribution(selected.PipeContribution) +
+                    " Y=" + FormatContribution(selected.LayerContribution) +
+                    " N=" + FormatContribution(selected.NeighborContribution) +
+                    "] => " +
+                    selected.TotalScore.ToString(
+                        "0.000",
+                        CultureInfo.InvariantCulture);
+
+                if (runner != null &&
+                    runner.Candidate != null)
+                {
+                    text +=
+                        " | #2 " +
+                        runner.Candidate.Label +
+                        "=" +
+                        runner.TotalScore.ToString(
+                            "0.000",
+                            CultureInfo.InvariantCulture);
+                }
+
+                text +=
+                    " | Δscore=" +
+                    decision.ScoreMargin.ToString(
+                        "0.000",
+                        CultureInfo.InvariantCulture) +
+                    " | Δvisual=" +
+                    decision.VisualMargin.ToString(
+                        "0.000",
+                        CultureInfo.InvariantCulture) +
+                    " | signals=" +
+                    decision.SupportingSignals.ToString(
+                        CultureInfo.InvariantCulture);
+
+                if (improvement > 0.0)
+                {
+                    text +=
+                        " | gain=" +
+                        improvement.ToString(
+                            "0.000",
+                            CultureInfo.InvariantCulture);
+                }
+
+                return text;
+            }
+
+            private static string FormatContribution(
+                double value)
+            {
+                if (double.IsNaN(value) ||
+                    double.IsInfinity(value))
+                {
+                    return "0.000";
+                }
+
+                return value.ToString(
+                    "+0.000;-0.000;0.000",
+                    CultureInfo.InvariantCulture);
             }
 
             private static int CountContextSignalsFavoring(
@@ -41807,6 +42496,12 @@ namespace ClassLibrary4
                 SmartSymbolContextCandidate visualTop,
                 SmartSymbolContextInput input)
             {
+                if (challenger == null ||
+                    visualTop == null)
+                {
+                    return 0;
+                }
+
                 int count = 0;
 
                 if (challenger.InCurrentLegend &&
@@ -41815,7 +42510,8 @@ namespace ClassLibrary4
                     count++;
                 }
 
-                if (input.HasPipe &&
+                if (input != null &&
+                    input.HasPipe &&
                     !input.PipeAmbiguous &&
                     challenger.FollowDn &&
                     !visualTop.FollowDn)
@@ -41823,7 +42519,8 @@ namespace ClassLibrary4
                     count++;
                 }
 
-                if (!input.HasPipe &&
+                if ((input == null ||
+                     !input.HasPipe) &&
                     !challenger.FollowDn &&
                     visualTop.FollowDn)
                 {
@@ -41859,7 +42556,8 @@ namespace ClassLibrary4
                     parts.Add("Legend dự án");
                 }
 
-                if (input.HasPipe &&
+                if (input != null &&
+                    input.HasPipe &&
                     challenger.FollowDn &&
                     !visualTop.FollowDn)
                 {
@@ -41869,7 +42567,8 @@ namespace ClassLibrary4
                             : "Pipe/Graph/GNN context");
                 }
 
-                if (!input.HasPipe &&
+                if ((input == null ||
+                     !input.HasPipe) &&
                     !challenger.FollowDn &&
                     visualTop.FollowDn)
                 {
@@ -41915,6 +42614,7 @@ namespace ClassLibrary4
             }
         }
 
+
         private class SmartAuditRow
         {
             public string Status { get; set; } = "OK";
@@ -41951,6 +42651,17 @@ namespace ClassLibrary4
             // NMS tự fallback về khoảng cách tâm như trước.
             public SmartNmsBox DetectionBox { get; set; } = null;
             public double DetectionConfidence { get; set; } = 0.0;
+
+            // STEP28D - session-only pattern evidence.
+            // Không tự ghi pattern vào thư viện học. Chỉ UserEdited mới được học bền vững.
+            public string LayerName { get; set; } = "";
+            public string AlternativeName { get; set; } = "";
+            public string PatternSuggestedName { get; set; } = "";
+            public string PatternDecisionCode { get; set; } = "";
+            public string PatternEvidenceText { get; set; } = "";
+            public double PatternConfidence { get; set; } = 0.0;
+            public int PatternSupportCount { get; set; } = 0;
+            public bool PatternAutoResolved { get; set; } = false;
         }
 
         private class SmartAuditIgnoreEntry
@@ -41999,6 +42710,48 @@ namespace ClassLibrary4
         private int _lastSmartContextAdjustedCount = 0;
         private int _lastSmartContextConflictCount = 0;
 
+        // STEP28C - diagnostics + active pipe spatial index.
+        private int _lastSmartSpatialQueryCount = 0;
+        private int _lastSmartDbscanClusterCount = 0;
+        private int _lastSmartDbscanNoiseCount = 0;
+
+        // STEP28D - session pattern diagnostics.
+        private int _lastSmartPatternTeacherCount = 0;
+        private int _lastSmartPatternEvaluatedCount = 0;
+        private int _lastSmartPatternAutoKeepCount = 0;
+        private int _lastSmartPatternAutoSwitchCount = 0;
+        private int _lastSmartPatternSuggestedCount = 0;
+
+        // STEP29A - OpenCV refinement diagnostics.
+        // OpenCV chỉ chạy khi ONNX raw chưa đủ chắc, nên không phá STEP28A Hot Cache.
+        private int _lastOpenCvAnalyzedCount = 0;
+        private int _lastOpenCvRefinedCount = 0;
+        private int _lastOpenCvKeptRawCount = 0;
+        private int _lastOpenCvSkippedCount = 0;
+
+        // STEP29A.2 - Tile/ROI rescue diagnostics.
+        private int _lastOpenCvTileRunCount = 0;
+        private int _lastOpenCvTileRegionCount = 0;
+        private int _lastOpenCvTileRescueCount = 0;
+        private int _lastOpenCvTileFallbackCount = 0;
+
+        // STEP29A.3 - world-space tiling diagnostics.
+        // Chỉ chạy trên geometry còn chưa match sau DBSCAN + local ROI rescue.
+        private int _lastOpenCvWorldTileRunCount = 0;
+        private int _lastOpenCvWorldTileRegionCount = 0;
+        private int _lastOpenCvWorldTileRescueCount = 0;
+        private int _lastOpenCvWorldTileDenseSkipCount = 0;
+
+        // STEP29B - YOLO Object Detection diagnostics.
+        // YOLO chỉ chạy trên world tile còn chưa được Exact/Vector/DBSCAN nhận.
+        private int _lastYoloTileRunCount = 0;
+        private int _lastYoloRawDetectionCount = 0;
+        private int _lastYoloAcceptedCount = 0;
+        private int _lastYoloRejectedCount = 0;
+
+        private List<SmartPipeCandidate> _activeSmartPipeSpatialSource = null;
+        private SmartSpatialGrid<SmartPipeCandidate> _activeSmartPipeSpatialIndex = null;
+
         private List<string> _lastSmartLegendZero =
             new List<string>();
 
@@ -42030,6 +42783,28 @@ namespace ClassLibrary4
         private string _onnxLoadedModelPath = "";
         private DateTime _onnxLoadedModelWriteUtc = DateTime.MinValue;
         private string _onnxLastLoadError = "";
+
+        // STEP29A - OpenCV Vision Engine.
+        // Lazy-load: native OpenCV chỉ được chạm tới khi ONNX raw đang mơ hồ.
+        private MepOpenCvVisionEngine _openCvVisionEngine = null;
+
+        // STEP29A.2: candidate generator dùng cùng native OpenCV runtime.
+        // Chỉ khởi tạo sau khi MepOpenCvVisionEngine Probe thành công.
+        private MepOpenCvTileCandidateEngine _openCvTileCandidateEngine = null;
+
+        // STEP29A.3: planner chia toàn bộ mặt bằng thành overlapping world tiles.
+        // Không phụ thuộc AutoCAD/OpenCV, để STEP29B YOLO có thể tái sử dụng.
+        private MepOpenCvWorldTilingEngine _openCvWorldTilingEngine = null;
+
+        // STEP29B - YOLO detector ONNX. Tách riêng classifier STEP28A.
+        // Nếu chưa có detector model thì pipeline cũ vẫn hoạt động bình thường.
+        private MepYoloSymbolDetector _yoloSymbolDetector = null;
+        private string _yoloLoadedModelPath = "";
+        private DateTime _yoloLoadedModelWriteUtc = DateTime.MinValue;
+        private string _yoloLastLoadError = "";
+
+        private bool _openCvProbeAttempted = false;
+        private string _openCvLastError = "";
 
         private const double OnnxDeviceMinConfidence = 0.80;
         private const double OnnxDeviceMinMargin = 0.12;
@@ -51276,6 +52051,10 @@ namespace ClassLibrary4
                                     r.Status,
                                     "MISSING",
                                     StringComparison.OrdinalIgnoreCase) &&
+                                !string.Equals(
+                                    r.Status,
+                                    "CONTEXT_CONFLICT",
+                                    StringComparison.OrdinalIgnoreCase) &&
                                 !string.IsNullOrWhiteSpace(
                                     r.Name))
                         .Select(
@@ -54687,28 +55466,23 @@ namespace ClassLibrary4
                                 ex.MinPoint.Y);
 
                         // Bỏ các nét kiến trúc rất dài.
-                        if (Math.Max(
-                                dx,
-                                dy) >
-                            1800.0)
-                        {
+                        if (Math.Max(dx, dy) > 1800.0)
                             continue;
-                        }
 
                         primitives.Add(
                             new SmartGeometryPrimitive
                             {
-                                Id =
-                                    id,
-                                Extents =
-                                    ex,
+                                Id = id,
+                                Extents = ex,
                                 Center =
                                     new Point3d(
-                                        (ex.MinPoint.X +
-                                         ex.MaxPoint.X) * 0.5,
-                                        (ex.MinPoint.Y +
-                                         ex.MaxPoint.Y) * 0.5,
-                                        0.0)
+                                        (ex.MinPoint.X + ex.MaxPoint.X) * 0.5,
+                                        (ex.MinPoint.Y + ex.MaxPoint.Y) * 0.5,
+                                        0.0),
+                                Layer = ent.Layer ?? "",
+                                Kind =
+                                    GetSmartGeometryPrimitiveKind(ent),
+                                Span = Math.Max(dx, dy)
                             });
                     }
                     catch
@@ -54722,214 +55496,1235 @@ namespace ClassLibrary4
             if (primitives.Count == 0)
                 return result;
 
-            // Gom cluster theo khoảng cách bounding box.
-            // Ký hiệu van thường nhỏ; gap 80 mm đủ để gom các nét không chạm nhau.
-            const double clusterGap =
-                80.0;
+            // STEP28C:
+            // Spatial DBSCAN vẫn là candidate generator chính.
+            const double clusterGap = 80.0;
+
+            SmartDbscanGeometryResult dbscan =
+                ClusterSmartGeometryPrimitivesDbscan(
+                    primitives,
+                    clusterGap,
+                    2,
+                    30,
+                    true);
 
             List<List<SmartGeometryPrimitive>> clusters =
-                new List<List<SmartGeometryPrimitive>>();
-
-            HashSet<ObjectId> used =
-                new HashSet<ObjectId>();
-
-            foreach (SmartGeometryPrimitive seed
-                in primitives)
-            {
-                if (used.Contains(
-                        seed.Id))
-                {
-                    continue;
-                }
-
-                List<SmartGeometryPrimitive> cluster =
-                    new List<SmartGeometryPrimitive>();
-
-                Queue<SmartGeometryPrimitive> queue =
-                    new Queue<SmartGeometryPrimitive>();
-
-                queue.Enqueue(
-                    seed);
-
-                used.Add(
-                    seed.Id);
-
-                while (queue.Count > 0)
-                {
-                    SmartGeometryPrimitive current =
-                        queue.Dequeue();
-
-                    cluster.Add(
-                        current);
-
-                    // Chặn cluster quá lớn: thường đó là chi tiết kiến trúc,
-                    // không phải ký hiệu van/thiết bị.
-                    if (cluster.Count > 30)
-                        break;
-
-                    foreach (SmartGeometryPrimitive other
-                        in primitives)
-                    {
-                        if (used.Contains(
-                                other.Id))
-                        {
-                            continue;
-                        }
-
-                        if (AreSmartGeometryExtentsNear(
-                                current.Extents,
-                                other.Extents,
-                                clusterGap))
-                        {
-                            used.Add(
-                                other.Id);
-
-                            queue.Enqueue(
-                                other);
-                        }
-                    }
-                }
-
-                if (cluster.Count > 0 &&
-                    cluster.Count <= 30)
-                {
-                    clusters.Add(
-                        cluster);
-                }
-            }
+                dbscan.Clusters;
 
             using (Transaction tr =
                 db.TransactionManager.StartTransaction())
             {
-                foreach (List<SmartGeometryPrimitive> cluster
-                    in clusters)
+                foreach (List<SmartGeometryPrimitive> cluster in clusters)
                 {
-                    List<ObjectId> ids =
-                        cluster
-                            .Select(
-                                x =>
-                                    x.Id)
-                            .ToList();
-
-                    string fingerprint =
-                        BuildSmartGeometryFingerprint(
+                    if (TryCreateSmartGeometryMatchFromCluster(
                             tr,
-                            ids);
+                            cluster,
+                            geometryRules,
+                            allRules,
+                            out SmartGeometryMatch normalMatch))
+                    {
+                        result.Add(normalMatch);
+                        continue;
+                    }
 
-                    if (string.IsNullOrWhiteSpace(
-                            fingerprint))
+                    // STEP29A.2:
+                    // Chỉ khi DBSCAN cluster KHÔNG nhận được mới raster hóa cluster
+                    // thành tile 512x512 và nhờ OpenCV tìm ROI con.
+                    // Vì vậy không làm chậm các cluster CAD/Vector đã nhận chắc.
+                    if (!TryBuildSmartOpenCvSubclusters(
+                            tr,
+                            cluster,
+                            out List<SmartOpenCvSubcluster> subclusters,
+                            false))
                     {
                         continue;
                     }
 
-                    SmartSymbolRule bestRule =
-                        null;
+                    int rescuedThisCluster = 0;
 
-                    double bestScore =
-                        double.MaxValue;
-
-                    foreach (SmartSymbolRule rule
-                        in geometryRules ??
-                           new List<SmartSymbolRule>())
+                    foreach (SmartOpenCvSubcluster subcluster in subclusters)
                     {
-                        if (rule == null ||
-                            string.IsNullOrWhiteSpace(
-                                rule.GeometryFingerprint))
+                        if (subcluster == null ||
+                            subcluster.Primitives == null ||
+                            subcluster.Primitives.Count == 0)
                         {
                             continue;
                         }
 
-                        double score =
-                            CompareSmartGeometryFingerprints(
-                                rule.GeometryFingerprint,
-                                fingerprint);
-
-                        if (score < bestScore)
-                        {
-                            bestScore =
-                                score;
-                            bestRule =
-                                rule;
-                        }
-                    }
-
-                    string source =
-                        "GEOMETRY";
-
-                    MepSymbolClassifier.Prediction onnxPrediction =
-                        null;
-
-                    // Vector chưa đủ chắc -> thử ONNX trên chính cluster EXPLODE.
-                    if (bestRule == null ||
-                        bestScore >
-                            0.10)
-                    {
-                        if (!TryMatchSmartGeometryClusterByOnnx(
+                        if (TryCreateSmartGeometryMatchFromCluster(
                                 tr,
-                                ids,
+                                subcluster.Primitives,
+                                geometryRules,
                                 allRules,
-                                out bestRule,
-                                out onnxPrediction))
+                                out SmartGeometryMatch rescued))
                         {
-                            continue;
+                            // ROI box chính xác hơn bbox fallback của cluster con.
+                            if (subcluster.WorldBox != null &&
+                                subcluster.WorldBox.IsValid)
+                            {
+                                rescued.DetectionBox =
+                                    subcluster.WorldBox;
+                            }
+
+                            result.Add(rescued);
+                            rescuedThisCluster++;
+                            _lastOpenCvTileRescueCount++;
                         }
-
-                        bestScore =
-                            1.0 -
-                            Math.Max(
-                                0.0,
-                                Math.Min(
-                                    1.0,
-                                    onnxPrediction?.Confidence ?? 0.0));
-
-                        source =
-                            "ONNX";
                     }
 
-                    double x =
-                        cluster.Average(
-                            p =>
-                                p.Center.X);
-
-                    double y =
-                        cluster.Average(
-                            p =>
-                                p.Center.Y);
-
-                    result.Add(
-                        new SmartGeometryMatch
-                        {
-                            Rule =
-                                bestRule,
-                            Center =
-                                new Point3d(
-                                    x,
-                                    y,
-                                    0.0),
-                            Score =
-                                bestScore,
-                            Source =
-                                source,
-                            OnnxPrediction =
-                                onnxPrediction,
-                            GeometryFingerprint =
-                                fingerprint ?? "",
-                            ObjectIds =
-                                ids != null
-                                    ? ids.ToList()
-                                    : new List<ObjectId>(),
-                            DetectionBox =
-                                BuildSmartNmsBoxFromPrimitives(
-                                    cluster,
-                                    new Point3d(x, y, 0.0),
-                                    70.0)
-                        });
+                    if (rescuedThisCluster == 0)
+                    {
+                        _lastOpenCvTileFallbackCount++;
+                    }
                 }
+
+                // STEP29A.3:
+                // Sau DBSCAN + local ROI rescue, quét WORLD TILE chỉ trên các
+                // primitive còn chưa được nhận diện. Đây là pass toàn mặt bằng
+                // nhưng có budget + dense-skip để không làm AutoCAD bị đứng.
+                AppendSmartOpenCvWorldTileMatches(
+                    tr,
+                    primitives,
+                    geometryRules,
+                    allRules,
+                    result);
 
                 tr.Commit();
             }
 
             return result;
+        }
+
+        private bool TryCreateSmartGeometryMatchFromCluster(
+            Transaction tr,
+            List<SmartGeometryPrimitive> cluster,
+            List<SmartSymbolRule> geometryRules,
+            List<SmartSymbolRule> allRules,
+            out SmartGeometryMatch match)
+        {
+            match = null;
+
+            if (tr == null ||
+                cluster == null ||
+                cluster.Count == 0)
+            {
+                return false;
+            }
+
+            List<ObjectId> ids =
+                cluster
+                    .Where(x => x != null)
+                    .Select(x => x.Id)
+                    .Where(id => !id.IsNull)
+                    .Distinct()
+                    .ToList();
+
+            if (ids.Count == 0)
+                return false;
+
+            string fingerprint =
+                BuildSmartGeometryFingerprint(
+                    tr,
+                    ids);
+
+            if (string.IsNullOrWhiteSpace(fingerprint))
+                return false;
+
+            SmartSymbolRule bestRule = null;
+            double bestScore = double.MaxValue;
+
+            foreach (SmartSymbolRule rule
+                in geometryRules ??
+                   new List<SmartSymbolRule>())
+            {
+                if (rule == null ||
+                    string.IsNullOrWhiteSpace(
+                        rule.GeometryFingerprint))
+                {
+                    continue;
+                }
+
+                double score =
+                    CompareSmartGeometryFingerprints(
+                        rule.GeometryFingerprint,
+                        fingerprint);
+
+                if (score < bestScore)
+                {
+                    bestScore = score;
+                    bestRule = rule;
+                }
+            }
+
+            string source = "GEOMETRY";
+
+            MepSymbolClassifier.Prediction onnxPrediction =
+                null;
+
+            // Vector chưa đủ chắc -> thử ONNX trên chính cluster EXPLODE.
+            if (bestRule == null ||
+                bestScore > 0.10)
+            {
+                if (!TryMatchSmartGeometryClusterByOnnx(
+                        tr,
+                        ids,
+                        allRules,
+                        out bestRule,
+                        out onnxPrediction))
+                {
+                    return false;
+                }
+
+                bestScore =
+                    1.0 -
+                    Math.Max(
+                        0.0,
+                        Math.Min(
+                            1.0,
+                            onnxPrediction?.Confidence ?? 0.0));
+
+                source = "ONNX";
+            }
+
+            double x =
+                cluster.Average(p => p.Center.X);
+
+            double y =
+                cluster.Average(p => p.Center.Y);
+
+            match =
+                new SmartGeometryMatch
+                {
+                    Rule = bestRule,
+                    Center =
+                        new Point3d(
+                            x,
+                            y,
+                            0.0),
+                    Score = bestScore,
+                    Source = source,
+                    OnnxPrediction = onnxPrediction,
+                    GeometryFingerprint = fingerprint ?? "",
+                    ObjectIds = ids.ToList(),
+                    DetectionBox =
+                        BuildSmartNmsBoxFromPrimitives(
+                            cluster,
+                            new Point3d(x, y, 0.0),
+                            70.0)
+                };
+
+            return true;
+        }
+
+        private bool TryBuildSmartOpenCvSubclusters(
+            Transaction tr,
+            List<SmartGeometryPrimitive> cluster,
+            out List<SmartOpenCvSubcluster> subclusters,
+            bool worldPass)
+        {
+            subclusters =
+                new List<SmartOpenCvSubcluster>();
+
+            // Cluster 1-2 primitive hiếm khi là lỗi "dính cụm".
+            // Chỉ rescue các cụm đủ phức tạp để tránh tốn OpenCV vô ích.
+            int minimumPrimitiveCount =
+                worldPass
+                    ? 1
+                    : 3;
+
+            if (tr == null ||
+                cluster == null ||
+                cluster.Count < minimumPrimitiveCount ||
+                cluster.Count > 96)
+            {
+                return false;
+            }
+
+            MepOpenCvTileCandidateEngine engine =
+                GetOpenCvTileCandidateEngine();
+
+            if (engine == null)
+                return false;
+
+            Extents3d overall = default(Extents3d);
+            bool hasExtents = false;
+
+            foreach (SmartGeometryPrimitive primitive in cluster)
+            {
+                if (primitive == null)
+                    continue;
+
+                try
+                {
+                    if (!hasExtents)
+                    {
+                        overall = primitive.Extents;
+                        hasExtents = true;
+                    }
+                    else
+                    {
+                        overall.AddExtents(
+                            primitive.Extents);
+                    }
+                }
+                catch
+                {
+                }
+            }
+
+            if (!hasExtents)
+                return false;
+
+            double dx =
+                Math.Max(
+                    overall.MaxPoint.X - overall.MinPoint.X,
+                    1.0);
+
+            double dy =
+                Math.Max(
+                    overall.MaxPoint.Y - overall.MinPoint.Y,
+                    1.0);
+
+            double maxSpan = Math.Max(dx, dy);
+
+            // Cụm quá lớn nhiều khả năng là kiến trúc/đường ống dài chứ không phải symbol.
+            if (maxSpan > 4200.0)
+                return false;
+
+            const int tileWidth = 512;
+            const int tileHeight = 512;
+            const double margin = 6.0;
+
+            List<ObjectId> ids =
+                cluster
+                    .Where(x => x != null)
+                    .Select(x => x.Id)
+                    .Where(id => !id.IsNull)
+                    .Distinct()
+                    .ToList();
+
+            if (ids.Count < minimumPrimitiveCount)
+                return false;
+
+            using (System.Drawing.Bitmap bitmap =
+                CreateSmartLegendPreviewBitmap(
+                    tr,
+                    ids,
+                    tileWidth,
+                    tileHeight))
+            {
+                if (worldPass)
+                    _lastOpenCvWorldTileRunCount++;
+                else
+                    _lastOpenCvTileRunCount++;
+
+                if (!engine.TryFindCandidates(
+                        bitmap,
+                        out List<MepOpenCvTileCandidateEngine.CandidateRegion> regions,
+                        out MepOpenCvTileCandidateEngine.TileAnalysis analysis,
+                        24) ||
+                    regions == null ||
+                    regions.Count == 0)
+                {
+                    if (!worldPass)
+                        _lastOpenCvTileFallbackCount++;
+                    return false;
+                }
+
+                if (worldPass)
+                    _lastOpenCvWorldTileRegionCount += regions.Count;
+                else
+                    _lastOpenCvTileRegionCount += regions.Count;
+
+                double sx =
+                    (tileWidth - margin * 2.0) / dx;
+
+                double sy =
+                    (tileHeight - margin * 2.0) / dy;
+
+                double scale = Math.Min(sx, sy);
+
+                if (double.IsNaN(scale) ||
+                    double.IsInfinity(scale) ||
+                    scale <= 1e-9)
+                {
+                    if (!worldPass)
+                        _lastOpenCvTileFallbackCount++;
+                    return false;
+                }
+
+                HashSet<string> seenKeys =
+                    new HashSet<string>(
+                        StringComparer.Ordinal);
+
+                foreach (MepOpenCvTileCandidateEngine.CandidateRegion region
+                    in regions
+                        .OrderByDescending(x => x.Score))
+                {
+                    if (region == null)
+                        continue;
+
+                    double px1 =
+                        Math.Max(margin, region.X);
+
+                    double px2 =
+                        Math.Min(
+                            tileWidth - margin,
+                            region.X + region.Width);
+
+                    double py1 =
+                        Math.Max(margin, region.Y);
+
+                    double py2 =
+                        Math.Min(
+                            tileHeight - margin,
+                            region.Y + region.Height);
+
+                    if (px2 <= px1 || py2 <= py1)
+                        continue;
+
+                    double worldMinX =
+                        overall.MinPoint.X +
+                        (px1 - margin) / scale;
+
+                    double worldMaxX =
+                        overall.MinPoint.X +
+                        (px2 - margin) / scale;
+
+                    double worldMaxY =
+                        overall.MinPoint.Y +
+                        (tileHeight - margin - py1) / scale;
+
+                    double worldMinY =
+                        overall.MinPoint.Y +
+                        (tileHeight - margin - py2) / scale;
+
+                    worldMinX =
+                        Math.Max(
+                            overall.MinPoint.X,
+                            worldMinX);
+
+                    worldMaxX =
+                        Math.Min(
+                            overall.MaxPoint.X,
+                            worldMaxX);
+
+                    worldMinY =
+                        Math.Max(
+                            overall.MinPoint.Y,
+                            worldMinY);
+
+                    worldMaxY =
+                        Math.Min(
+                            overall.MaxPoint.Y,
+                            worldMaxY);
+
+                    if (worldMaxX <= worldMinX ||
+                        worldMaxY <= worldMinY)
+                    {
+                        continue;
+                    }
+
+                    double worldPad =
+                        Math.Max(
+                            12.0,
+                            5.0 / scale);
+
+                    Extents3d candidateExtents =
+                        new Extents3d(
+                            new Point3d(
+                                worldMinX,
+                                worldMinY,
+                                0.0),
+                            new Point3d(
+                                worldMaxX,
+                                worldMaxY,
+                                0.0));
+
+                    List<SmartGeometryPrimitive> selected =
+                        cluster
+                            .Where(
+                                primitive =>
+                                    primitive != null &&
+                                    (IsSmartPointInsideBox(
+                                         primitive.Center,
+                                         worldMinX - worldPad,
+                                         worldMinY - worldPad,
+                                         worldMaxX + worldPad,
+                                         worldMaxY + worldPad) ||
+                                     AreSmartGeometryExtentsNear(
+                                         primitive.Extents,
+                                         candidateExtents,
+                                         worldPad)))
+                            .Distinct()
+                            .ToList();
+
+                    if (selected.Count == 0 ||
+                        (!worldPass && selected.Count >= cluster.Count))
+                    {
+                        continue;
+                    }
+
+                    string key =
+                        string.Join(
+                            ",",
+                            selected
+                                .Select(
+                                    p =>
+                                        p.Id.Handle.Value.ToString(
+                                            CultureInfo.InvariantCulture))
+                                .OrderBy(x => x));
+
+                    if (!seenKeys.Add(key))
+                        continue;
+
+                    SmartNmsBox worldBox =
+                        new SmartNmsBox
+                        {
+                            MinX = worldMinX,
+                            MinY = worldMinY,
+                            MaxX = worldMaxX,
+                            MaxY = worldMaxY
+                        };
+
+                    subclusters.Add(
+                        new SmartOpenCvSubcluster
+                        {
+                            Primitives = selected,
+                            WorldBox = worldBox,
+                            Score = region.Score,
+                            EdgeDensity = region.EdgeDensity,
+                            ForegroundDensity = region.ForegroundDensity
+                        });
+
+                    if (subclusters.Count >= 12)
+                        break;
+                }
+            }
+
+            if (subclusters.Count == 0)
+            {
+                if (!worldPass)
+                    _lastOpenCvTileFallbackCount++;
+                return false;
+            }
+
+            // Ưu tiên ROI chắc và ít primitive hơn. Nếu hai ROI dùng gần như
+            // cùng tập primitive thì giữ ROI điểm cao hơn.
+            List<SmartOpenCvSubcluster> filtered =
+                new List<SmartOpenCvSubcluster>();
+
+            foreach (SmartOpenCvSubcluster candidate
+                in subclusters
+                    .OrderByDescending(x => x.Score)
+                    .ThenBy(x => x.Primitives.Count))
+            {
+                HashSet<ObjectId> idsA =
+                    new HashSet<ObjectId>(
+                        candidate.Primitives.Select(x => x.Id));
+
+                bool duplicate = false;
+
+                foreach (SmartOpenCvSubcluster existing in filtered)
+                {
+                    HashSet<ObjectId> idsB =
+                        new HashSet<ObjectId>(
+                            existing.Primitives.Select(x => x.Id));
+
+                    int intersection =
+                        idsA.Count(id => idsB.Contains(id));
+
+                    int smaller =
+                        Math.Min(idsA.Count, idsB.Count);
+
+                    double overlap =
+                        smaller <= 0
+                            ? 0.0
+                            : (double)intersection / smaller;
+
+                    if (overlap >= 0.78)
+                    {
+                        duplicate = true;
+                        break;
+                    }
+                }
+
+                if (!duplicate)
+                    filtered.Add(candidate);
+            }
+
+            subclusters = filtered;
+            return subclusters.Count > 0;
+        }
+
+        // ============================================================
+        // STEP29A.3 - WORLD TILING / FULL-DRAWING CANDIDATE PASS
+        // ============================================================
+        private void AppendSmartOpenCvWorldTileMatches(
+            Transaction tr,
+            List<SmartGeometryPrimitive> primitives,
+            List<SmartSymbolRule> geometryRules,
+            List<SmartSymbolRule> allRules,
+            List<SmartGeometryMatch> result)
+        {
+            if (tr == null ||
+                primitives == null ||
+                primitives.Count == 0 ||
+                result == null)
+            {
+                return;
+            }
+
+            MepOpenCvTileCandidateEngine cvEngine =
+                GetOpenCvTileCandidateEngine();
+
+            MepOpenCvWorldTilingEngine worldEngine =
+                GetOpenCvWorldTilingEngine();
+
+            // STEP29B: resolve detector đúng 1 lần cho cả world pass.
+            // Không có model YOLO thì OpenCV/ONNX cũ vẫn tiếp tục bình thường.
+            MepYoloSymbolDetector yoloDetector =
+                GetYoloSymbolDetector();
+
+            if (cvEngine == null ||
+                worldEngine == null)
+            {
+                return;
+            }
+
+            HashSet<ObjectId> alreadyMatched =
+                new HashSet<ObjectId>(
+                    result
+                        .Where(x => x != null && x.ObjectIds != null)
+                        .SelectMany(x => x.ObjectIds)
+                        .Where(id => !id.IsNull));
+
+            List<SmartGeometryPrimitive> remaining =
+                primitives
+                    .Where(
+                        p =>
+                            p != null &&
+                            !p.Id.IsNull &&
+                            !alreadyMatched.Contains(p.Id))
+                    .ToList();
+
+            if (remaining.Count == 0)
+                return;
+
+            // Geometry cực nhiều vẫn chỉ trả tối đa 160 tile có ích nhất.
+            // Dense tile >96 primitive bị đánh dấu SKIP thay vì raster nặng.
+            List<MepOpenCvWorldTilingEngine.WorldItem> worldItems =
+                new List<MepOpenCvWorldTilingEngine.WorldItem>();
+
+            for (int i = 0; i < remaining.Count; i++)
+            {
+                SmartGeometryPrimitive primitive = remaining[i];
+
+                worldItems.Add(
+                    new MepOpenCvWorldTilingEngine.WorldItem
+                    {
+                        Index = i,
+                        MinX = primitive.Extents.MinPoint.X,
+                        MinY = primitive.Extents.MinPoint.Y,
+                        MaxX = primitive.Extents.MaxPoint.X,
+                        MaxY = primitive.Extents.MaxPoint.Y
+                    });
+            }
+
+            MepOpenCvWorldTilingEngine.Layout layout =
+                worldEngine.BuildTiles(
+                    worldItems,
+                    0.0,
+                    0.20,
+                    1,
+                    96,
+                    160);
+
+            if (layout == null ||
+                layout.Tiles == null ||
+                layout.Tiles.Count == 0)
+            {
+                return;
+            }
+
+            _lastOpenCvWorldTileDenseSkipCount +=
+                layout.DenseTileCount +
+                layout.TruncatedTileCount;
+
+            HashSet<ObjectId> claimed =
+                new HashSet<ObjectId>(alreadyMatched);
+
+            HashSet<string> attemptedSets =
+                new HashSet<string>(StringComparer.Ordinal);
+
+            foreach (MepOpenCvWorldTilingEngine.TileWindow tile
+                in layout.Tiles)
+            {
+                if (tile == null ||
+                    tile.IsDense ||
+                    tile.ItemIndexes == null ||
+                    tile.ItemIndexes.Count == 0)
+                {
+                    continue;
+                }
+
+                List<SmartGeometryPrimitive> tilePrimitives =
+                    tile.ItemIndexes
+                        .Where(index => index >= 0 && index < remaining.Count)
+                        .Select(index => remaining[index])
+                        .Where(p => p != null && !claimed.Contains(p.Id))
+                        .Distinct()
+                        .ToList();
+
+                if (tilePrimitives.Count == 0 ||
+                    tilePrimitives.Count > 96)
+                {
+                    continue;
+                }
+
+                // STEP29B: YOLO chạy trước OpenCV ROI trên cùng world tile.
+                // Chỉ detection đủ mạnh và map được về SmartSymbolRule hiện tại
+                // mới được claim geometry; còn lại để pipeline OpenCV/ONNX cũ xử lý.
+                TryAppendSmartYoloMatchesFromWorldTile(
+                    tr,
+                    yoloDetector,
+                    tilePrimitives,
+                    allRules,
+                    result,
+                    claimed,
+                    attemptedSets);
+
+                tilePrimitives =
+                    tilePrimitives
+                        .Where(p => p != null && !claimed.Contains(p.Id))
+                        .ToList();
+
+                if (tilePrimitives.Count == 0)
+                    continue;
+
+                string tileKey =
+                    BuildSmartPrimitiveSetKey(tilePrimitives);
+
+                if (string.IsNullOrWhiteSpace(tileKey) ||
+                    !attemptedSets.Add("T:" + tileKey))
+                {
+                    continue;
+                }
+
+                if (!TryBuildSmartOpenCvSubclusters(
+                        tr,
+                        tilePrimitives,
+                        out List<SmartOpenCvSubcluster> subclusters,
+                        true) ||
+                    subclusters == null ||
+                    subclusters.Count == 0)
+                {
+                    continue;
+                }
+
+                foreach (SmartOpenCvSubcluster subcluster
+                    in subclusters
+                        .OrderByDescending(x => x?.Score ?? 0.0))
+                {
+                    if (subcluster == null ||
+                        subcluster.Primitives == null ||
+                        subcluster.Primitives.Count == 0)
+                    {
+                        continue;
+                    }
+
+                    List<SmartGeometryPrimitive> candidatePrimitives =
+                        subcluster.Primitives
+                            .Where(p => p != null)
+                            .Distinct()
+                            .ToList();
+
+                    if (candidatePrimitives.Count == 0)
+                        continue;
+
+                    int claimedCount =
+                        candidatePrimitives.Count(p => claimed.Contains(p.Id));
+
+                    double claimedRatio =
+                        (double)claimedCount /
+                        Math.Max(1, candidatePrimitives.Count);
+
+                    // Overlapping world tile có thể nhìn thấy lại symbol vừa rescue.
+                    if (claimedRatio >= 0.55)
+                        continue;
+
+                    candidatePrimitives =
+                        candidatePrimitives
+                            .Where(p => !claimed.Contains(p.Id))
+                            .ToList();
+
+                    if (candidatePrimitives.Count == 0)
+                        continue;
+
+                    string candidateKey =
+                        BuildSmartPrimitiveSetKey(candidatePrimitives);
+
+                    if (string.IsNullOrWhiteSpace(candidateKey) ||
+                        !attemptedSets.Add("R:" + candidateKey))
+                    {
+                        continue;
+                    }
+
+                    if (!TryCreateSmartGeometryMatchFromCluster(
+                            tr,
+                            candidatePrimitives,
+                            geometryRules,
+                            allRules,
+                            out SmartGeometryMatch rescued) ||
+                        rescued == null)
+                    {
+                        continue;
+                    }
+
+                    if (subcluster.WorldBox != null &&
+                        subcluster.WorldBox.IsValid)
+                    {
+                        rescued.DetectionBox =
+                            subcluster.WorldBox;
+                    }
+
+                    result.Add(rescued);
+                    _lastOpenCvWorldTileRescueCount++;
+
+                    foreach (ObjectId id
+                        in rescued.ObjectIds ?? new List<ObjectId>())
+                    {
+                        if (!id.IsNull)
+                            claimed.Add(id);
+                    }
+                }
+            }
+        }
+
+        // ============================================================
+        // STEP29B - YOLO OBJECT DETECTION ON WORLD TILE
+        // ============================================================
+        private void TryAppendSmartYoloMatchesFromWorldTile(
+            Transaction tr,
+            MepYoloSymbolDetector detector,
+            List<SmartGeometryPrimitive> tilePrimitives,
+            List<SmartSymbolRule> allRules,
+            List<SmartGeometryMatch> result,
+            HashSet<ObjectId> claimed,
+            HashSet<string> attemptedSets)
+        {
+            if (tr == null ||
+                tilePrimitives == null ||
+                tilePrimitives.Count == 0 ||
+                allRules == null ||
+                allRules.Count == 0 ||
+                result == null ||
+                claimed == null ||
+                attemptedSets == null)
+            {
+                return;
+            }
+
+            if (detector == null)
+                return;
+
+            List<SmartGeometryPrimitive> available =
+                tilePrimitives
+                    .Where(
+                        p =>
+                            p != null &&
+                            !p.Id.IsNull &&
+                            !claimed.Contains(p.Id))
+                    .Distinct()
+                    .ToList();
+
+            if (available.Count == 0 ||
+                available.Count > 96)
+            {
+                return;
+            }
+
+            Extents3d overall = default(Extents3d);
+            bool hasExtents = false;
+
+            foreach (SmartGeometryPrimitive primitive in available)
+            {
+                try
+                {
+                    if (!hasExtents)
+                    {
+                        overall = primitive.Extents;
+                        hasExtents = true;
+                    }
+                    else
+                    {
+                        overall.AddExtents(
+                            primitive.Extents);
+                    }
+                }
+                catch
+                {
+                }
+            }
+
+            if (!hasExtents)
+                return;
+
+            double dx =
+                Math.Max(
+                    overall.MaxPoint.X - overall.MinPoint.X,
+                    1.0);
+
+            double dy =
+                Math.Max(
+                    overall.MaxPoint.Y - overall.MinPoint.Y,
+                    1.0);
+
+            if (Math.Max(dx, dy) > 4200.0)
+                return;
+
+            const int tileWidth = 640;
+            const int tileHeight = 640;
+            const double margin = 6.0;
+
+            List<ObjectId> ids =
+                available
+                    .Select(p => p.Id)
+                    .Where(id => !id.IsNull)
+                    .Distinct()
+                    .ToList();
+
+            if (ids.Count == 0)
+                return;
+
+            using (System.Drawing.Bitmap bitmap =
+                CreateSmartLegendPreviewBitmap(
+                    tr,
+                    ids,
+                    tileWidth,
+                    tileHeight))
+            {
+                _lastYoloTileRunCount++;
+
+                MepYoloSymbolDetector.DetectionResult detectionResult =
+                    detector.Detect(
+                        bitmap,
+                        0.30,
+                        0.45,
+                        64);
+
+                if (detectionResult == null ||
+                    !detectionResult.Success ||
+                    detectionResult.Detections == null ||
+                    detectionResult.Detections.Count == 0)
+                {
+                    return;
+                }
+
+                _lastYoloRawDetectionCount +=
+                    detectionResult.Detections.Count;
+
+                double sx =
+                    (tileWidth - margin * 2.0) / dx;
+
+                double sy =
+                    (tileHeight - margin * 2.0) / dy;
+
+                double scale = Math.Min(sx, sy);
+
+                if (double.IsNaN(scale) ||
+                    double.IsInfinity(scale) ||
+                    scale <= 1e-9)
+                {
+                    return;
+                }
+
+                foreach (MepYoloSymbolDetector.Detection detection
+                    in detectionResult.Detections
+                        .OrderByDescending(x => x?.Confidence ?? 0.0))
+                {
+                    if (detection == null)
+                        continue;
+
+                    // Conservative auto-accept. Detection thấp hơn sẽ được
+                    // STEP29B.2 đưa vào review candidate thay vì đếm tự động.
+                    bool strong =
+                        detection.Confidence >= 0.62 &&
+                        (string.IsNullOrWhiteSpace(
+                             detection.SecondLabel) ||
+                         detection.Margin >= 0.08);
+
+                    if (!strong)
+                    {
+                        _lastYoloRejectedCount++;
+                        continue;
+                    }
+
+                    SmartSymbolRule rule =
+                        FindBestSmartRuleForOnnxLabel(
+                            detection.Label,
+                            allRules);
+
+                    if (rule == null)
+                    {
+                        _lastYoloRejectedCount++;
+                        continue;
+                    }
+
+                    double px1 =
+                        Math.Max(
+                            margin,
+                            detection.X);
+
+                    double px2 =
+                        Math.Min(
+                            tileWidth - margin,
+                            detection.X + detection.Width);
+
+                    double py1 =
+                        Math.Max(
+                            margin,
+                            detection.Y);
+
+                    double py2 =
+                        Math.Min(
+                            tileHeight - margin,
+                            detection.Y + detection.Height);
+
+                    if (px2 <= px1 || py2 <= py1)
+                    {
+                        _lastYoloRejectedCount++;
+                        continue;
+                    }
+
+                    double worldMinX =
+                        overall.MinPoint.X +
+                        (px1 - margin) / scale;
+
+                    double worldMaxX =
+                        overall.MinPoint.X +
+                        (px2 - margin) / scale;
+
+                    double worldMaxY =
+                        overall.MinPoint.Y +
+                        (tileHeight - margin - py1) / scale;
+
+                    double worldMinY =
+                        overall.MinPoint.Y +
+                        (tileHeight - margin - py2) / scale;
+
+                    worldMinX =
+                        Math.Max(
+                            overall.MinPoint.X,
+                            worldMinX);
+
+                    worldMaxX =
+                        Math.Min(
+                            overall.MaxPoint.X,
+                            worldMaxX);
+
+                    worldMinY =
+                        Math.Max(
+                            overall.MinPoint.Y,
+                            worldMinY);
+
+                    worldMaxY =
+                        Math.Min(
+                            overall.MaxPoint.Y,
+                            worldMaxY);
+
+                    if (worldMaxX <= worldMinX ||
+                        worldMaxY <= worldMinY)
+                    {
+                        _lastYoloRejectedCount++;
+                        continue;
+                    }
+
+                    SmartNmsBox worldBox =
+                        new SmartNmsBox
+                        {
+                            MinX = worldMinX,
+                            MinY = worldMinY,
+                            MaxX = worldMaxX,
+                            MaxY = worldMaxY
+                        };
+
+                    bool duplicate =
+                        result.Any(
+                            existing =>
+                                existing != null &&
+                                existing.DetectionBox != null &&
+                                existing.Rule != null &&
+                                string.Equals(
+                                    NormalizeSmartDisplayName(
+                                        existing.Rule.DisplayName),
+                                    NormalizeSmartDisplayName(
+                                        rule.DisplayName),
+                                    StringComparison.OrdinalIgnoreCase) &&
+                                GetSmartNmsIoU(
+                                    existing.DetectionBox,
+                                    worldBox) >= 0.45);
+
+                    if (duplicate)
+                    {
+                        _lastYoloRejectedCount++;
+                        continue;
+                    }
+
+                    double worldPad =
+                        Math.Max(
+                            12.0,
+                            5.0 / scale);
+
+                    Extents3d candidateExtents =
+                        new Extents3d(
+                            new Point3d(
+                                worldMinX,
+                                worldMinY,
+                                0.0),
+                            new Point3d(
+                                worldMaxX,
+                                worldMaxY,
+                                0.0));
+
+                    List<SmartGeometryPrimitive> selected =
+                        available
+                            .Where(
+                                primitive =>
+                                    primitive != null &&
+                                    !claimed.Contains(primitive.Id) &&
+                                    (IsSmartPointInsideBox(
+                                         primitive.Center,
+                                         worldMinX - worldPad,
+                                         worldMinY - worldPad,
+                                         worldMaxX + worldPad,
+                                         worldMaxY + worldPad) ||
+                                     AreSmartGeometryExtentsNear(
+                                         primitive.Extents,
+                                         candidateExtents,
+                                         worldPad)))
+                            .Distinct()
+                            .ToList();
+
+                    if (selected.Count == 0)
+                    {
+                        _lastYoloRejectedCount++;
+                        continue;
+                    }
+
+                    string setKey =
+                        BuildSmartPrimitiveSetKey(
+                            selected);
+
+                    if (string.IsNullOrWhiteSpace(setKey) ||
+                        !attemptedSets.Add(
+                            "Y:" + setKey + ":" +
+                            NormalizeSmartDisplayName(
+                                rule.DisplayName)))
+                    {
+                        _lastYoloRejectedCount++;
+                        continue;
+                    }
+
+                    List<ObjectId> selectedIds =
+                        selected
+                            .Select(p => p.Id)
+                            .Where(id => !id.IsNull)
+                            .Distinct()
+                            .ToList();
+
+                    string fingerprint =
+                        BuildSmartGeometryFingerprint(
+                            tr,
+                            selectedIds) ?? "";
+
+                    Point3d center =
+                        new Point3d(
+                            (worldMinX + worldMaxX) * 0.5,
+                            (worldMinY + worldMaxY) * 0.5,
+                            0.0);
+
+                    MepSymbolClassifier.Prediction aiPrediction =
+                        new MepSymbolClassifier.Prediction
+                        {
+                            Success = true,
+                            Label = detection.Label ?? "",
+                            Confidence = detection.Confidence,
+                            SecondLabel = detection.SecondLabel ?? "",
+                            SecondConfidence = detection.SecondConfidence,
+                            CacheHit = false,
+                            CacheMode = "YOLO",
+                            Message =
+                                "STEP29B YOLO Object Detection"
+                        };
+
+                    result.Add(
+                        new SmartGeometryMatch
+                        {
+                            Rule = rule,
+                            Center = center,
+                            Score =
+                                1.0 -
+                                Math.Max(
+                                    0.0,
+                                    Math.Min(
+                                        1.0,
+                                        detection.Confidence)),
+                            Source = "YOLO",
+                            OnnxPrediction = aiPrediction,
+                            GeometryFingerprint = fingerprint,
+                            ObjectIds = selectedIds,
+                            DetectionBox = worldBox
+                        });
+
+                    foreach (ObjectId id in selectedIds)
+                    {
+                        if (!id.IsNull)
+                            claimed.Add(id);
+                    }
+
+                    _lastYoloAcceptedCount++;
+                }
+            }
+        }
+
+        private static string BuildSmartPrimitiveSetKey(
+            IEnumerable<SmartGeometryPrimitive> primitives)
+        {
+            if (primitives == null)
+                return "";
+
+            try
+            {
+                return string.Join(
+                    ",",
+                    primitives
+                        .Where(p => p != null && !p.Id.IsNull)
+                        .Select(
+                            p =>
+                                p.Id.Handle.Value.ToString(
+                                    CultureInfo.InvariantCulture))
+                        .Distinct()
+                        .OrderBy(x => x));
+            }
+            catch
+            {
+                return "";
+            }
+        }
+
+        private static bool IsSmartPointInsideBox(
+            Point3d point,
+            double minX,
+            double minY,
+            double maxX,
+            double maxY)
+        {
+            return
+                point.X >= minX &&
+                point.X <= maxX &&
+                point.Y >= minY &&
+                point.Y <= maxY;
         }
 
         private static bool AreSmartGeometryExtentsNear(
@@ -54948,6 +56743,2058 @@ namespace ClassLibrary4
                     b.MinPoint.Y - gap;
         }
 
+        // ============================================================
+        // STEP28C - SPATIAL / DBSCAN HELPERS
+        // ============================================================
+        private static string GetSmartGeometryPrimitiveKind(
+            Entity ent)
+        {
+            if (ent is Line)
+                return "LINE";
+
+            if (ent is Arc)
+                return "ARC";
+
+            if (ent is Circle)
+                return "CIRCLE";
+
+            if (ent is Polyline)
+                return "POLYLINE";
+
+            return
+                ent != null
+                    ? ent.GetType().Name.ToUpperInvariant()
+                    : "";
+        }
+
+        private static Point3d GetSmartEntityPlanCenter(
+            Entity ent)
+        {
+            if (ent != null)
+            {
+                try
+                {
+                    Extents3d ex =
+                        ent.GeometricExtents;
+
+                    return
+                        new Point3d(
+                            (ex.MinPoint.X +
+                             ex.MaxPoint.X) * 0.5,
+                            (ex.MinPoint.Y +
+                             ex.MaxPoint.Y) * 0.5,
+                            0.0);
+                }
+                catch
+                {
+                }
+            }
+
+            if (ent is Curve curve)
+            {
+                try
+                {
+                    Point3d a =
+                        curve.StartPoint;
+
+                    Point3d b =
+                        curve.EndPoint;
+
+                    return
+                        new Point3d(
+                            (a.X + b.X) * 0.5,
+                            (a.Y + b.Y) * 0.5,
+                            0.0);
+                }
+                catch
+                {
+                }
+            }
+
+            return
+                Point3d.Origin;
+        }
+
+        private static SmartNmsBox BuildSmartSpatialBoxFromExtents(
+            Extents3d ex)
+        {
+            SmartNmsBox box =
+                new SmartNmsBox
+                {
+                    MinX =
+                        Math.Min(
+                            ex.MinPoint.X,
+                            ex.MaxPoint.X),
+                    MinY =
+                        Math.Min(
+                            ex.MinPoint.Y,
+                            ex.MaxPoint.Y),
+                    MaxX =
+                        Math.Max(
+                            ex.MinPoint.X,
+                            ex.MaxPoint.X),
+                    MaxY =
+                        Math.Max(
+                            ex.MinPoint.Y,
+                            ex.MaxPoint.Y)
+                };
+
+            if (!box.IsValid ||
+                double.IsInfinity(box.MinX) ||
+                double.IsInfinity(box.MinY) ||
+                double.IsInfinity(box.MaxX) ||
+                double.IsInfinity(box.MaxY))
+            {
+                return null;
+            }
+
+            return box;
+        }
+
+        private static SmartNmsBox GetSmartEntitySpatialBoxSafe(
+            Entity ent,
+            double fallbackHalfSize)
+        {
+            if (ent != null)
+            {
+                try
+                {
+                    SmartNmsBox box =
+                        BuildSmartSpatialBoxFromExtents(
+                            ent.GeometricExtents);
+
+                    if (box != null &&
+                        box.IsValid)
+                    {
+                        // Spatial index chấp nhận bbox có width/height = 0
+                        // (LINE ngang/dọc). Không dùng BuildSmartNmsBoxFromEntity
+                        // ở đây vì NMS helper cố tình fallback khi một chiều < 1.
+                        return box;
+                    }
+                }
+                catch
+                {
+                }
+            }
+
+            Point3d center =
+                GetSmartEntityPlanCenter(
+                    ent);
+
+            return
+                BuildSmartNmsBoxFromCenter(
+                    center,
+                    Math.Max(
+                        1.0,
+                        fallbackHalfSize),
+                    Math.Max(
+                        1.0,
+                        fallbackHalfSize));
+        }
+
+        private static SmartNmsBox ExpandSmartSpatialBox(
+            SmartNmsBox box,
+            double gap)
+        {
+            gap =
+                Math.Max(
+                    0.0,
+                    gap);
+
+            if (box == null ||
+                !box.IsValid)
+            {
+                return null;
+            }
+
+            return
+                new SmartNmsBox
+                {
+                    MinX = box.MinX - gap,
+                    MinY = box.MinY - gap,
+                    MaxX = box.MaxX + gap,
+                    MaxY = box.MaxY + gap
+                };
+        }
+
+        private SmartDbscanGeometryResult ClusterSmartGeometryPrimitivesDbscan(
+            List<SmartGeometryPrimitive> primitives,
+            double epsilon,
+            int minPoints,
+            int maxClusterSize,
+            bool recoverNoiseAsSingleton)
+        {
+            SmartDbscanGeometryResult output =
+                new SmartDbscanGeometryResult();
+
+            List<SmartGeometryPrimitive> items =
+                (primitives ??
+                 new List<SmartGeometryPrimitive>())
+                    .Where(
+                        p =>
+                            p != null &&
+                            !p.Id.IsNull)
+                    .ToList();
+
+            if (items.Count == 0)
+                return output;
+
+            epsilon =
+                Math.Max(
+                    5.0,
+                    epsilon);
+
+            minPoints =
+                Math.Max(
+                    1,
+                    minPoints);
+
+            maxClusterSize =
+                Math.Max(
+                    minPoints,
+                    maxClusterSize);
+
+            SmartSpatialGrid<SmartGeometryPrimitive> index =
+                new SmartSpatialGrid<SmartGeometryPrimitive>(
+                    Math.Max(
+                        120.0,
+                        epsilon * 2.0));
+
+            foreach (SmartGeometryPrimitive item
+                in items)
+            {
+                index.Add(
+                    item,
+                    BuildSmartSpatialBoxFromExtents(
+                        item.Extents));
+            }
+
+            HashSet<SmartGeometryPrimitive> visited =
+                new HashSet<SmartGeometryPrimitive>();
+
+            HashSet<SmartGeometryPrimitive> assigned =
+                new HashSet<SmartGeometryPrimitive>();
+
+            List<SmartGeometryPrimitive> noise =
+                new List<SmartGeometryPrimitive>();
+
+            foreach (SmartGeometryPrimitive seed
+                in items)
+            {
+                if (visited.Contains(
+                        seed))
+                {
+                    continue;
+                }
+
+                visited.Add(
+                    seed);
+
+                List<SmartGeometryPrimitive> neighbors =
+                    QuerySmartGeometryDbscanNeighbors(
+                        index,
+                        seed,
+                        epsilon);
+
+                output.QueryCount++;
+
+                if (neighbors.Count <
+                    minPoints)
+                {
+                    noise.Add(
+                        seed);
+
+                    continue;
+                }
+
+                List<SmartGeometryPrimitive> cluster =
+                    new List<SmartGeometryPrimitive>();
+
+                Queue<SmartGeometryPrimitive> queue =
+                    new Queue<SmartGeometryPrimitive>(
+                        neighbors);
+
+                HashSet<SmartGeometryPrimitive> queued =
+                    new HashSet<SmartGeometryPrimitive>(
+                        neighbors);
+
+                bool oversizedComponent =
+                    false;
+
+                int componentCount =
+                    0;
+
+                while (queue.Count > 0)
+                {
+                    SmartGeometryPrimitive current =
+                        queue.Dequeue();
+
+                    if (!visited.Contains(
+                            current))
+                    {
+                        visited.Add(
+                            current);
+
+                        List<SmartGeometryPrimitive> currentNeighbors =
+                            QuerySmartGeometryDbscanNeighbors(
+                                index,
+                                current,
+                                epsilon);
+
+                        output.QueryCount++;
+
+                        if (currentNeighbors.Count >=
+                            minPoints)
+                        {
+                            foreach (SmartGeometryPrimitive next
+                                in currentNeighbors)
+                            {
+                                if (next != null &&
+                                    !queued.Contains(
+                                        next))
+                                {
+                                    queued.Add(
+                                        next);
+
+                                    queue.Enqueue(
+                                        next);
+                                }
+                            }
+                        }
+                    }
+
+                    if (!assigned.Contains(
+                            current))
+                    {
+                        assigned.Add(
+                            current);
+
+                        componentCount++;
+
+                        if (!oversizedComponent)
+                        {
+                            cluster.Add(
+                                current);
+
+                            if (cluster.Count >
+                                maxClusterSize)
+                            {
+                                // Đây gần như chắc là chi tiết kiến trúc / hatch-line.
+                                // Vẫn drain toàn bộ component để nó không bị tách thành
+                                // nhiều "symbol" giả ở các seed tiếp theo.
+                                oversizedComponent =
+                                    true;
+
+                                cluster.Clear();
+                            }
+                        }
+                    }
+                }
+
+                if (!oversizedComponent &&
+                    cluster.Count > 0 &&
+                    cluster.Count <=
+                        maxClusterSize)
+                {
+                    output.Clusters.Add(
+                        cluster);
+                }
+                else if (oversizedComponent)
+                {
+                    output.NoiseCount +=
+                        componentCount;
+                }
+            }
+
+            foreach (SmartGeometryPrimitive item
+                in noise)
+            {
+                if (assigned.Contains(
+                        item))
+                {
+                    continue;
+                }
+
+                output.NoiseCount++;
+
+                if (recoverNoiseAsSingleton)
+                {
+                    output.Clusters.Add(
+                        new List<SmartGeometryPrimitive>
+                        {
+                            item
+                        });
+                }
+            }
+
+            _lastSmartSpatialQueryCount +=
+                output.QueryCount;
+
+            _lastSmartDbscanClusterCount +=
+                output.Clusters.Count;
+
+            _lastSmartDbscanNoiseCount +=
+                output.NoiseCount;
+
+            return output;
+        }
+
+        private static List<SmartGeometryPrimitive>
+            QuerySmartGeometryDbscanNeighbors(
+                SmartSpatialGrid<SmartGeometryPrimitive> index,
+                SmartGeometryPrimitive seed,
+                double epsilon)
+        {
+            if (index == null ||
+                seed == null)
+            {
+                return
+                    new List<SmartGeometryPrimitive>();
+            }
+
+            SmartNmsBox seedBox =
+                BuildSmartSpatialBoxFromExtents(
+                    seed.Extents);
+
+            SmartNmsBox queryBox =
+                ExpandSmartSpatialBox(
+                    seedBox,
+                    epsilon);
+
+            List<SmartGeometryPrimitive> nearby =
+                index.QueryBox(
+                    queryBox);
+
+            return
+                nearby
+                    .Where(
+                        candidate =>
+                            candidate != null &&
+                            AreSmartGeometrySemanticNeighbors(
+                                seed,
+                                candidate,
+                                epsilon))
+                    .ToList();
+        }
+
+        private static bool AreSmartGeometrySemanticNeighbors(
+            SmartGeometryPrimitive a,
+            SmartGeometryPrimitive b,
+            double epsilon)
+        {
+            if (a == null ||
+                b == null)
+            {
+                return false;
+            }
+
+            if (!AreSmartGeometryExtentsNear(
+                    a.Extents,
+                    b.Extents,
+                    epsilon))
+            {
+                return false;
+            }
+
+            if (ReferenceEquals(
+                    a,
+                    b))
+            {
+                return true;
+            }
+
+            double spanA =
+                Math.Max(
+                    1.0,
+                    a.Span);
+
+            double spanB =
+                Math.Max(
+                    1.0,
+                    b.Span);
+
+            double larger =
+                Math.Max(
+                    spanA,
+                    spanB);
+
+            double smaller =
+                Math.Min(
+                    spanA,
+                    spanB);
+
+            // Một nét kiến trúc dài đi ngang qua một chi tiết rất nhỏ là
+            // nguồn "dính cluster" phổ biến. Chỉ tách khi chênh scale rất lớn
+            // VÀ hai tâm không thực sự sát nhau. Quy tắc này đủ bảo thủ để
+            // không làm vỡ symbol gồm LINE + ARC + CIRCLE.
+            if (larger >= 1300.0 &&
+                larger / smaller >= 18.0)
+            {
+                double centerDistance =
+                    PlanDistance(
+                        a.Center,
+                        b.Center);
+
+                if (centerDistance >
+                    Math.Max(
+                        200.0,
+                        epsilon * 2.0))
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        private SmartSpatialGrid<SmartContextNeighbor>
+            BuildSmartContextNeighborSpatialIndex(
+                List<SmartContextNeighbor> neighbors)
+        {
+            SmartSpatialGrid<SmartContextNeighbor> index =
+                new SmartSpatialGrid<SmartContextNeighbor>(
+                    900.0);
+
+            foreach (SmartContextNeighbor neighbor
+                in neighbors ??
+                   new List<SmartContextNeighbor>())
+            {
+                if (neighbor == null)
+                    continue;
+
+                index.Add(
+                    neighbor,
+                    BuildSmartNmsBoxFromCenter(
+                        neighbor.Point,
+                        1.0,
+                        1.0));
+            }
+
+            return index;
+        }
+
+        private SmartSpatialGrid<SmartPipeCandidate>
+            BuildSmartPipeCandidateSpatialIndex(
+                List<SmartPipeCandidate> candidates)
+        {
+            SmartSpatialGrid<SmartPipeCandidate> index =
+                new SmartSpatialGrid<SmartPipeCandidate>(
+                    1000.0);
+
+            foreach (SmartPipeCandidate candidate
+                in candidates ??
+                   new List<SmartPipeCandidate>())
+            {
+                if (candidate == null)
+                    continue;
+
+                SmartNmsBox box =
+                    candidate.SpatialBox;
+
+                if (box == null ||
+                    !box.IsValid)
+                {
+                    box =
+                        BuildSmartNmsBoxFromCenter(
+                            candidate.SpatialCenter,
+                            80.0,
+                            80.0);
+                }
+
+                index.Add(
+                    candidate,
+                    box);
+            }
+
+            return index;
+        }
+
+        private void ActivateSmartPipeSpatialIndex(
+            List<SmartPipeCandidate> candidates)
+        {
+            _activeSmartPipeSpatialSource =
+                candidates;
+
+            _activeSmartPipeSpatialIndex =
+                BuildSmartPipeCandidateSpatialIndex(
+                    candidates);
+        }
+
+        private List<SmartPipeCandidate> GetSmartNearbyPipeCandidates(
+            List<SmartPipeCandidate> candidates,
+            Point3d insertionPoint,
+            Extents3d? deviceExtents,
+            double maxSearchDistance)
+        {
+            if (candidates == null ||
+                candidates.Count == 0)
+            {
+                return
+                    new List<SmartPipeCandidate>();
+            }
+
+            if (!ReferenceEquals(
+                    candidates,
+                    _activeSmartPipeSpatialSource) ||
+                _activeSmartPipeSpatialIndex == null)
+            {
+                return candidates;
+            }
+
+            SmartNmsBox queryBox = null;
+
+            if (deviceExtents.HasValue)
+            {
+                queryBox =
+                    ExpandSmartSpatialBox(
+                        BuildSmartSpatialBoxFromExtents(
+                            deviceExtents.Value),
+                        maxSearchDistance);
+            }
+
+            if (queryBox == null)
+            {
+                queryBox =
+                    BuildSmartNmsBoxFromCenter(
+                        insertionPoint,
+                        maxSearchDistance,
+                        maxSearchDistance);
+            }
+
+            _lastSmartSpatialQueryCount++;
+
+            return
+                _activeSmartPipeSpatialIndex.QueryBox(
+                    queryBox);
+        }
+
+        private SmartSpatialGrid<Curve> BuildAiPipeCurveSpatialIndex(
+            List<Curve> curves)
+        {
+            SmartSpatialGrid<Curve> index =
+                new SmartSpatialGrid<Curve>(
+                    1200.0);
+
+            foreach (Curve curve
+                in curves ??
+                   new List<Curve>())
+            {
+                if (curve == null)
+                    continue;
+
+                SmartNmsBox box =
+                    GetSmartEntitySpatialBoxSafe(
+                        curve,
+                        100.0);
+
+                index.Add(
+                    curve,
+                    box);
+            }
+
+            return index;
+        }
+
+        // ============================================================
+        // STEP28D - GRAPH-AWARE SYMBOL GROUPING + MULTI-INSTANCE PATTERN
+        // ============================================================
+        private string GetSmartPatternAlternativeName(
+            List<SmartSymbolRule> rules,
+            MepSymbolClassifier.Prediction prediction)
+        {
+            if (prediction == null ||
+                string.IsNullOrWhiteSpace(
+                    prediction.SecondLabel))
+            {
+                return "";
+            }
+
+            try
+            {
+                SmartSymbolRule secondRule =
+                    FindBestSmartRuleForOnnxLabel(
+                        prediction.SecondLabel,
+                        rules);
+
+                if (secondRule != null &&
+                    !string.IsNullOrWhiteSpace(
+                        secondRule.DisplayName))
+                {
+                    return
+                        NormalizeSmartDisplayName(
+                            secondRule.DisplayName);
+                }
+            }
+            catch
+            {
+            }
+
+            return
+                NormalizeSmartDisplayName(
+                    prediction.SecondLabel);
+        }
+
+        private static bool IsSmartPatternTrustedTeacher(
+            SmartAuditRow row)
+        {
+            if (row == null ||
+                string.IsNullOrWhiteSpace(
+                    row.Name) ||
+                string.Equals(
+                    row.Name,
+                    "CHƯA NHẬN DIỆN",
+                    StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(
+                    row.Status,
+                    "MISSING",
+                    StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(
+                    row.Status,
+                    "CONTEXT_CONFLICT",
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            string source =
+                (row.Source ?? "")
+                    .Trim()
+                    .ToUpperInvariant();
+
+            // Không cho AI tự làm teacher cho AI khác.
+            if (source.IndexOf(
+                    "ONNX",
+                    StringComparison.OrdinalIgnoreCase) >= 0 ||
+                source.IndexOf(
+                    "VISION",
+                    StringComparison.OrdinalIgnoreCase) >= 0 ||
+                source.IndexOf(
+                    "YOLO",
+                    StringComparison.OrdinalIgnoreCase) >= 0 ||
+                source.IndexOf(
+                    "CONTEXT",
+                    StringComparison.OrdinalIgnoreCase) >= 0 ||
+                source.IndexOf(
+                    "PATTERN",
+                    StringComparison.OrdinalIgnoreCase) >= 0 ||
+                source.IndexOf(
+                    "CHƯA HỌC",
+                    StringComparison.OrdinalIgnoreCase) >= 0)
+            {
+                return false;
+            }
+
+            return
+                string.Equals(
+                    source,
+                    "POINT",
+                    StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(
+                    source,
+                    "BLOCK",
+                    StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(
+                    source,
+                    "BLOCK - HÌNH HỌC",
+                    StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(
+                    source,
+                    "HÌNH EXPLODE",
+                    StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static double GetSmartPatternTeacherReliability(
+            SmartAuditRow row)
+        {
+            if (row == null)
+                return 0.0;
+
+            string source =
+                (row.Source ?? "")
+                    .Trim()
+                    .ToUpperInvariant();
+
+            if (string.Equals(
+                    source,
+                    "POINT",
+                    StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(
+                    source,
+                    "BLOCK",
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                return 1.0;
+            }
+
+            if (string.Equals(
+                    source,
+                    "BLOCK - HÌNH HỌC",
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                return 0.94;
+            }
+
+            if (string.Equals(
+                    source,
+                    "HÌNH EXPLODE",
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                return 0.92;
+            }
+
+            return 0.0;
+        }
+
+        private string GetSmartPatternStructureBucket(
+            string geometryFingerprint)
+        {
+            if (!TryParseSmartGeometryFingerprint(
+                    geometryFingerprint,
+                    out SmartGeometryFingerprintData data) ||
+                data == null)
+            {
+                return "";
+            }
+
+            return
+                "L" + data.LineCount +
+                "A" + data.ArcCount +
+                "C" + data.CircleCount +
+                "P" + data.PolylineCount;
+        }
+
+        private SmartPatternFeature BuildSmartPatternFeature(
+            SmartAuditRow row)
+        {
+            SmartPatternFeature feature =
+                new SmartPatternFeature
+                {
+                    Row = row,
+                    Label =
+                        row != null
+                            ? NormalizeSmartDisplayName(
+                                row.Name)
+                            : "",
+                    StructureBucket =
+                        row != null
+                            ? GetSmartPatternStructureBucket(
+                                row.GeometryFingerprint)
+                            : "",
+                    TrustedTeacher =
+                        IsSmartPatternTrustedTeacher(
+                            row),
+                    TeacherReliability =
+                        GetSmartPatternTeacherReliability(
+                            row)
+                };
+
+            if (row == null)
+                return feature;
+
+            // HOT PATH:
+            // Teacher đã đi qua Pipe-Device Fusion ở bước trước, nên tận dụng DN hiện có.
+            // Không gọi Graph/GNN lại cho hàng nghìn teacher.
+            bool rowHasResolvedDn =
+                row.FollowDn &&
+                !string.IsNullOrWhiteSpace(
+                    row.Size) &&
+                !string.Equals(
+                    row.Size,
+                    "-",
+                    StringComparison.OrdinalIgnoreCase) &&
+                !string.Equals(
+                    row.Size,
+                    "CẦN KIỂM TRA",
+                    StringComparison.OrdinalIgnoreCase) &&
+                !string.Equals(
+                    row.Size,
+                    "KHÔNG RÕ DN",
+                    StringComparison.OrdinalIgnoreCase);
+
+            if (rowHasResolvedDn)
+            {
+                feature.GraphFound =
+                    true;
+
+                feature.GraphAmbiguous =
+                    false;
+
+                feature.GraphDn =
+                    row.Size;
+
+                // Đây là fused context (CAD geometry + pipe + graph/GNN nếu có),
+                // không tuyên bố là Graph-only confidence.
+                feature.GraphConfidence =
+                    0.80;
+            }
+
+            bool needsDeepGraphProbe =
+                string.Equals(
+                    row.Status,
+                    "CONTEXT_CONFLICT",
+                    StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(
+                    row.Status,
+                    "MISSING",
+                    StringComparison.OrdinalIgnoreCase);
+
+            if (!needsDeepGraphProbe ||
+                _lastMepGraphSnapshot == null)
+            {
+                return feature;
+            }
+
+            // Chỉ candidate mơ hồ mới hỏi Graph/GNN sâu thêm.
+            // Pattern Engine không build graph mới; lỗi Graph/GNN không chặn scan chính.
+            try
+            {
+                MepGraphDnInference graph =
+                    GetGraphDnInference(
+                        row.Point,
+                        null);
+
+                if (graph != null &&
+                    graph.Found)
+                {
+                    feature.GraphFound =
+                        true;
+
+                    feature.GraphAmbiguous =
+                        graph.Ambiguous;
+
+                    feature.GraphDn =
+                        graph.Dn ?? "";
+
+                    feature.GraphConfidence =
+                        Math.Max(
+                            0.0,
+                            Math.Min(
+                                1.0,
+                                graph.Confidence));
+                }
+            }
+            catch
+            {
+            }
+
+            try
+            {
+                MepGraphGnnClassifier.Prediction gnn =
+                    GetGnnDnPrediction(
+                        row.Point,
+                        null);
+
+                if (gnn != null &&
+                    gnn.Success &&
+                    gnn.Confidence >= 0.84 &&
+                    gnn.Margin >= 0.08)
+                {
+                    feature.GnnStrong =
+                        true;
+
+                    feature.GnnDn =
+                        gnn.Dn ?? "";
+
+                    feature.GnnConfidence =
+                        Math.Max(
+                            0.0,
+                            Math.Min(
+                                1.0,
+                                gnn.Confidence));
+                }
+            }
+            catch
+            {
+            }
+
+            return feature;
+        }
+
+        private static List<string> GetSmartPatternLayerTokens(
+            string layerName)
+        {
+            if (string.IsNullOrWhiteSpace(
+                    layerName))
+            {
+                return new List<string>();
+            }
+
+            HashSet<string> stop =
+                new HashSet<string>(
+                    new[]
+                    {
+                        "TDL", "AI", "BLOCK", "LAYER", "MODEL",
+                        "PIPE", "ONG", "DN", "FF", "PCCC", "SHOP"
+                    },
+                    StringComparer.OrdinalIgnoreCase);
+
+            return
+                layerName
+                    .Trim()
+                    .ToUpperInvariant()
+                    .Split(
+                        new[]
+                        {
+                            '_', '-', ' ', '.', '/', '\\', ':', ';', '|',
+                            '(', ')', '[', ']', '{', '}'
+                        },
+                        StringSplitOptions.RemoveEmptyEntries)
+                    .Where(
+                        token =>
+                            token.Length >= 2 &&
+                            !stop.Contains(
+                                token))
+                    .Distinct(
+                        StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+        }
+
+        private static double GetSmartPatternLayerAffinity(
+            string a,
+            string b)
+        {
+            if (string.IsNullOrWhiteSpace(a) ||
+                string.IsNullOrWhiteSpace(b))
+            {
+                return 0.0;
+            }
+
+            string na =
+                a.Trim()
+                    .ToUpperInvariant();
+
+            string nb =
+                b.Trim()
+                    .ToUpperInvariant();
+
+            if (string.Equals(
+                    na,
+                    nb,
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                return 1.0;
+            }
+
+            List<string> ta =
+                GetSmartPatternLayerTokens(
+                    na);
+
+            List<string> tb =
+                GetSmartPatternLayerTokens(
+                    nb);
+
+            if (ta.Count == 0 ||
+                tb.Count == 0)
+            {
+                return 0.0;
+            }
+
+            int intersection =
+                ta.Count(
+                    x =>
+                        tb.Contains(
+                            x,
+                            StringComparer.OrdinalIgnoreCase));
+
+            int union =
+                ta
+                    .Concat(
+                        tb)
+                    .Distinct(
+                        StringComparer.OrdinalIgnoreCase)
+                    .Count();
+
+            if (union <= 0)
+                return 0.0;
+
+            return
+                Math.Max(
+                    0.0,
+                    Math.Min(
+                        1.0,
+                        (double)intersection /
+                        union));
+        }
+
+        private static double GetSmartPatternGraphAffinity(
+            SmartPatternFeature candidate,
+            SmartPatternFeature teacher,
+            out bool graphConflict)
+        {
+            graphConflict =
+                false;
+
+            if (candidate == null ||
+                teacher == null)
+            {
+                return 0.0;
+            }
+
+            bool candidateStrongOnPipe =
+                candidate.GraphFound &&
+                !candidate.GraphAmbiguous &&
+                candidate.GraphConfidence >= 0.82;
+
+            bool teacherStrongOnPipe =
+                teacher.GraphFound &&
+                !teacher.GraphAmbiguous &&
+                teacher.GraphConfidence >= 0.82;
+
+            if (candidateStrongOnPipe &&
+                teacherStrongOnPipe)
+            {
+                double value =
+                    0.82;
+
+                if (!string.IsNullOrWhiteSpace(
+                        candidate.GraphDn) &&
+                    string.Equals(
+                        candidate.GraphDn,
+                        teacher.GraphDn,
+                        StringComparison.OrdinalIgnoreCase))
+                {
+                    value =
+                        1.0;
+                }
+
+                if (candidate.GnnStrong &&
+                    teacher.GnnStrong &&
+                    !string.IsNullOrWhiteSpace(
+                        candidate.GnnDn) &&
+                    string.Equals(
+                        candidate.GnnDn,
+                        teacher.GnnDn,
+                        StringComparison.OrdinalIgnoreCase))
+                {
+                    value =
+                        Math.Min(
+                            1.0,
+                            value + 0.06);
+                }
+
+                return value;
+            }
+
+            if (!candidate.GraphFound &&
+                !teacher.GraphFound)
+            {
+                return 0.55;
+            }
+
+            if ((candidateStrongOnPipe &&
+                 !teacher.GraphFound) ||
+                (teacherStrongOnPipe &&
+                 !candidate.GraphFound))
+            {
+                graphConflict =
+                    true;
+
+                return 0.05;
+            }
+
+            // Một trong hai context còn mơ hồ/yếu => không phạt nặng.
+            return 0.42;
+        }
+
+        private SmartPatternPairEvidence CompareSmartPatternPair(
+            SmartPatternFeature candidate,
+            SmartPatternFeature teacher)
+        {
+            SmartPatternPairEvidence result =
+                new SmartPatternPairEvidence();
+
+            if (candidate == null ||
+                teacher == null ||
+                candidate.Row == null ||
+                teacher.Row == null)
+            {
+                return result;
+            }
+
+            SmartAuditRow a =
+                candidate.Row;
+
+            SmartAuditRow b =
+                teacher.Row;
+
+            bool exactBlock =
+                !string.IsNullOrWhiteSpace(
+                    a.BlockKey) &&
+                !string.IsNullOrWhiteSpace(
+                    b.BlockKey) &&
+                string.Equals(
+                    a.BlockKey,
+                    b.BlockKey,
+                    StringComparison.OrdinalIgnoreCase);
+
+            bool exactGeometry =
+                !string.IsNullOrWhiteSpace(
+                    a.GeometryFingerprint) &&
+                !string.IsNullOrWhiteSpace(
+                    b.GeometryFingerprint) &&
+                string.Equals(
+                    a.GeometryFingerprint,
+                    b.GeometryFingerprint,
+                    StringComparison.OrdinalIgnoreCase);
+
+            if (exactBlock ||
+                exactGeometry)
+            {
+                result.GeometryAffinity =
+                    1.0;
+
+                result.ExactStructure =
+                    true;
+            }
+            else if (!string.IsNullOrWhiteSpace(
+                         a.GeometryFingerprint) &&
+                     !string.IsNullOrWhiteSpace(
+                         b.GeometryFingerprint))
+            {
+                double geometryScore =
+                    CompareSmartGeometryStructureRelaxed(
+                        a.GeometryFingerprint,
+                        b.GeometryFingerprint);
+
+                if (geometryScore < double.MaxValue &&
+                    !double.IsNaN(
+                        geometryScore) &&
+                    !double.IsInfinity(
+                        geometryScore))
+                {
+                    if (geometryScore <= 0.12)
+                        result.GeometryAffinity = 0.96;
+                    else if (geometryScore <= 0.20)
+                        result.GeometryAffinity = 0.88;
+                    else if (geometryScore <= 0.30)
+                        result.GeometryAffinity = 0.74;
+                    else if (geometryScore <= 0.40)
+                        result.GeometryAffinity = 0.56;
+                }
+            }
+
+            if (!string.IsNullOrWhiteSpace(
+                    a.RasterSignature) &&
+                !string.IsNullOrWhiteSpace(
+                    b.RasterSignature))
+            {
+                double rasterScore =
+                    CompareSmartRasterSignatures(
+                        a.RasterSignature,
+                        b.RasterSignature);
+
+                if (rasterScore < double.MaxValue &&
+                    !double.IsNaN(
+                        rasterScore) &&
+                    !double.IsInfinity(
+                        rasterScore))
+                {
+                    if (rasterScore <= 0.060)
+                        result.RasterAffinity = 0.97;
+                    else if (rasterScore <= 0.090)
+                        result.RasterAffinity = 0.90;
+                    else if (rasterScore <= 0.120)
+                        result.RasterAffinity = 0.78;
+                    else if (rasterScore <= 0.150)
+                        result.RasterAffinity = 0.58;
+                }
+            }
+
+            result.LayerAffinity =
+                GetSmartPatternLayerAffinity(
+                    a.LayerName,
+                    b.LayerName);
+
+            result.GraphAffinity =
+                GetSmartPatternGraphAffinity(
+                    candidate,
+                    teacher,
+                    out bool graphConflict);
+
+            result.GraphConflict =
+                graphConflict;
+
+            double primaryStructure =
+                Math.Max(
+                    result.GeometryAffinity,
+                    result.RasterAffinity);
+
+            double secondaryStructure =
+                Math.Min(
+                    result.GeometryAffinity,
+                    result.RasterAffinity);
+
+            result.StrongStructure =
+                result.ExactStructure ||
+                primaryStructure >= 0.82;
+
+            result.Score =
+                primaryStructure * 0.68 +
+                secondaryStructure * 0.12 +
+                result.LayerAffinity * 0.08 +
+                result.GraphAffinity * 0.12;
+
+            if (result.ExactStructure)
+            {
+                result.Score +=
+                    0.05;
+            }
+
+            if (result.GraphConflict)
+            {
+                result.Score -=
+                    0.06;
+            }
+
+            result.Score =
+                Math.Max(
+                    0.0,
+                    Math.Min(
+                        1.0,
+                        result.Score));
+
+            return result;
+        }
+
+        private SmartPatternLabelEvidence BuildSmartPatternLabelEvidence(
+            string label,
+            List<SmartPatternSupport> supports)
+        {
+            SmartPatternLabelEvidence output =
+                new SmartPatternLabelEvidence
+                {
+                    Label =
+                        NormalizeSmartDisplayName(
+                            label)
+                };
+
+            if (supports == null ||
+                supports.Count == 0)
+            {
+                return output;
+            }
+
+            List<SmartPatternSupport> ranked =
+                supports
+                    .Where(
+                        x =>
+                            x != null &&
+                            x.Teacher != null &&
+                            x.Pair != null)
+                    .OrderByDescending(
+                        x =>
+                            x.EffectiveScore)
+                    .Take(6)
+                    .ToList();
+
+            if (ranked.Count == 0)
+                return output;
+
+            double[] rankWeights =
+                new[]
+                {
+                    1.00,
+                    0.78,
+                    0.60,
+                    0.46,
+                    0.34,
+                    0.26
+                };
+
+            double weighted = 0.0;
+            double weightTotal = 0.0;
+            double followDnVote = 0.0;
+
+            for (int i = 0;
+                i < ranked.Count;
+                i++)
+            {
+                SmartPatternSupport item =
+                    ranked[i];
+
+                double rankWeight =
+                    rankWeights[
+                        Math.Min(
+                            i,
+                            rankWeights.Length - 1)];
+
+                weighted +=
+                    item.EffectiveScore *
+                    rankWeight;
+
+                weightTotal +=
+                    rankWeight;
+
+                followDnVote +=
+                    item.EffectiveScore *
+                    (item.Teacher.Row.FollowDn
+                        ? 1.0
+                        : -1.0);
+
+                output.SupportCount++;
+
+                if (item.Pair.StrongStructure)
+                    output.StrongStructureSupportCount++;
+
+                if (item.Pair.ExactStructure)
+                    output.ExactStructureSupportCount++;
+
+                if (item.Pair.GraphConflict)
+                    output.GraphConflictCount++;
+                else if (item.Pair.GraphAffinity >= 0.75)
+                    output.GraphCompatibleCount++;
+            }
+
+            double baseScore =
+                weightTotal > 0.0
+                    ? weighted /
+                      weightTotal
+                    : 0.0;
+
+            double repetitionBonus =
+                Math.Min(
+                    0.06,
+                    Math.Max(
+                        0,
+                        output.SupportCount - 1) *
+                    0.015);
+
+            output.Score =
+                Math.Max(
+                    0.0,
+                    Math.Min(
+                        1.0,
+                        baseScore +
+                        repetitionBonus));
+
+            output.SuggestedFollowDn =
+                followDnVote >= 0.0;
+
+            SmartPatternSupport best =
+                ranked[0];
+
+            output.EvidenceText =
+                "support=" +
+                output.SupportCount +
+                " | strong=" +
+                output.StrongStructureSupportCount +
+                " | exact=" +
+                output.ExactStructureSupportCount +
+                " | score=" +
+                output.Score.ToString(
+                    "0.000",
+                    CultureInfo.InvariantCulture) +
+                " | GEO=" +
+                best.Pair.GeometryAffinity.ToString(
+                    "0.00",
+                    CultureInfo.InvariantCulture) +
+                " RASTER=" +
+                best.Pair.RasterAffinity.ToString(
+                    "0.00",
+                    CultureInfo.InvariantCulture) +
+                " LAYER=" +
+                best.Pair.LayerAffinity.ToString(
+                    "0.00",
+                    CultureInfo.InvariantCulture) +
+                " GRAPH=" +
+                best.Pair.GraphAffinity.ToString(
+                    "0.00",
+                    CultureInfo.InvariantCulture);
+
+            return output;
+        }
+
+        private SmartPatternDecision EvaluateSmartPatternCandidate(
+            SmartPatternFeature candidate,
+            List<SmartPatternFeature> allTeachers,
+            Dictionary<string, List<SmartPatternFeature>> teacherBuckets)
+        {
+            SmartPatternDecision decision =
+                new SmartPatternDecision();
+
+            if (candidate == null ||
+                candidate.Row == null ||
+                allTeachers == null ||
+                allTeachers.Count < 2)
+            {
+                return decision;
+            }
+
+            SmartAuditRow row =
+                candidate.Row;
+
+            bool isConflict =
+                string.Equals(
+                    row.Status,
+                    "CONTEXT_CONFLICT",
+                    StringComparison.OrdinalIgnoreCase);
+
+            bool isMissing =
+                string.Equals(
+                    row.Status,
+                    "MISSING",
+                    StringComparison.OrdinalIgnoreCase);
+
+            if (!isConflict &&
+                !isMissing)
+            {
+                return decision;
+            }
+
+            bool hasStructure =
+                !string.IsNullOrWhiteSpace(
+                    row.BlockKey) ||
+                !string.IsNullOrWhiteSpace(
+                    row.GeometryFingerprint) ||
+                !string.IsNullOrWhiteSpace(
+                    row.RasterSignature);
+
+            if (!hasStructure)
+                return decision;
+
+            List<SmartPatternFeature> teachers =
+                allTeachers;
+
+            if (!string.IsNullOrWhiteSpace(
+                    candidate.StructureBucket) &&
+                teacherBuckets != null &&
+                teacherBuckets.TryGetValue(
+                    candidate.StructureBucket,
+                    out List<SmartPatternFeature> sameBucket) &&
+                sameBucket != null &&
+                sameBucket.Count >= 2)
+            {
+                teachers =
+                    sameBucket;
+            }
+
+            HashSet<string> allowedLabels =
+                new HashSet<string>(
+                    StringComparer.OrdinalIgnoreCase);
+
+            string currentName =
+                NormalizeSmartDisplayName(
+                    row.Name);
+
+            string alternativeName =
+                NormalizeSmartDisplayName(
+                    row.AlternativeName);
+
+            if (isConflict)
+            {
+                if (!string.IsNullOrWhiteSpace(
+                        currentName) &&
+                    !string.Equals(
+                        currentName,
+                        "CHƯA NHẬN DIỆN",
+                        StringComparison.OrdinalIgnoreCase))
+                {
+                    allowedLabels.Add(
+                        currentName);
+                }
+
+                if (!string.IsNullOrWhiteSpace(
+                        alternativeName) &&
+                    !string.Equals(
+                        alternativeName,
+                        currentName,
+                        StringComparison.OrdinalIgnoreCase))
+                {
+                    allowedLabels.Add(
+                        alternativeName);
+                }
+            }
+
+            Dictionary<string, List<SmartPatternSupport>> byLabel =
+                new Dictionary<string, List<SmartPatternSupport>>(
+                    StringComparer.OrdinalIgnoreCase);
+
+            foreach (SmartPatternFeature teacher
+                in teachers)
+            {
+                if (teacher == null ||
+                    !teacher.TrustedTeacher ||
+                    teacher.Row == null ||
+                    string.IsNullOrWhiteSpace(
+                        teacher.Label))
+                {
+                    continue;
+                }
+
+                if (allowedLabels.Count > 0 &&
+                    !allowedLabels.Contains(
+                        teacher.Label))
+                {
+                    continue;
+                }
+
+                SmartPatternPairEvidence pair =
+                    CompareSmartPatternPair(
+                        candidate,
+                        teacher);
+
+                if (!pair.StrongStructure ||
+                    pair.Score < 0.64)
+                {
+                    continue;
+                }
+
+                double reliability =
+                    Math.Max(
+                        0.0,
+                        Math.Min(
+                            1.0,
+                            teacher.TeacherReliability));
+
+                double effective =
+                    pair.Score *
+                    reliability;
+
+                if (effective < 0.60)
+                    continue;
+
+                if (!byLabel.TryGetValue(
+                        teacher.Label,
+                        out List<SmartPatternSupport> list))
+                {
+                    list =
+                        new List<SmartPatternSupport>();
+
+                    byLabel[
+                        teacher.Label] =
+                        list;
+                }
+
+                list.Add(
+                    new SmartPatternSupport
+                    {
+                        Teacher =
+                            teacher,
+                        Pair =
+                            pair,
+                        EffectiveScore =
+                            effective
+                    });
+            }
+
+            if (byLabel.Count == 0)
+                return decision;
+
+            List<SmartPatternLabelEvidence> rankedLabels =
+                byLabel
+                    .Select(
+                        kv =>
+                            BuildSmartPatternLabelEvidence(
+                                kv.Key,
+                                kv.Value))
+                    .Where(
+                        x =>
+                            x != null &&
+                            x.SupportCount > 0)
+                    .OrderByDescending(
+                        x =>
+                            x.Score)
+                    .ThenByDescending(
+                        x =>
+                            x.StrongStructureSupportCount)
+                    .ThenByDescending(
+                        x =>
+                            x.SupportCount)
+                    .ToList();
+
+            if (rankedLabels.Count == 0)
+                return decision;
+
+            SmartPatternLabelEvidence best =
+                rankedLabels[0];
+
+            SmartPatternLabelEvidence second =
+                rankedLabels.Count > 1
+                    ? rankedLabels[1]
+                    : null;
+
+            double margin =
+                second != null
+                    ? best.Score -
+                      second.Score
+                    : best.Score;
+
+            decision.Evaluated =
+                true;
+
+            decision.SuggestedLabel =
+                best.Label;
+
+            decision.SuggestedFollowDn =
+                best.SuggestedFollowDn;
+
+            decision.Confidence =
+                best.Score;
+
+            decision.Margin =
+                margin;
+
+            decision.SupportCount =
+                best.SupportCount;
+
+            decision.EvidenceText =
+                best.EvidenceText +
+                " | margin=" +
+                margin.ToString(
+                    "0.000",
+                    CultureInfo.InvariantCulture);
+
+            bool graphSafe =
+                best.GraphConflictCount == 0 ||
+                best.GraphCompatibleCount >
+                    best.GraphConflictCount;
+
+            if (isConflict)
+            {
+                bool bestIsCurrent =
+                    !string.IsNullOrWhiteSpace(
+                        currentName) &&
+                    string.Equals(
+                        best.Label,
+                        currentName,
+                        StringComparison.OrdinalIgnoreCase);
+
+                bool bestIsAlternative =
+                    !string.IsNullOrWhiteSpace(
+                        alternativeName) &&
+                    string.Equals(
+                        best.Label,
+                        alternativeName,
+                        StringComparison.OrdinalIgnoreCase);
+
+                // KEEP dễ hơn SWITCH một chút vì không thay nhãn visual/context hiện tại.
+                if (bestIsCurrent &&
+                    best.SupportCount >= 2 &&
+                    best.StrongStructureSupportCount >= 2 &&
+                    best.Score >= 0.82 &&
+                    margin >= 0.10 &&
+                    graphSafe)
+                {
+                    decision.AutoResolved =
+                        true;
+
+                    decision.DecisionCode =
+                        "AUTO_KEEP";
+
+                    return decision;
+                }
+
+                // SWITCH chỉ khi có nhiều instance CAD mạnh cùng xác nhận.
+                if (bestIsAlternative &&
+                    best.SupportCount >= 4 &&
+                    best.StrongStructureSupportCount >= 3 &&
+                    best.Score >= 0.90 &&
+                    margin >= 0.18 &&
+                    graphSafe)
+                {
+                    decision.AutoResolved =
+                        true;
+
+                    decision.SwitchedLabel =
+                        true;
+
+                    decision.DecisionCode =
+                        "AUTO_SWITCH";
+
+                    return decision;
+                }
+
+                if (best.SupportCount >= 2 &&
+                    best.StrongStructureSupportCount >= 2 &&
+                    best.Score >= 0.76)
+                {
+                    decision.SuggestionOnly =
+                        true;
+
+                    decision.DecisionCode =
+                        "SUGGEST";
+                }
+
+                return decision;
+            }
+
+            // MISSING không auto-count. Chỉ prefill gợi ý và vẫn bắt user SỬA/XÁC NHẬN.
+            if (isMissing &&
+                best.SupportCount >= 3 &&
+                best.StrongStructureSupportCount >= 2 &&
+                best.Score >= 0.84 &&
+                margin >= 0.12 &&
+                graphSafe)
+            {
+                decision.SuggestionOnly =
+                    true;
+
+                decision.DecisionCode =
+                    "MISSING_SUGGEST";
+            }
+
+            return decision;
+        }
+
+        private void ApplySmartPatternResolvedStatus(
+            SmartAuditRow row,
+            SmartPatternFeature feature,
+            bool followDn)
+        {
+            if (row == null)
+                return;
+
+            row.FollowDn =
+                followDn;
+
+            if (!followDn)
+            {
+                row.Size =
+                    "-";
+
+                row.Status =
+                    "OK";
+
+                return;
+            }
+
+            if (string.IsNullOrWhiteSpace(
+                    row.Size) ||
+                string.Equals(
+                    row.Size,
+                    "-",
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                if (feature != null &&
+                    feature.GraphFound &&
+                    !feature.GraphAmbiguous &&
+                    feature.GraphConfidence >= 0.72 &&
+                    !string.IsNullOrWhiteSpace(
+                        feature.GraphDn))
+                {
+                    row.Size =
+                        feature.GraphDn;
+                }
+                else
+                {
+                    row.Size =
+                        "KHÔNG RÕ DN";
+                }
+            }
+
+            if (string.Equals(
+                    row.Size,
+                    "CẦN KIỂM TRA",
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                row.Status =
+                    "DN_CHECK";
+            }
+            else if (string.Equals(
+                         row.Size,
+                         "KHÔNG RÕ DN",
+                         StringComparison.OrdinalIgnoreCase))
+            {
+                row.Status =
+                    "NO_DN";
+            }
+            else
+            {
+                row.Status =
+                    "OK";
+            }
+        }
+
+        private void RunSmartMultiInstancePatternLearning(
+            List<SmartAuditRow> rows)
+        {
+            if (rows == null ||
+                rows.Count == 0)
+            {
+                return;
+            }
+
+            try
+            {
+                List<SmartPatternFeature> features =
+                    rows
+                        .Where(
+                            r =>
+                                r != null)
+                        .Select(
+                            r =>
+                                BuildSmartPatternFeature(
+                                    r))
+                        .Where(
+                            f =>
+                                f != null &&
+                                f.Row != null)
+                        .ToList();
+
+                List<SmartPatternFeature> teachers =
+                    features
+                        .Where(
+                            f =>
+                                f.TrustedTeacher &&
+                                f.TeacherReliability >= 0.90)
+                        .ToList();
+
+                _lastSmartPatternTeacherCount =
+                    teachers.Count;
+
+                if (teachers.Count < 2)
+                    return;
+
+                Dictionary<string, List<SmartPatternFeature>> teacherBuckets =
+                    teachers
+                        .Where(
+                            t =>
+                                !string.IsNullOrWhiteSpace(
+                                    t.StructureBucket))
+                        .GroupBy(
+                            t =>
+                                t.StructureBucket,
+                            StringComparer.OrdinalIgnoreCase)
+                        .ToDictionary(
+                            g =>
+                                g.Key,
+                            g =>
+                                g.ToList(),
+                            StringComparer.OrdinalIgnoreCase);
+
+                foreach (SmartPatternFeature candidate
+                    in features)
+                {
+                    if (candidate == null ||
+                        candidate.Row == null ||
+                        candidate.TrustedTeacher)
+                    {
+                        continue;
+                    }
+
+                    SmartPatternDecision decision =
+                        EvaluateSmartPatternCandidate(
+                            candidate,
+                            teachers,
+                            teacherBuckets);
+
+                    if (decision == null ||
+                        !decision.Evaluated)
+                    {
+                        continue;
+                    }
+
+                    _lastSmartPatternEvaluatedCount++;
+
+                    SmartAuditRow row =
+                        candidate.Row;
+
+                    row.PatternSuggestedName =
+                        decision.SuggestedLabel ?? "";
+
+                    row.PatternDecisionCode =
+                        decision.DecisionCode ?? "NONE";
+
+                    row.PatternEvidenceText =
+                        decision.EvidenceText ?? "";
+
+                    row.PatternConfidence =
+                        decision.Confidence;
+
+                    row.PatternSupportCount =
+                        decision.SupportCount;
+
+                    if (decision.AutoResolved)
+                    {
+                        row.PatternAutoResolved =
+                            true;
+
+                        if (decision.SwitchedLabel)
+                        {
+                            row.Name =
+                                NormalizeSmartDisplayName(
+                                    decision.SuggestedLabel);
+
+                            ApplySmartPatternResolvedStatus(
+                                row,
+                                candidate,
+                                decision.SuggestedFollowDn);
+
+                            _lastSmartPatternAutoSwitchCount++;
+                        }
+                        else
+                        {
+                            ApplySmartPatternResolvedStatus(
+                                row,
+                                candidate,
+                                row.FollowDn);
+
+                            _lastSmartPatternAutoKeepCount++;
+                        }
+
+                        row.Source =
+                            (row.Source ?? "") +
+                            " + PATTERN";
+
+                        row.Note =
+                            "STEP28D " +
+                            decision.DecisionCode +
+                            ": pattern lặp nhiều instance đã đủ mạnh để " +
+                            (decision.SwitchedLabel
+                                ? "đổi nhãn sang " +
+                                  row.Name
+                                : "giữ nhãn " +
+                                  row.Name) +
+                            ". " +
+                            decision.EvidenceText +
+                            ". " +
+                            (row.Note ?? "");
+
+                        continue;
+                    }
+
+                    if (decision.SuggestionOnly)
+                    {
+                        _lastSmartPatternSuggestedCount++;
+
+                        // Với MISSING, chỉ prefill tên gợi ý và GIỮ MISSING.
+                        // ApplySmartAuditCorrections có gate riêng: chỉ bấm ÁP DỤNG
+                        // không được biến pattern suggestion thành OK.
+                        if (string.Equals(
+                                row.Status,
+                                "MISSING",
+                                StringComparison.OrdinalIgnoreCase) &&
+                            !string.IsNullOrWhiteSpace(
+                                decision.SuggestedLabel))
+                        {
+                            row.Name =
+                                NormalizeSmartDisplayName(
+                                    decision.SuggestedLabel);
+
+                            row.FollowDn =
+                                decision.SuggestedFollowDn;
+
+                            row.Source =
+                                "PATTERN GỢI Ý - CẦN XÁC NHẬN";
+                        }
+
+                        row.Note =
+                            "STEP28D GỢI Ý: " +
+                            decision.SuggestedLabel +
+                            " nhưng chưa đủ điều kiện auto. " +
+                            decision.EvidenceText +
+                            ". Cần ZOOM/SỬA để xác nhận. " +
+                            (row.Note ?? "");
+                    }
+                }
+            }
+            catch
+            {
+                // Pattern Engine là lớp bổ sung. Lỗi pattern không được làm dừng scan chính.
+            }
+        }
+
+
         private void ScanSmartValveDeviceStatistics(
             Document doc,
             List<SmartSymbolRule> rules,
@@ -54962,6 +58809,39 @@ namespace ClassLibrary4
             _lastSmartContextEvaluatedCount = 0;
             _lastSmartContextAdjustedCount = 0;
             _lastSmartContextConflictCount = 0;
+
+            _lastSmartSpatialQueryCount = 0;
+            _lastSmartDbscanClusterCount = 0;
+            _lastSmartDbscanNoiseCount = 0;
+
+            _lastSmartPatternTeacherCount = 0;
+            _lastSmartPatternEvaluatedCount = 0;
+            _lastSmartPatternAutoKeepCount = 0;
+            _lastSmartPatternAutoSwitchCount = 0;
+            _lastSmartPatternSuggestedCount = 0;
+
+            _lastOpenCvAnalyzedCount = 0;
+            _lastOpenCvRefinedCount = 0;
+            _lastOpenCvKeptRawCount = 0;
+            _lastOpenCvSkippedCount = 0;
+
+            _lastOpenCvTileRunCount = 0;
+            _lastOpenCvTileRegionCount = 0;
+            _lastOpenCvTileRescueCount = 0;
+            _lastOpenCvTileFallbackCount = 0;
+
+            _lastOpenCvWorldTileRunCount = 0;
+            _lastOpenCvWorldTileRegionCount = 0;
+            _lastOpenCvWorldTileRescueCount = 0;
+            _lastOpenCvWorldTileDenseSkipCount = 0;
+
+            _lastYoloTileRunCount = 0;
+            _lastYoloRawDetectionCount = 0;
+            _lastYoloAcceptedCount = 0;
+            _lastYoloRejectedCount = 0;
+
+            _activeSmartPipeSpatialSource = null;
+            _activeSmartPipeSpatialIndex = null;
 
             if (rules == null ||
                 rules.Count == 0)
@@ -55304,7 +59184,14 @@ namespace ClassLibrary4
                                         Confidence =
                                             isAiPipe
                                                 ? 0.99
-                                                : 0.88
+                                                : 0.88,
+                                        SpatialCenter =
+                                            GetSmartEntityPlanCenter(
+                                                curve),
+                                        SpatialBox =
+                                            GetSmartEntitySpatialBoxSafe(
+                                                curve,
+                                                80.0)
                                     });
                             }
 
@@ -55474,6 +59361,10 @@ namespace ClassLibrary4
                 db,
                 pipeCandidates);
 
+            // STEP28C - build một lần, dùng lại cho mọi lần suy DN quanh thiết bị.
+            ActivateSmartPipeSpatialIndex(
+                pipeCandidates);
+
             // Shared scan result containers/counters.
             // Must be declared BEFORE POINT / BLOCK / GEOMETRY matching.
             Dictionary<string, int> counts =
@@ -55637,6 +59528,8 @@ namespace ClassLibrary4
                                 size,
                             Source =
                                 "POINT",
+                            LayerName =
+                                point.Layer ?? "",
                             Note =
                                 auditNote,
                             Point =
@@ -55696,6 +59589,11 @@ namespace ClassLibrary4
                     matchedBlockByRaster,
                     geometryMatches,
                     auditRows);
+
+            // STEP28C - context neighbor lookup O(k) theo vùng thay vì scan toàn bộ.
+            SmartSpatialGrid<SmartContextNeighbor> smartContextNeighborIndex =
+                BuildSmartContextNeighborSpatialIndex(
+                    smartContextNeighbors);
 
             _smartValveStage =
                 "SCAN_INFER_DN";
@@ -55775,6 +59673,7 @@ namespace ClassLibrary4
                                 pipeCandidates,
                                 currentLegendNames,
                                 smartContextNeighbors,
+                                smartContextNeighborIndex,
                                 rule,
                                 out SmartSymbolRule contextRule,
                                 out contextDecision))
@@ -55806,16 +59705,15 @@ namespace ClassLibrary4
                                     contextDecision.Reason))
                             {
                                 contextAuditSuffix =
-                                    " CONTEXT: " +
+                                    " CONTEXT[" +
+                                    (contextDecision.DecisionCode ?? "KEEP") +
+                                    "]: " +
                                     contextDecision.Reason +
-                                    " score=" +
-                                    contextDecision.SelectedScore.ToString(
-                                        "0.000",
-                                        CultureInfo.InvariantCulture) +
-                                    "/" +
-                                    contextDecision.RunnerUpScore.ToString(
-                                        "0.000",
-                                        CultureInfo.InvariantCulture) +
+                                    (string.IsNullOrWhiteSpace(
+                                         contextDecision.EvidenceText)
+                                        ? ""
+                                        : " | " +
+                                          contextDecision.EvidenceText) +
                                     ".";
                             }
                         }
@@ -55923,6 +59821,20 @@ namespace ClassLibrary4
                         }
                     }
 
+                    if (contextDecision != null &&
+                        contextDecision.ContextConflict)
+                    {
+                        // STEP28B.2:
+                        // Không cho nhãn đang xung đột đi thẳng vào thống kê.
+                        // Người dùng phải ZOOM/SỬA để xác nhận thì Apply mới đổi về OK.
+                        auditStatus =
+                            "CONTEXT_CONFLICT";
+
+                        auditNote =
+                            "AI còn xung đột nhãn; cần ZOOM/SỬA để xác nhận trước khi thống kê. " +
+                            auditNote;
+                    }
+
                     string countKey =
                         rule.DisplayName +
                         "\u001F" +
@@ -55937,8 +59849,12 @@ namespace ClassLibrary4
 
                     counts[countKey]++;
 
-                    detectedLegendNames.Add(
-                        rule.DisplayName);
+                    if (contextDecision == null ||
+                        !contextDecision.ContextConflict)
+                    {
+                        detectedLegendNames.Add(
+                            rule.DisplayName);
+                    }
 
                     auditRows.Add(
                         new SmartAuditRow
@@ -55952,14 +59868,26 @@ namespace ClassLibrary4
                             Source =
                                 onnxFallbackMatch
                                     ? (contextDecision != null &&
-                                       contextDecision.SwitchedFromVisualTop1
-                                        ? "BLOCK - ONNX + CONTEXT"
-                                        : "BLOCK - ONNX")
+                                       contextDecision.ContextConflict
+                                        ? "BLOCK - ONNX + CONTEXT CONFLICT"
+                                        : contextDecision != null &&
+                                          contextDecision.SwitchedFromVisualTop1
+                                            ? "BLOCK - ONNX + CONTEXT"
+                                            : "BLOCK - ONNX")
                                     : rasterFallbackMatch
                                         ? "BLOCK - VISION"
                                         : geometryFallbackMatch
                                             ? "BLOCK - HÌNH HỌC"
                                             : "BLOCK",
+                            LayerName =
+                                br.Layer ?? "",
+                            AlternativeName =
+                                GetSmartPatternAlternativeName(
+                                    rules,
+                                    onnxFallbackMatch &&
+                                    matchedBlockOnnxPredictions.ContainsKey(blockId)
+                                        ? matchedBlockOnnxPredictions[blockId]
+                                        : null),
                             Note =
                                 onnxFallbackMatch &&
                                 matchedBlockOnnxPredictions.ContainsKey(blockId)
@@ -56092,7 +60020,19 @@ namespace ClassLibrary4
                         string.Equals(
                             match.Source,
                             "ONNX",
+                            StringComparison.OrdinalIgnoreCase) ||
+                        string.Equals(
+                            match.Source,
+                            "YOLO",
                             StringComparison.OrdinalIgnoreCase);
+
+                    string geometryAiEngine =
+                        string.Equals(
+                            match.Source,
+                            "YOLO",
+                            StringComparison.OrdinalIgnoreCase)
+                            ? "YOLO"
+                            : "ONNX";
 
                     SmartSymbolContextDecision geometryContextDecision =
                         null;
@@ -56117,6 +60057,7 @@ namespace ClassLibrary4
                                 pipeCandidates,
                                 currentLegendNames,
                                 smartContextNeighbors,
+                                smartContextNeighborIndex,
                                 rule,
                                 out SmartSymbolRule contextRule,
                                 out geometryContextDecision))
@@ -56147,16 +60088,15 @@ namespace ClassLibrary4
                                     geometryContextDecision.Reason))
                             {
                                 geometryContextAuditSuffix =
-                                    " CONTEXT: " +
+                                    " CONTEXT[" +
+                                    (geometryContextDecision.DecisionCode ?? "KEEP") +
+                                    "]: " +
                                     geometryContextDecision.Reason +
-                                    " score=" +
-                                    geometryContextDecision.SelectedScore.ToString(
-                                        "0.000",
-                                        CultureInfo.InvariantCulture) +
-                                    "/" +
-                                    geometryContextDecision.RunnerUpScore.ToString(
-                                        "0.000",
-                                        CultureInfo.InvariantCulture) +
+                                    (string.IsNullOrWhiteSpace(
+                                         geometryContextDecision.EvidenceText)
+                                        ? ""
+                                        : " | " +
+                                          geometryContextDecision.EvidenceText) +
                                     ".";
                             }
                         }
@@ -56171,7 +60111,9 @@ namespace ClassLibrary4
                     string auditNote =
                         geometryOnnxMatch &&
                         match.OnnxPrediction != null
-                            ? "HÌNH EXPLODE được ONNX phân loại: " +
+                            ? "HÌNH EXPLODE được " +
+                              geometryAiEngine +
+                              " phân loại: " +
                               match.OnnxPrediction.Label +
                               " | confidence=" +
                               match.OnnxPrediction.Confidence.ToString(
@@ -56252,6 +60194,17 @@ namespace ClassLibrary4
                             geometryContextAuditSuffix;
                     }
 
+                    if (geometryContextDecision != null &&
+                        geometryContextDecision.ContextConflict)
+                    {
+                        auditStatus =
+                            "CONTEXT_CONFLICT";
+
+                        auditNote =
+                            "AI còn xung đột nhãn; cần ZOOM/SỬA để xác nhận trước khi thống kê. " +
+                            auditNote;
+                    }
+
                     string countKey =
                         rule.DisplayName +
                         "\u001F" +
@@ -56266,8 +60219,12 @@ namespace ClassLibrary4
 
                     counts[countKey]++;
 
-                    detectedLegendNames.Add(
-                        rule.DisplayName);
+                    if (geometryContextDecision == null ||
+                        !geometryContextDecision.ContextConflict)
+                    {
+                        detectedLegendNames.Add(
+                            rule.DisplayName);
+                    }
 
                     auditRows.Add(
                         new SmartAuditRow
@@ -56281,10 +60238,23 @@ namespace ClassLibrary4
                             Source =
                                 geometryOnnxMatch
                                     ? (geometryContextDecision != null &&
-                                       geometryContextDecision.SwitchedFromVisualTop1
-                                        ? "HÌNH EXPLODE - ONNX + CONTEXT"
-                                        : "HÌNH EXPLODE - ONNX")
+                                       geometryContextDecision.ContextConflict
+                                        ? "HÌNH EXPLODE - " + geometryAiEngine + " + CONTEXT CONFLICT"
+                                        : geometryContextDecision != null &&
+                                          geometryContextDecision.SwitchedFromVisualTop1
+                                            ? "HÌNH EXPLODE - " + geometryAiEngine + " + CONTEXT"
+                                            : "HÌNH EXPLODE - " + geometryAiEngine)
                                     : "HÌNH EXPLODE",
+                            LayerName =
+                                GetSmartContextDominantLayer(
+                                    tr,
+                                    match.ObjectIds),
+                            AlternativeName =
+                                GetSmartPatternAlternativeName(
+                                    rules,
+                                    geometryOnnxMatch
+                                        ? match.OnnxPrediction
+                                        : null),
                             Note =
                                 auditNote,
                             Point =
@@ -56440,6 +60410,8 @@ namespace ClassLibrary4
                                 displaySize,
                             Source =
                                 "BLOCK CHƯA HỌC",
+                            LayerName =
+                                br.Layer ?? "",
                             Note =
                                 "Block gần tuyến ống nhưng không khớp Legend: " +
                                 (string.IsNullOrWhiteSpace(
@@ -56562,6 +60534,8 @@ namespace ClassLibrary4
                                     : inferredSize,
                             Source =
                                 "POINT CHƯA HỌC",
+                            LayerName =
+                                point.Layer ?? "",
                             Note =
                                 "AutoCAD POINT/DBPoint gần tuyến ống nhưng chưa có trong Legend/AI Memory.",
                             Point =
@@ -56690,6 +60664,10 @@ namespace ClassLibrary4
                                 displaySize,
                             Source =
                                 "HÌNH CHƯA HỌC",
+                            LayerName =
+                                GetSmartContextDominantLayer(
+                                    tr,
+                                    cluster.ObjectIds),
                             Note =
                                 "Cụm " +
                                 cluster.EntityCount +
@@ -56723,6 +60701,38 @@ namespace ClassLibrary4
             auditRows =
                 DeduplicateSmartAuditRows(
                     auditRows);
+
+            // STEP28D - dùng các instance CAD mạnh trong CHÍNH phiên quét làm teacher.
+            // Context conflict có thể được AUTO_KEEP/AUTO_SWITCH khi pattern lặp đủ mạnh.
+            // MISSING chỉ được gợi ý; vẫn bắt người dùng ZOOM/SỬA để xác nhận.
+            RunSmartMultiInstancePatternLearning(
+                auditRows);
+
+            auditRows =
+                DeduplicateSmartAuditRows(
+                    auditRows);
+
+            // Pattern có thể vừa resolve một số conflict, nên cập nhật coverage/Legend 0.
+            detectedLegendNames =
+                new HashSet<string>(
+                    auditRows
+                        .Where(
+                            r =>
+                                r != null &&
+                                !string.Equals(
+                                    r.Status,
+                                    "MISSING",
+                                    StringComparison.OrdinalIgnoreCase) &&
+                                !string.Equals(
+                                    r.Status,
+                                    "CONTEXT_CONFLICT",
+                                    StringComparison.OrdinalIgnoreCase) &&
+                                !string.IsNullOrWhiteSpace(
+                                    r.Name))
+                        .Select(
+                            r =>
+                                r.Name),
+                    StringComparer.OrdinalIgnoreCase);
 
             List<string> legendZero =
                 currentLegendNames
@@ -56789,6 +60799,10 @@ namespace ClassLibrary4
                                 !string.Equals(
                                     r.Status,
                                     "MISSING",
+                                    StringComparison.OrdinalIgnoreCase) &&
+                                !string.Equals(
+                                    r.Status,
+                                    "CONTEXT_CONFLICT",
                                     StringComparison.OrdinalIgnoreCase) &&
                                 !string.IsNullOrWhiteSpace(
                                     r.Name))
@@ -57066,7 +61080,16 @@ namespace ClassLibrary4
                                          ex.MaxPoint.X) * 0.5,
                                         (ex.MinPoint.Y +
                                          ex.MaxPoint.Y) * 0.5,
-                                        0.0)
+                                        0.0),
+                                Layer =
+                                    ent.Layer ?? "",
+                                Kind =
+                                    GetSmartGeometryPrimitiveKind(
+                                        ent),
+                                Span =
+                                    Math.Max(
+                                        dx,
+                                        dy)
                             });
                     }
                     catch
@@ -57080,68 +61103,24 @@ namespace ClassLibrary4
             if (primitives.Count == 0)
                 return result;
 
+            // STEP28C - cùng engine DBSCAN với vòng match chính,
+            // nhưng epsilon nhỏ hơn để Candidate Detector không gom quá rộng.
             const double clusterGap =
                 70.0;
 
-            HashSet<ObjectId> used =
-                new HashSet<ObjectId>();
+            SmartDbscanGeometryResult dbscan =
+                ClusterSmartGeometryPrimitivesDbscan(
+                    primitives,
+                    clusterGap,
+                    2,
+                    24,
+                    true);
 
-            foreach (SmartGeometryPrimitive seed
-                in primitives)
+            foreach (List<SmartGeometryPrimitive> cluster
+                in dbscan.Clusters)
             {
-                if (used.Contains(
-                        seed.Id))
-                {
-                    continue;
-                }
-
-                Queue<SmartGeometryPrimitive> queue =
-                    new Queue<SmartGeometryPrimitive>();
-
-                List<SmartGeometryPrimitive> cluster =
-                    new List<SmartGeometryPrimitive>();
-
-                queue.Enqueue(
-                    seed);
-
-                used.Add(
-                    seed.Id);
-
-                while (queue.Count > 0)
-                {
-                    SmartGeometryPrimitive current =
-                        queue.Dequeue();
-
-                    cluster.Add(
-                        current);
-
-                    if (cluster.Count > 24)
-                        break;
-
-                    foreach (SmartGeometryPrimitive other
-                        in primitives)
-                    {
-                        if (used.Contains(
-                                other.Id))
-                        {
-                            continue;
-                        }
-
-                        if (AreSmartGeometryExtentsNear(
-                                current.Extents,
-                                other.Extents,
-                                clusterGap))
-                        {
-                            used.Add(
-                                other.Id);
-
-                            queue.Enqueue(
-                                other);
-                        }
-                    }
-                }
-
-                if (cluster.Count <= 0 ||
+                if (cluster == null ||
+                    cluster.Count <= 0 ||
                     cluster.Count > 24)
                 {
                     continue;
@@ -58716,6 +62695,10 @@ namespace ClassLibrary4
                                  string.Equals(
                                      r.Status,
                                      "NO_DN",
+                                     StringComparison.OrdinalIgnoreCase) ||
+                                 string.Equals(
+                                     r.Status,
+                                     "CONTEXT_CONFLICT",
                                      StringComparison.OrdinalIgnoreCase)));
 
                     int total =
@@ -58769,7 +62752,7 @@ namespace ClassLibrary4
                         System.Windows.Forms.DockStyle.Top;
 
                     summary.Height =
-                        112;
+                        176;
 
                     summary.Font =
                         new System.Drawing.Font(
@@ -58798,12 +62781,66 @@ namespace ClassLibrary4
                         _lastSmartNmsSuppressedCount +
                         "\r\nCONTEXT XÉT: " +
                         _lastSmartContextEvaluatedCount +
+                        "    |    GIỮ NHÃN: " +
+                        Math.Max(
+                            0,
+                            _lastSmartContextEvaluatedCount -
+                            _lastSmartContextAdjustedCount -
+                            _lastSmartContextConflictCount) +
                         "    |    ĐỔI NHÃN: " +
                         _lastSmartContextAdjustedCount +
                         "    |    XUNG ĐỘT: " +
                         _lastSmartContextConflictCount +
                         "    |    " +
                         GetSmartSymbolCacheSummaryText() +
+                        "\r\nSPATIAL QUERY: " +
+                        _lastSmartSpatialQueryCount +
+                        "    |    DBSCAN CLUSTER: " +
+                        _lastSmartDbscanClusterCount +
+                        "    |    DBSCAN NOISE: " +
+                        _lastSmartDbscanNoiseCount +
+                        "\r\nPATTERN TEACHER: " +
+                        _lastSmartPatternTeacherCount +
+                        "    |    XÉT: " +
+                        _lastSmartPatternEvaluatedCount +
+                        "    |    AUTO GIỮ: " +
+                        _lastSmartPatternAutoKeepCount +
+                        "    |    AUTO ĐỔI: " +
+                        _lastSmartPatternAutoSwitchCount +
+                        "    |    GỢI Ý: " +
+                        _lastSmartPatternSuggestedCount +
+                        "\r\nOPENCV XÉT: " +
+                        _lastOpenCvAnalyzedCount +
+                        "    |    REFINE: " +
+                        _lastOpenCvRefinedCount +
+                        "    |    GIỮ RAW: " +
+                        _lastOpenCvKeptRawCount +
+                        "    |    SKIP: " +
+                        _lastOpenCvSkippedCount +
+                        "\r\nOPENCV TILE XÉT: " +
+                        _lastOpenCvTileRunCount +
+                        "    |    ROI: " +
+                        _lastOpenCvTileRegionCount +
+                        "    |    RESCUE: " +
+                        _lastOpenCvTileRescueCount +
+                        "    |    FALLBACK: " +
+                        _lastOpenCvTileFallbackCount +
+                        "\r\nWORLD TILE XÉT: " +
+                        _lastOpenCvWorldTileRunCount +
+                        "    |    ROI: " +
+                        _lastOpenCvWorldTileRegionCount +
+                        "    |    RESCUE: " +
+                        _lastOpenCvWorldTileRescueCount +
+                        "    |    DENSE/SKIP: " +
+                        _lastOpenCvWorldTileDenseSkipCount +
+                        "\r\nYOLO TILE XÉT: " +
+                        _lastYoloTileRunCount +
+                        "    |    DETECT: " +
+                        _lastYoloRawDetectionCount +
+                        "    |    NHẬN: " +
+                        _lastYoloAcceptedCount +
+                        "    |    BỎ: " +
+                        _lastYoloRejectedCount +
                         "\r\nBỎ QUA nhầm: bấm HOÀN TÁC. Muốn thêm lại mục cũ / thêm thủ công: bấm + THÊM THIẾT BỊ.";
 
                     bottomPanel.Dock =
@@ -60130,6 +64167,34 @@ namespace ClassLibrary4
                     continue;
                 }
 
+                // STEP28D:
+                // Pattern chỉ gợi ý cho MISSING. Nếu user chưa vào SỬA/XÁC NHẬN,
+                // tuyệt đối không biến gợi ý này thành kết quả thống kê.
+                if (string.Equals(
+                        row.PatternDecisionCode,
+                        "MISSING_SUGGEST",
+                        StringComparison.OrdinalIgnoreCase) &&
+                    !row.UserEdited)
+                {
+                    row.Status =
+                        "MISSING";
+
+                    continue;
+                }
+
+                // STEP28B.2:
+                // Chỉ bấm ÁP DỤNG không được biến CONFLICT thành OK.
+                // Muốn chốt, người dùng phải vào SỬA (hoặc đổi tên/THEO DN)
+                // để row.UserEdited = true.
+                if (string.Equals(
+                        row.Status,
+                        "CONTEXT_CONFLICT",
+                        StringComparison.OrdinalIgnoreCase) &&
+                    !row.UserEdited)
+                {
+                    continue;
+                }
+
                 if (!row.FollowDn)
                 {
                     row.Size =
@@ -60314,6 +64379,12 @@ namespace ClassLibrary4
                         row.Status,
                         "MISSING",
                         StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(
+                        row.Status,
+                        "CONTEXT_CONFLICT",
+                        StringComparison.OrdinalIgnoreCase) ||
+                    (row.PatternAutoResolved &&
+                     !row.UserEdited) ||
                     string.IsNullOrWhiteSpace(
                         row.Name) ||
                     string.Equals(
@@ -60461,6 +64532,10 @@ namespace ClassLibrary4
                                 r.Status,
                                 "MISSING",
                                 StringComparison.OrdinalIgnoreCase) &&
+                            !string.Equals(
+                                r.Status,
+                                "CONTEXT_CONFLICT",
+                                StringComparison.OrdinalIgnoreCase) &&
                             !string.IsNullOrWhiteSpace(
                                 r.Name) &&
                             !string.Equals(
@@ -60522,6 +64597,14 @@ namespace ClassLibrary4
 
             if (string.Equals(
                     status,
+                    "CONTEXT_CONFLICT",
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                return 1;
+            }
+
+            if (string.Equals(
+                    status,
                     "DN_CHECK",
                     StringComparison.OrdinalIgnoreCase) ||
                 string.Equals(
@@ -60529,10 +64612,10 @@ namespace ClassLibrary4
                     "NO_DN",
                     StringComparison.OrdinalIgnoreCase))
             {
-                return 1;
+                return 2;
             }
 
-            return 2;
+            return 3;
         }
 
         private static string GetSmartAuditStatusText(
@@ -60544,6 +64627,14 @@ namespace ClassLibrary4
                     StringComparison.OrdinalIgnoreCase))
             {
                 return "⚠ CHƯA NHẬN DIỆN";
+            }
+
+            if (string.Equals(
+                    status,
+                    "CONTEXT_CONFLICT",
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                return "⚠ CONTEXT XUNG ĐỘT";
             }
 
             if (string.Equals(
@@ -60647,7 +64738,14 @@ namespace ClassLibrary4
                                 IsAiGenerated =
                                     true,
                                 Confidence =
-                                    0.99
+                                    0.99,
+                                SpatialCenter =
+                                    GetSmartEntityPlanCenter(
+                                        curve),
+                                SpatialBox =
+                                    GetSmartEntitySpatialBoxSafe(
+                                        curve,
+                                        80.0)
                             });
 
                         existingIds.Add(
@@ -60794,8 +64892,17 @@ namespace ClassLibrary4
                 new Dictionary<string, SmartPipeSizeVote>(
                     StringComparer.OrdinalIgnoreCase);
 
+            // STEP28C - chỉ mở các Curve có footprint nằm gần thiết bị.
+            // Fallback về toàn bộ list nếu index chưa active để không đổi flow cũ.
+            List<SmartPipeCandidate> nearbyPipeCandidates =
+                GetSmartNearbyPipeCandidates(
+                    candidates,
+                    insertionPoint,
+                    deviceExtents,
+                    maxSearchDistance);
+
             foreach (SmartPipeCandidate candidate
-                in candidates)
+                in nearbyPipeCandidates)
             {
                 if (candidate == null ||
                     candidate.Id.IsNull ||
@@ -65431,6 +69538,8 @@ namespace ClassLibrary4
             }
 
             DisposeOnnxSymbolClassifier();
+            DisposeYoloSymbolDetector();
+            DisposeOpenCvVisionEngine();
             DisposeMepGraphGnnClassifier();
         }
 
@@ -66722,6 +70831,520 @@ namespace ClassLibrary4
                 DateTime.MinValue;
         }
 
+        // ============================================================
+        // STEP29B - YOLO OBJECT DETECTOR MODEL
+        // ------------------------------------------------------------
+        // Model mặc định:
+        //   %APPDATA%\TDL_MEP\AI\models\mep_symbol_detector.onnx
+        //   %APPDATA%\TDL_MEP\AI\models\mep_symbol_detector_labels.txt
+        // Nếu chưa có model, toàn bộ pipeline STEP28/29A vẫn chạy bình thường.
+        // ============================================================
+        private string YoloDefaultModelPath =>
+            Path.Combine(
+                OnnxAiModelFolder,
+                "mep_symbol_detector.onnx");
+
+        private string YoloDefaultLabelsPath =>
+            Path.Combine(
+                OnnxAiModelFolder,
+                "mep_symbol_detector_labels.txt");
+
+        private bool ResolveYoloModelFiles(
+            out string modelPath,
+            out string labelsPath)
+        {
+            modelPath = "";
+            labelsPath = "";
+
+            try
+            {
+                if (File.Exists(YoloDefaultModelPath) &&
+                    File.Exists(YoloDefaultLabelsPath))
+                {
+                    modelPath = YoloDefaultModelPath;
+                    labelsPath = YoloDefaultLabelsPath;
+                    return true;
+                }
+            }
+            catch
+            {
+            }
+
+            try
+            {
+                string pluginFolder =
+                    Path.GetDirectoryName(
+                        Assembly.GetExecutingAssembly().Location) ??
+                    "";
+
+                string[] modelCandidates =
+                {
+                    Path.Combine(
+                        pluginFolder,
+                        "AI",
+                        "models",
+                        "mep_symbol_detector.onnx"),
+                    Path.Combine(
+                        pluginFolder,
+                        "mep_symbol_detector.onnx")
+                };
+
+                foreach (string candidate in modelCandidates)
+                {
+                    if (!File.Exists(candidate))
+                        continue;
+
+                    string folder =
+                        Path.GetDirectoryName(candidate) ??
+                        pluginFolder;
+
+                    string[] labelCandidates =
+                    {
+                        Path.Combine(
+                            folder,
+                            "mep_symbol_detector_labels.txt"),
+                        Path.Combine(
+                            folder,
+                            "detector_labels.txt"),
+                        Path.ChangeExtension(
+                            candidate,
+                            ".txt")
+                    };
+
+                    string labels =
+                        labelCandidates.FirstOrDefault(File.Exists);
+
+                    if (string.IsNullOrWhiteSpace(labels))
+                        continue;
+
+                    modelPath = candidate;
+                    labelsPath = labels;
+                    return true;
+                }
+            }
+            catch
+            {
+            }
+
+            return false;
+        }
+
+        private MepYoloSymbolDetector GetYoloSymbolDetector(
+            bool forceReload = false)
+        {
+            if (!ResolveYoloModelFiles(
+                    out string modelPath,
+                    out string labelsPath))
+            {
+                DisposeYoloSymbolDetector();
+                _yoloLastLoadError = "";
+                return null;
+            }
+
+            DateTime writeUtc = DateTime.MinValue;
+
+            try
+            {
+                writeUtc =
+                    File.GetLastWriteTimeUtc(
+                        modelPath);
+            }
+            catch
+            {
+            }
+
+            if (!forceReload &&
+                _yoloSymbolDetector != null &&
+                string.Equals(
+                    _yoloLoadedModelPath,
+                    modelPath,
+                    StringComparison.OrdinalIgnoreCase) &&
+                _yoloLoadedModelWriteUtc == writeUtc)
+            {
+                return _yoloSymbolDetector;
+            }
+
+            DisposeYoloSymbolDetector();
+
+            try
+            {
+                _yoloSymbolDetector =
+                    new MepYoloSymbolDetector(
+                        modelPath,
+                        labelsPath);
+
+                _yoloLoadedModelPath = modelPath;
+                _yoloLoadedModelWriteUtc = writeUtc;
+                _yoloLastLoadError = "";
+
+                return _yoloSymbolDetector;
+            }
+            catch (System.Exception ex)
+            {
+                _yoloLastLoadError =
+                    ex.GetType().Name +
+                    ": " +
+                    ex.Message;
+
+                DisposeYoloSymbolDetector();
+                return null;
+            }
+        }
+
+        private void DisposeYoloSymbolDetector()
+        {
+            try
+            {
+                _yoloSymbolDetector?.Dispose();
+            }
+            catch
+            {
+            }
+
+            _yoloSymbolDetector = null;
+            _yoloLoadedModelPath = "";
+            _yoloLoadedModelWriteUtc = DateTime.MinValue;
+        }
+
+        // ============================================================
+        // STEP29A - OPENCV VISION REFINEMENT
+        // ------------------------------------------------------------
+        // Nguyên tắc:
+        // 1) ONNX raw + STEP28A Hot Cache chạy trước.
+        // 2) Prediction rất chắc (>=0.94, margin>=0.28) => KHÔNG gọi OpenCV.
+        // 3) Chỉ prediction mơ hồ mới chạy Canny/Contour/Hough.
+        // 4) OpenCV chỉ thay raw prediction khi kết quả refine tốt hơn rõ ràng.
+        // 5) Native OpenCV lỗi => fallback im lặng về pipeline cũ.
+        // ============================================================
+        private MepOpenCvVisionEngine GetOpenCvVisionEngine()
+        {
+            if (_openCvVisionEngine != null)
+            {
+                if (_openCvVisionEngine.IsAvailable)
+                    return _openCvVisionEngine;
+
+                _openCvLastError =
+                    _openCvVisionEngine.LastError ?? "";
+
+                return null;
+            }
+
+            if (_openCvProbeAttempted)
+                return null;
+
+            _openCvProbeAttempted = true;
+
+            try
+            {
+                MepOpenCvVisionEngine engine =
+                    new MepOpenCvVisionEngine();
+
+                if (!engine.Probe())
+                {
+                    _openCvLastError =
+                        engine.LastError ??
+                        "OpenCV native runtime chưa sẵn sàng.";
+
+                    engine.Dispose();
+                    return null;
+                }
+
+                _openCvVisionEngine =
+                    engine;
+
+                _openCvLastError = "";
+
+                return _openCvVisionEngine;
+            }
+            catch (System.Exception ex)
+            {
+                _openCvLastError =
+                    ex.GetType().Name +
+                    ": " +
+                    ex.Message;
+
+                return null;
+            }
+        }
+
+        private MepOpenCvTileCandidateEngine GetOpenCvTileCandidateEngine()
+        {
+            if (_openCvTileCandidateEngine != null)
+            {
+                return
+                    _openCvTileCandidateEngine.IsAvailable
+                        ? _openCvTileCandidateEngine
+                        : null;
+            }
+
+            // Base engine Probe chịu trách nhiệm đăng ký native resolver.
+            if (GetOpenCvVisionEngine() == null)
+                return null;
+
+            try
+            {
+                _openCvTileCandidateEngine =
+                    new MepOpenCvTileCandidateEngine();
+
+                return _openCvTileCandidateEngine;
+            }
+            catch (System.Exception ex)
+            {
+                _openCvLastError =
+                    ex.GetType().Name +
+                    ": " +
+                    ex.Message;
+
+                return null;
+            }
+        }
+
+        private MepOpenCvWorldTilingEngine GetOpenCvWorldTilingEngine()
+        {
+            if (_openCvWorldTilingEngine != null)
+                return _openCvWorldTilingEngine;
+
+            try
+            {
+                _openCvWorldTilingEngine =
+                    new MepOpenCvWorldTilingEngine();
+
+                return _openCvWorldTilingEngine;
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private void DisposeOpenCvVisionEngine()
+        {
+            _openCvWorldTilingEngine = null;
+
+            try
+            {
+                _openCvTileCandidateEngine?.Dispose();
+            }
+            catch
+            {
+            }
+
+            _openCvTileCandidateEngine = null;
+
+            try
+            {
+                _openCvVisionEngine?.Dispose();
+            }
+            catch
+            {
+            }
+
+            _openCvVisionEngine = null;
+            _openCvProbeAttempted = false;
+            _openCvLastError = "";
+        }
+
+        private bool TryRefineOnnxPredictionWithOpenCv(
+            System.Drawing.Bitmap bitmap,
+            MepSymbolClassifier classifier,
+            ref MepSymbolClassifier.Prediction prediction,
+            out MepOpenCvVisionEngine.Analysis analysis)
+        {
+            analysis = null;
+
+            if (bitmap == null ||
+                classifier == null)
+            {
+                return false;
+            }
+
+            // Giữ nguyên fast path STEP28B/28A.
+            // Prediction rất chắc không tốn thêm một vòng OpenCV.
+            if (prediction != null &&
+                prediction.Success &&
+                prediction.Confidence >= 0.94 &&
+                prediction.Margin >= 0.28)
+            {
+                return false;
+            }
+
+            MepOpenCvVisionEngine engine =
+                GetOpenCvVisionEngine();
+
+            if (engine == null)
+                return false;
+
+            _lastOpenCvAnalyzedCount++;
+
+            System.Drawing.Bitmap refinedBitmap =
+                null;
+
+            try
+            {
+                if (!engine.TryPreprocessForClassifier(
+                        bitmap,
+                        out refinedBitmap,
+                        out analysis) ||
+                    analysis == null)
+                {
+                    _lastOpenCvSkippedCount++;
+                    return false;
+                }
+
+                if (!analysis.RefineRecommended ||
+                    refinedBitmap == null)
+                {
+                    _lastOpenCvSkippedCount++;
+                    return false;
+                }
+
+                MepSymbolClassifier.Prediction refinedPrediction =
+                    classifier.Predict(
+                        refinedBitmap);
+
+                if (!IsOpenCvRefinedPredictionBetter(
+                        prediction,
+                        refinedPrediction))
+                {
+                    _lastOpenCvKeptRawCount++;
+                    return false;
+                }
+
+                if (refinedPrediction != null)
+                {
+                    string evidence =
+                        analysis.StructureHint +
+                        " edge=" +
+                        analysis.EdgeDensity.ToString(
+                            "0.000",
+                            CultureInfo.InvariantCulture) +
+                        " contour=" +
+                        analysis.SignificantContourCount +
+                        " line=" +
+                        analysis.LineCount;
+
+                    refinedPrediction.Message =
+                        ((refinedPrediction.Message ?? "") +
+                         " | STEP29A OpenCV: " +
+                         evidence)
+                            .Trim();
+                }
+
+                prediction =
+                    refinedPrediction;
+
+                _lastOpenCvRefinedCount++;
+
+                return true;
+            }
+            catch (System.Exception ex)
+            {
+                _openCvLastError =
+                    ex.GetType().Name +
+                    ": " +
+                    ex.Message;
+
+                _lastOpenCvSkippedCount++;
+                return false;
+            }
+            finally
+            {
+                try
+                {
+                    refinedBitmap?.Dispose();
+                }
+                catch
+                {
+                }
+            }
+        }
+
+        private bool IsOpenCvRefinedPredictionBetter(
+            MepSymbolClassifier.Prediction raw,
+            MepSymbolClassifier.Prediction refined)
+        {
+            if (refined == null ||
+                !refined.Success)
+            {
+                return false;
+            }
+
+            if (raw == null ||
+                !raw.Success)
+            {
+                return true;
+            }
+
+            string rawKey =
+                NormalizeOnnxDisplayKey(
+                    GetOnnxDisplayLabel(
+                        raw.Label));
+
+            string refinedKey =
+                NormalizeOnnxDisplayKey(
+                    GetOnnxDisplayLabel(
+                        refined.Label));
+
+            bool sameLabel =
+                !string.IsNullOrWhiteSpace(rawKey) &&
+                string.Equals(
+                    rawKey,
+                    refinedKey,
+                    StringComparison.OrdinalIgnoreCase);
+
+            if (sameLabel)
+            {
+                // Cùng nhãn: lấy bản refine nếu confidence hoặc margin rõ hơn.
+                return
+                    refined.Confidence >=
+                        raw.Confidence + 0.010 ||
+                    refined.Margin >=
+                        raw.Margin + 0.025;
+            }
+
+            bool rawUsable =
+                raw.Confidence >=
+                    OnnxDeviceMinConfidence &&
+                raw.Margin >=
+                    OnnxDeviceMinMargin;
+
+            bool refinedUsable =
+                refined.Confidence >=
+                    OnnxDeviceMinConfidence &&
+                refined.Margin >=
+                    OnnxDeviceMinMargin;
+
+            if (!refinedUsable)
+                return false;
+
+            // Raw chưa qua ngưỡng mà refine đã qua => cho phép đổi.
+            if (!rawUsable)
+            {
+                return
+                    refined.Confidence >=
+                        raw.Confidence - 0.02 &&
+                    refined.Margin >=
+                        raw.Margin + 0.035;
+            }
+
+            // Raw đã tương đối mạnh: OpenCV phải thắng rõ mới được đổi nhãn.
+            if (raw.Confidence >= 0.90 &&
+                raw.Margin >= 0.18)
+            {
+                return
+                    refined.Confidence >= 0.94 &&
+                    refined.Margin >= 0.24 &&
+                    refined.Confidence >=
+                        raw.Confidence + 0.035;
+            }
+
+            return
+                refined.Confidence >=
+                    raw.Confidence + 0.060 &&
+                refined.Margin >=
+                    raw.Margin + 0.040;
+        }
+
         private void UpdateOnnxStatusUi()
         {
             try
@@ -67122,6 +71745,10 @@ namespace ClassLibrary4
                         string.Equals(
                             match.Source,
                             "ONNX",
+                            StringComparison.OrdinalIgnoreCase) ||
+                        string.Equals(
+                            match.Source,
+                            "YOLO",
                             StringComparison.OrdinalIgnoreCase))
                     {
                         continue;
@@ -67211,6 +71838,7 @@ namespace ClassLibrary4
             List<SmartPipeCandidate> pipeCandidates,
             List<string> currentLegendNames,
             List<SmartContextNeighbor> neighbors,
+            SmartSpatialGrid<SmartContextNeighbor> neighborIndex,
             SmartSymbolRule currentRule,
             out SmartSymbolRule selectedRule,
             out SmartSymbolContextDecision decision)
@@ -67264,11 +71892,25 @@ namespace ClassLibrary4
                     new SmartSymbolContextDecision
                     {
                         Evaluated = true,
+                        DecisionCode = "KEEP",
                         SelectedRule = top1Rule,
                         SelectedLabel = top1Rule.DisplayName,
                         SelectedVisualConfidence = prediction.Confidence,
                         SelectedScore = prediction.Confidence,
                         RunnerUpScore = prediction.SecondConfidence,
+                        VisualMargin = prediction.Margin,
+                        ScoreMargin = prediction.Margin,
+                        SupportingSignals = 0,
+                        EvidenceText =
+                            "mode=KEEP | FAST visual=" +
+                            prediction.Confidence.ToString(
+                                "0.000",
+                                CultureInfo.InvariantCulture) +
+                            " | #2=" +
+                            prediction.SecondConfidence.ToString(
+                                "0.000",
+                                CultureInfo.InvariantCulture) +
+                            " | bỏ qua Pipe/Graph/GNN để giữ hot-path",
                         Reason = "Visual ONNX đủ mạnh, Context giữ nguyên #1."
                     };
 
@@ -67338,7 +71980,8 @@ namespace ClassLibrary4
                         GetSmartContextNeighborAffinity(
                             center,
                             top1Rule.DisplayName,
-                            neighbors)
+                            neighbors,
+                            neighborIndex)
                 };
 
             SmartSymbolContextCandidate second =
@@ -67369,7 +72012,8 @@ namespace ClassLibrary4
                         GetSmartContextNeighborAffinity(
                             center,
                             top2Rule.DisplayName,
-                            neighbors)
+                            neighbors,
+                            neighborIndex)
                 };
 
             SmartSymbolContextInput input =
@@ -67502,7 +72146,8 @@ namespace ClassLibrary4
         private double GetSmartContextNeighborAffinity(
             Point3d center,
             string label,
-            List<SmartContextNeighbor> neighbors)
+            List<SmartContextNeighbor> neighbors,
+            SmartSpatialGrid<SmartContextNeighbor> neighborIndex)
         {
             if (neighbors == null ||
                 neighbors.Count == 0 ||
@@ -67525,11 +72170,29 @@ namespace ClassLibrary4
             const double radius =
                 2500.0;
 
+            List<SmartContextNeighbor> nearby =
+                neighborIndex != null
+                    ? neighborIndex.QueryRadius(
+                        center,
+                        radius)
+                    : neighbors;
+
+            if (neighborIndex != null)
+            {
+                _lastSmartSpatialQueryCount++;
+            }
+
             double best =
                 0.0;
 
+            double supportWeight =
+                0.0;
+
+            int supportCount =
+                0;
+
             foreach (SmartContextNeighbor neighbor
-                in neighbors)
+                in nearby)
             {
                 if (neighbor == null ||
                     string.IsNullOrWhiteSpace(
@@ -67567,6 +72230,13 @@ namespace ClassLibrary4
                     1.0 -
                     distance / radius;
 
+                double confidence =
+                    Math.Max(
+                        0.0,
+                        Math.Min(
+                            1.0,
+                            neighbor.Confidence));
+
                 // Neighbor rất gần được ưu tiên, nhưng không bao giờ tự đủ
                 // quyền đổi label nếu các context khác phản đối.
                 double value =
@@ -67575,18 +72245,40 @@ namespace ClassLibrary4
                         Math.Min(
                             1.0,
                             proximity *
-                            Math.Max(
-                                0.0,
-                                Math.Min(
-                                    1.0,
-                                    neighbor.Confidence))));
+                            confidence));
 
                 if (value > best)
                     best = value;
+
+                supportWeight +=
+                    value;
+
+                supportCount++;
+            }
+
+            // STEP28C - semantic density:
+            // nhiều exact/vector neighbor CÙNG NHÃN trong vùng là bằng chứng
+            // tốt hơn một điểm đơn lẻ, nhưng bonus bị chặn ở 0.12 để không
+            // lấn át Visual + Legend + Pipe/Graph/GNN.
+            if (supportCount >= 2 &&
+                supportWeight > best)
+            {
+                double densityBonus =
+                    Math.Min(
+                        0.12,
+                        (supportWeight - best) *
+                        0.045);
+
+                best =
+                    Math.Min(
+                        1.0,
+                        best +
+                        densityBonus);
             }
 
             return best;
         }
+
 
         private double GetSmartContextLayerAffinity(
             string layer,
@@ -68011,6 +72703,12 @@ namespace ClassLibrary4
                 prediction =
                     classifier.Predict(
                         bitmap);
+
+                TryRefineOnnxPredictionWithOpenCv(
+                    bitmap,
+                    classifier,
+                    ref prediction,
+                    out MepOpenCvVisionEngine.Analysis _);
             }
 
             return
@@ -68060,6 +72758,12 @@ namespace ClassLibrary4
                 prediction =
                     classifier.Predict(
                         bitmap);
+
+                TryRefineOnnxPredictionWithOpenCv(
+                    bitmap,
+                    classifier,
+                    ref prediction,
+                    out MepOpenCvVisionEngine.Analysis _);
             }
 
             return
@@ -69858,9 +74562,18 @@ namespace ClassLibrary4
                 in originalCurves ??
                 new List<Curve>())
             {
+                if (curve == null)
+                    continue;
+
                 result[curve] =
                     new List<TextProjectionData>();
             }
+
+            // STEP28C - build một spatial index cho toàn bộ tuyến.
+            // DN text chỉ cần xét các curve có bbox nằm trong vùng 2.7 m.
+            SmartSpatialGrid<Curve> curveSpatialIndex =
+                BuildAiPipeCurveSpatialIndex(
+                    originalCurves);
 
             foreach (TextData text
                 in texts ??
@@ -69869,9 +74582,21 @@ namespace ClassLibrary4
                 List<Tuple<Curve, Point3d, double>> candidates =
                     new List<Tuple<Curve, Point3d, double>>();
 
+                List<Curve> nearbyCurves =
+                    curveSpatialIndex != null
+                        ? curveSpatialIndex.QueryRadius(
+                            text.Position,
+                            2700.0)
+                        : (originalCurves ??
+                           new List<Curve>());
+
+                if (curveSpatialIndex != null)
+                {
+                    _lastSmartSpatialQueryCount++;
+                }
+
                 foreach (Curve curve
-                    in originalCurves ??
-                    new List<Curve>())
+                    in nearbyCurves)
                 {
                     if (curve == null)
                         continue;
