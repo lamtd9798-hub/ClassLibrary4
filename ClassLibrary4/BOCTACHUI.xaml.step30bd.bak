@@ -1864,18 +1864,18 @@
                                             Foreground="White"
                                             BorderBrush="#FF005EA8"
                                             Cursor="Hand"
-                                            Click="BtnAiAutoTakeoffHvac_Click">
+                                            Click="BtnAiAutoTakeoff_Click">
                                         <Button.ToolTip>
                                             <ToolTip>
                                                 <TextBlock MaxWidth="330"
                                                            TextWrapping="Wrap"
-                                                           Text="Nhận diện chung PIPE + ỐNG GIÓ trên một vùng quét: DN/D/Ø cho pipe, WxH/ØD + EI cho duct. Không chạy sang VAN / THIẾT BỊ."/>
+                                                           Text="Chỉ nhận diện và thống kê ĐƯỜNG ỐNG: đọc DN/D/Ø, geometry, topology và Graph/GNN khi có model. Không chạy sang VAN / THIẾT BỊ."/>
                                             </ToolTip>
                                         </Button.ToolTip>
                                     </Button>
 
                                     <Button x:Name="BtnAiAutoRun"
-                                            Content="AI TỰ ĐỘNG: ỐNG + OG + VAN/TB"
+                                            Content="AI TỰ ĐỘNG: ỐNG + VAN/TB"
                                             Height="50"
                                             Margin="0,9,0,0"
                                             FontSize="13.5"
@@ -1884,7 +1884,7 @@
                                             Foreground="White"
                                             BorderBrush="#FF075A9D"
                                             Cursor="Hand"
-                                            Click="BtnAiAutoRunHvac_Click">
+                                            Click="BtnAiAutoRun_Click">
                                         <Button.ToolTip>
                                             <ToolTip>
                                                 <TextBlock MaxWidth="330"
@@ -1983,12 +1983,12 @@
                                     Foreground="White"
                                     Margin="0,0,0,8"
                                     Cursor="Hand"
-                                    Click="BtnAiDeviceOnlyHvac_Click">
+                                    Click="BtnAiDeviceOnly_Click">
                                         <Button.ToolTip>
                                             <ToolTip>
                                                 <TextBlock MaxWidth="310"
                                                    TextWrapping="Wrap"
-                                                   Text="Nhận diện VAN / THIẾT BỊ + HVAC: VCD/OBD/FD/FSD/MD/NRD, miệng gió/diffuser/grille, FCU/AHU... Exact Block → Vector → ONNX/YOLO → Context; thêm HVAC semantic từ Block/Layer/Attribute + duct size."/>
+                                                   Text="Chỉ nhận diện VAN / THIẾT BỊ. STEP21: Exact Block → Vector Fingerprint → ONNX Classifier → Vision Lite → Pipe Context. Nếu chưa có model ONNX, các tầng cũ vẫn chạy bình thường."/>
                                             </ToolTip>
                                         </Button.ToolTip>
                                     </Button>
