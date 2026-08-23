@@ -42662,6 +42662,18 @@ namespace ClassLibrary4
             public double PatternConfidence { get; set; } = 0.0;
             public int PatternSupportCount { get; set; } = 0;
             public bool PatternAutoResolved { get; set; } = false;
+
+            // STEP29D - Unified Fusion + Dynamic Gate trace.
+            public double AlternativeConfidence { get; set; } = 0.0;
+            public double VisualMargin { get; set; } = 0.0;
+            public string ContextDecisionCode { get; set; } = "";
+            public double ContextCurrentContribution { get; set; } = 0.0;
+            public double ContextAlternativeContribution { get; set; } = 0.0;
+            public string FusionDecisionCode { get; set; } = "";
+            public double FusionScore { get; set; } = 0.0;
+            public double FusionAlternativeScore { get; set; } = 0.0;
+            public double FusionGateThreshold { get; set; } = 0.0;
+            public string FusionReason { get; set; } = "";
         }
 
         private class SmartAuditIgnoreEntry
@@ -42748,6 +42760,21 @@ namespace ClassLibrary4
         private int _lastYoloRawDetectionCount = 0;
         private int _lastYoloAcceptedCount = 0;
         private int _lastYoloRejectedCount = 0;
+
+        // STEP29D - Unified Fusion + Dynamic Gate diagnostics.
+        private int _lastFusionEvaluatedCount = 0;
+        private int _lastFusionAutoAcceptedCount = 0;
+        private int _lastFusionKeepCount = 0;
+        private int _lastFusionSwitchedCount = 0;
+        private int _lastFusionReviewCount = 0;
+
+        // STEP29C - AI CORE SERVICE + METRICS.
+        // Phase 1 chỉ tách lifecycle/metrics khỏi BOCTACHUI để không đại phẫu
+        // gần 80k dòng trong một lần. Các STEP sau chuyển Fusion/Review tiếp.
+        private readonly MepAiPipelineService _aiPipelineService =
+            new MepAiPipelineService();
+
+        private MepAiMetricsSnapshot _lastAiMetricsSnapshot = null;
 
         private List<SmartPipeCandidate> _activeSmartPipeSpatialSource = null;
         private SmartSpatialGrid<SmartPipeCandidate> _activeSmartPipeSpatialIndex = null;
@@ -52055,6 +52082,10 @@ namespace ClassLibrary4
                                     r.Status,
                                     "CONTEXT_CONFLICT",
                                     StringComparison.OrdinalIgnoreCase) &&
+                                !string.Equals(
+                                    r.Status,
+                                    "FUSION_REVIEW",
+                                    StringComparison.OrdinalIgnoreCase) &&
                                 !string.IsNullOrWhiteSpace(
                                     r.Name))
                         .Select(
@@ -57396,6 +57427,529 @@ namespace ClassLibrary4
         }
 
         // ============================================================
+        // STEP29D - UNIFIED AI FUSION + DYNAMIC CONFIDENCE GATE
+        // ============================================================
+        private SmartSymbolRule FindSmartRuleByDisplayName(
+            List<SmartSymbolRule> rules,
+            string displayName)
+        {
+            if (rules == null ||
+                string.IsNullOrWhiteSpace(displayName))
+            {
+                return null;
+            }
+
+            string target =
+                NormalizeSmartDisplayName(
+                    displayName);
+
+            return rules.FirstOrDefault(
+                rule =>
+                    rule != null &&
+                    string.Equals(
+                        NormalizeSmartDisplayName(
+                            rule.DisplayName),
+                        target,
+                        StringComparison.OrdinalIgnoreCase));
+        }
+
+        private string GetSmartFusionAlternativeName(
+            List<SmartSymbolRule> rules,
+            MepSymbolClassifier.Prediction prediction,
+            string currentName)
+        {
+            if (prediction == null)
+                return "";
+
+            SmartSymbolRule top1 =
+                FindBestSmartRuleForOnnxLabel(
+                    prediction.Label,
+                    rules);
+
+            SmartSymbolRule top2 =
+                FindBestSmartRuleForOnnxLabel(
+                    prediction.SecondLabel,
+                    rules);
+
+            string current =
+                NormalizeSmartDisplayName(
+                    currentName);
+
+            string top1Name =
+                top1 != null
+                    ? NormalizeSmartDisplayName(
+                        top1.DisplayName)
+                    : NormalizeSmartDisplayName(
+                        prediction.Label);
+
+            string top2Name =
+                top2 != null
+                    ? NormalizeSmartDisplayName(
+                        top2.DisplayName)
+                    : NormalizeSmartDisplayName(
+                        prediction.SecondLabel);
+
+            if (!string.IsNullOrWhiteSpace(top1Name) &&
+                !string.Equals(
+                    top1Name,
+                    current,
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                return top1Name;
+            }
+
+            if (!string.IsNullOrWhiteSpace(top2Name) &&
+                !string.Equals(
+                    top2Name,
+                    current,
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                return top2Name;
+            }
+
+            return "";
+        }
+
+        private double GetSmartFusionAlternativeConfidence(
+            List<SmartSymbolRule> rules,
+            MepSymbolClassifier.Prediction prediction,
+            string currentName)
+        {
+            if (prediction == null)
+                return 0.0;
+
+            SmartSymbolRule top1 =
+                FindBestSmartRuleForOnnxLabel(
+                    prediction.Label,
+                    rules);
+
+            SmartSymbolRule top2 =
+                FindBestSmartRuleForOnnxLabel(
+                    prediction.SecondLabel,
+                    rules);
+
+            string current =
+                NormalizeSmartDisplayName(
+                    currentName);
+
+            string top1Name =
+                top1 != null
+                    ? NormalizeSmartDisplayName(
+                        top1.DisplayName)
+                    : NormalizeSmartDisplayName(
+                        prediction.Label);
+
+            string top2Name =
+                top2 != null
+                    ? NormalizeSmartDisplayName(
+                        top2.DisplayName)
+                    : NormalizeSmartDisplayName(
+                        prediction.SecondLabel);
+
+            if (!string.IsNullOrWhiteSpace(top1Name) &&
+                !string.Equals(
+                    top1Name,
+                    current,
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                return Math.Max(
+                    0.0,
+                    Math.Min(
+                        1.0,
+                        prediction.Confidence));
+            }
+
+            if (!string.IsNullOrWhiteSpace(top2Name) &&
+                !string.Equals(
+                    top2Name,
+                    current,
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                return Math.Max(
+                    0.0,
+                    Math.Min(
+                        1.0,
+                        prediction.SecondConfidence));
+            }
+
+            return 0.0;
+        }
+
+        private static double GetSmartFusionContextContribution(
+            SmartSymbolContextDecision decision,
+            string label)
+        {
+            if (decision == null ||
+                string.IsNullOrWhiteSpace(label))
+            {
+                return 0.0;
+            }
+
+            string target =
+                NormalizeSmartDisplayName(
+                    label);
+
+            SmartSymbolContextEvidence[] evidences =
+                new[]
+                {
+                    decision.SelectedEvidence,
+                    decision.RunnerUpEvidence
+                };
+
+            foreach (SmartSymbolContextEvidence evidence
+                in evidences)
+            {
+                if (evidence?.Candidate == null)
+                    continue;
+
+                string candidateName =
+                    NormalizeSmartDisplayName(
+                        evidence.Candidate.Label);
+
+                if (!string.Equals(
+                        candidateName,
+                        target,
+                        StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                // Legend được Fusion tính riêng để tránh double-count.
+                return
+                    evidence.PipeContribution +
+                    evidence.LayerContribution +
+                    evidence.NeighborContribution;
+            }
+
+            return 0.0;
+        }
+
+        private static bool IsSmartFusionDeterministicRow(
+            SmartAuditRow row)
+        {
+            if (row == null)
+                return false;
+
+            string source =
+                (row.Source ?? "")
+                    .Trim()
+                    .ToUpperInvariant();
+
+            if (source.Contains("ONNX") ||
+                source.Contains("YOLO") ||
+                source.Contains("VISION") ||
+                source.Contains("CONTEXT") ||
+                source.Contains("PATTERN"))
+            {
+                return false;
+            }
+
+            return
+                string.Equals(source, "POINT", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(source, "BLOCK", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(source, "HÌNH EXPLODE", StringComparison.OrdinalIgnoreCase) ||
+                source.Contains("HÌNH HỌC");
+        }
+
+        private static bool IsSmartFusionReviewStatus(
+            string status)
+        {
+            return string.Equals(
+                status,
+                "FUSION_REVIEW",
+                StringComparison.OrdinalIgnoreCase);
+        }
+
+        private void RunSmartUnifiedAiFusion(
+            List<SmartAuditRow> rows,
+            List<SmartSymbolRule> rules,
+            List<string> currentLegendNames)
+        {
+            if (rows == null ||
+                rows.Count == 0)
+            {
+                return;
+            }
+
+            HashSet<string> legend =
+                new HashSet<string>(
+                    (currentLegendNames ?? new List<string>())
+                        .Where(x => !string.IsNullOrWhiteSpace(x))
+                        .Select(NormalizeSmartDisplayName),
+                    StringComparer.OrdinalIgnoreCase);
+
+            Dictionary<string, MepAiDecisionFusionEngine.GateHistory> historyCache =
+                new Dictionary<string, MepAiDecisionFusionEngine.GateHistory>(
+                    StringComparer.OrdinalIgnoreCase);
+
+            foreach (SmartAuditRow row in rows)
+            {
+                if (row == null)
+                    continue;
+
+                string currentName =
+                    NormalizeSmartDisplayName(
+                        row.Name);
+
+                bool missing =
+                    string.Equals(
+                        row.Status,
+                        "MISSING",
+                        StringComparison.OrdinalIgnoreCase) ||
+                    string.IsNullOrWhiteSpace(currentName) ||
+                    string.Equals(
+                        currentName,
+                        "CHƯA NHẬN DIỆN",
+                        StringComparison.OrdinalIgnoreCase);
+
+                SmartSymbolRule currentRule =
+                    FindSmartRuleByDisplayName(
+                        rules,
+                        currentName);
+
+                SmartSymbolRule alternativeRule =
+                    FindSmartRuleByDisplayName(
+                        rules,
+                        row.AlternativeName);
+
+                bool currentFollow =
+                    currentRule != null
+                        ? string.Equals(
+                            currentRule.SizeRule,
+                            "THEO_ONG",
+                            StringComparison.OrdinalIgnoreCase)
+                        : row.FollowDn;
+
+                bool alternativeFollow =
+                    alternativeRule != null
+                        ? string.Equals(
+                            alternativeRule.SizeRule,
+                            "THEO_ONG",
+                            StringComparison.OrdinalIgnoreCase)
+                        : currentFollow;
+
+                string historyKey =
+                    string.IsNullOrWhiteSpace(currentName)
+                        ? "__UNKNOWN__"
+                        : currentName;
+
+                if (!historyCache.TryGetValue(
+                        historyKey,
+                        out MepAiDecisionFusionEngine.GateHistory history))
+                {
+                    history =
+                        _aiPipelineService.GetDynamicGateHistory(
+                            historyKey);
+
+                    historyCache[historyKey] =
+                        history;
+                }
+
+                MepAiDecisionFusionEngine.Input input =
+                    new MepAiDecisionFusionEngine.Input
+                    {
+                        Source = row.Source ?? "",
+                        ExistingStatus = row.Status ?? "",
+                        CurrentLabel = currentName,
+                        AlternativeLabel =
+                            NormalizeSmartDisplayName(
+                                row.AlternativeName),
+                        CurrentVisualConfidence = row.DetectionConfidence,
+                        AlternativeVisualConfidence = row.AlternativeConfidence,
+                        HasLegend = legend.Count > 0,
+                        CurrentInLegend =
+                            !string.IsNullOrWhiteSpace(currentName) &&
+                            legend.Contains(currentName),
+                        AlternativeInLegend =
+                            !string.IsNullOrWhiteSpace(row.AlternativeName) &&
+                            legend.Contains(
+                                NormalizeSmartDisplayName(
+                                    row.AlternativeName)),
+                        CurrentContextContribution =
+                            row.ContextCurrentContribution,
+                        AlternativeContextContribution =
+                            row.ContextAlternativeContribution,
+                        ContextDecisionCode =
+                            row.ContextDecisionCode ?? "",
+                        PatternSuggestedLabel =
+                            row.PatternSuggestedName ?? "",
+                        PatternConfidence =
+                            row.PatternConfidence,
+                        PatternSupportCount =
+                            row.PatternSupportCount,
+                        IsDeterministicCad =
+                            IsSmartFusionDeterministicRow(row),
+                        IsMissingOrUnknown =
+                            missing,
+                        ExistingContextConflict =
+                            string.Equals(
+                                row.Status,
+                                "CONTEXT_CONFLICT",
+                                StringComparison.OrdinalIgnoreCase),
+                        ExistingNonSymbolReview =
+                            string.Equals(
+                                row.Status,
+                                "DN_CHECK",
+                                StringComparison.OrdinalIgnoreCase) ||
+                            string.Equals(
+                                row.Status,
+                                "NO_DN",
+                                StringComparison.OrdinalIgnoreCase),
+                        AllowAlternativeSwitch =
+                            alternativeRule != null &&
+                            currentFollow == alternativeFollow,
+                        History = history
+                    };
+
+                MepAiDecisionFusionEngine.Decision decision =
+                    MepAiDecisionFusionEngine.Evaluate(
+                        input);
+
+                if (decision == null ||
+                    !decision.Evaluated)
+                {
+                    continue;
+                }
+
+                _lastFusionEvaluatedCount++;
+
+                row.FusionDecisionCode =
+                    decision.DecisionCode ?? "REVIEW";
+                row.FusionScore =
+                    decision.SelectedScore;
+                row.FusionAlternativeScore =
+                    decision.AlternativeScore;
+                row.FusionGateThreshold =
+                    decision.GateThreshold;
+                row.FusionReason =
+                    decision.Reason ?? "";
+
+                string code =
+                    (decision.DecisionCode ?? "REVIEW")
+                        .ToUpperInvariant();
+
+                if (code == "AUTO_ACCEPT")
+                {
+                    _lastFusionAutoAcceptedCount++;
+
+                    if (string.Equals(
+                            row.Status,
+                            "CONTEXT_CONFLICT",
+                            StringComparison.OrdinalIgnoreCase) ||
+                        IsSmartFusionReviewStatus(
+                            row.Status))
+                    {
+                        row.Status = "OK";
+                    }
+
+                    if ((row.Source ?? "").IndexOf(
+                            "FUSION",
+                            StringComparison.OrdinalIgnoreCase) < 0)
+                    {
+                        row.Source =
+                            (row.Source ?? "") +
+                            " + FUSION";
+                    }
+                }
+                else if (code == "SWITCH")
+                {
+                    _lastFusionSwitchedCount++;
+
+                    SmartSymbolRule selectedRule =
+                        FindSmartRuleByDisplayName(
+                            rules,
+                            decision.SelectedLabel);
+
+                    if (selectedRule == null ||
+                        alternativeRule == null ||
+                        currentFollow != alternativeFollow)
+                    {
+                        row.FusionDecisionCode = "REVIEW";
+                        row.Status =
+                            string.Equals(
+                                row.Status,
+                                "DN_CHECK",
+                                StringComparison.OrdinalIgnoreCase) ||
+                            string.Equals(
+                                row.Status,
+                                "NO_DN",
+                                StringComparison.OrdinalIgnoreCase)
+                                ? row.Status
+                                : "FUSION_REVIEW";
+                        _lastFusionSwitchedCount--;
+                        _lastFusionReviewCount++;
+                    }
+                    else
+                    {
+                        string oldName = row.Name;
+                        double oldConfidence = row.DetectionConfidence;
+
+                        row.Name =
+                            NormalizeSmartDisplayName(
+                                selectedRule.DisplayName);
+                        row.AlternativeName =
+                            NormalizeSmartDisplayName(
+                                oldName);
+                        row.DetectionConfidence =
+                            row.AlternativeConfidence;
+                        row.AlternativeConfidence =
+                            oldConfidence;
+                        row.FollowDn = alternativeFollow;
+
+                        if (!string.Equals(
+                                row.Status,
+                                "DN_CHECK",
+                                StringComparison.OrdinalIgnoreCase) &&
+                            !string.Equals(
+                                row.Status,
+                                "NO_DN",
+                                StringComparison.OrdinalIgnoreCase))
+                        {
+                            row.Status = "OK";
+                        }
+
+                        if ((row.Source ?? "").IndexOf(
+                                "FUSION",
+                                StringComparison.OrdinalIgnoreCase) < 0)
+                        {
+                            row.Source =
+                                (row.Source ?? "") +
+                                " + FUSION SWITCH";
+                        }
+                    }
+                }
+                else if (code == "KEEP")
+                {
+                    _lastFusionKeepCount++;
+                }
+                else
+                {
+                    _lastFusionReviewCount++;
+
+                    if (string.Equals(
+                            row.Status,
+                            "OK",
+                            StringComparison.OrdinalIgnoreCase) ||
+                        string.Equals(
+                            row.Status,
+                            "CONTEXT_CONFLICT",
+                            StringComparison.OrdinalIgnoreCase))
+                    {
+                        row.Status = "FUSION_REVIEW";
+                    }
+                }
+
+                row.Note =
+                    "STEP29D FUSION[" +
+                    row.FusionDecisionCode +
+                    "]: " +
+                    row.FusionReason +
+                    " " +
+                    (row.Note ?? "");
+            }
+        }
+
+        // ============================================================
         // STEP28D - GRAPH-AWARE SYMBOL GROUPING + MULTI-INSTANCE PATTERN
         // ============================================================
         private string GetSmartPatternAlternativeName(
@@ -57451,6 +58005,10 @@ namespace ClassLibrary4
                 string.Equals(
                     row.Status,
                     "CONTEXT_CONFLICT",
+                    StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(
+                    row.Status,
+                    "FUSION_REVIEW",
                     StringComparison.OrdinalIgnoreCase))
             {
                 return false;
@@ -58795,6 +59353,144 @@ namespace ClassLibrary4
         }
 
 
+        // ============================================================
+        // STEP29C - MAP AUDIT -> PURE AI METRIC DTO
+        // Không để MepAiPipelineService phụ thuộc AutoCAD ObjectId/Point3d.
+        // ============================================================
+        private static List<MepAiMetricCandidate> BuildSmartAiMetricCandidates(
+            List<SmartAuditRow> rows)
+        {
+            List<MepAiMetricCandidate> result =
+                new List<MepAiMetricCandidate>();
+
+            if (rows == null)
+                return result;
+
+            for (int i = 0;
+                i < rows.Count;
+                i++)
+            {
+                SmartAuditRow row =
+                    rows[i];
+
+                if (row == null)
+                    continue;
+
+                string key =
+                    BuildSmartAiMetricCandidateKey(
+                        row,
+                        i);
+
+                result.Add(
+                    new MepAiMetricCandidate
+                    {
+                        CandidateKey = key,
+                        Status = row.Status ?? "",
+                        Label = row.Name ?? "",
+                        AlternativeLabel = row.AlternativeName ?? "",
+                        Source = row.Source ?? "",
+                        MatchMode = row.MatchMode ?? "",
+                        Confidence = row.DetectionConfidence,
+                        UserEdited = row.UserEdited,
+                        FusionDecisionCode = row.FusionDecisionCode ?? "",
+                        FusionScore = row.FusionScore,
+                        FusionGateThreshold = row.FusionGateThreshold
+                    });
+            }
+
+            return result;
+        }
+
+        private static string BuildSmartAiMetricCandidateKey(
+            SmartAuditRow row,
+            int fallbackIndex)
+        {
+            if (row == null)
+            {
+                return "ROW|" +
+                    fallbackIndex.ToString(
+                        CultureInfo.InvariantCulture);
+            }
+
+            if (!string.IsNullOrWhiteSpace(
+                    row.InstanceHandleKey))
+            {
+                return "HANDLE|" +
+                    row.InstanceHandleKey.Trim();
+            }
+
+            string signature =
+                GetSmartAuditRuleSignature(
+                    row);
+
+            if (string.IsNullOrWhiteSpace(
+                    signature))
+            {
+                signature =
+                    (row.MatchMode ?? "") +
+                    "|" +
+                    (row.BlockKey ?? "") +
+                    "|" +
+                    (row.GeometryFingerprint ?? "");
+            }
+
+            return
+                signature +
+                "|X=" +
+                Math.Round(row.Point.X, 1).ToString(
+                    "0.0",
+                    CultureInfo.InvariantCulture) +
+                "|Y=" +
+                Math.Round(row.Point.Y, 1).ToString(
+                    "0.0",
+                    CultureInfo.InvariantCulture) +
+                "|I=" +
+                fallbackIndex.ToString(
+                    CultureInfo.InvariantCulture);
+        }
+
+        private MepAiScanDiagnostics BuildSmartAiScanDiagnostics()
+        {
+            return
+                new MepAiScanDiagnostics
+                {
+                    ContextEvaluated = _lastSmartContextEvaluatedCount,
+                    ContextSwitched = _lastSmartContextAdjustedCount,
+                    ContextConflict = _lastSmartContextConflictCount,
+                    SpatialQueries = _lastSmartSpatialQueryCount,
+                    DbscanClusters = _lastSmartDbscanClusterCount,
+                    DbscanNoise = _lastSmartDbscanNoiseCount,
+                    PatternTeachers = _lastSmartPatternTeacherCount,
+                    PatternEvaluated = _lastSmartPatternEvaluatedCount,
+                    PatternAutoKeep = _lastSmartPatternAutoKeepCount,
+                    PatternAutoSwitch = _lastSmartPatternAutoSwitchCount,
+                    PatternSuggested = _lastSmartPatternSuggestedCount,
+                    OpenCvAnalyzed = _lastOpenCvAnalyzedCount,
+                    OpenCvRefined = _lastOpenCvRefinedCount,
+                    OpenCvKeptRaw = _lastOpenCvKeptRawCount,
+                    OpenCvSkipped = _lastOpenCvSkippedCount,
+                    OpenCvTileRuns = _lastOpenCvTileRunCount,
+                    OpenCvTileRegions = _lastOpenCvTileRegionCount,
+                    OpenCvTileRescues = _lastOpenCvTileRescueCount,
+                    OpenCvTileFallbacks = _lastOpenCvTileFallbackCount,
+                    WorldTileRuns = _lastOpenCvWorldTileRunCount,
+                    WorldTileRegions = _lastOpenCvWorldTileRegionCount,
+                    WorldTileRescues = _lastOpenCvWorldTileRescueCount,
+                    WorldTileDenseSkips = _lastOpenCvWorldTileDenseSkipCount,
+                    YoloTileRuns = _lastYoloTileRunCount,
+                    YoloRawDetections = _lastYoloRawDetectionCount,
+                    YoloAccepted = _lastYoloAcceptedCount,
+                    YoloRejected = _lastYoloRejectedCount,
+                    FusionEvaluated = _lastFusionEvaluatedCount,
+                    FusionAutoAccepted = _lastFusionAutoAcceptedCount,
+                    FusionKept = _lastFusionKeepCount,
+                    FusionSwitched = _lastFusionSwitchedCount,
+                    FusionReview = _lastFusionReviewCount,
+                    NmsSuppressed = _lastSmartNmsSuppressedCount
+                };
+        }
+
+
         private void ScanSmartValveDeviceStatistics(
             Document doc,
             List<SmartSymbolRule> rules,
@@ -58805,6 +59501,14 @@ namespace ClassLibrary4
         {
             if (doc == null)
                 return;
+
+            // STEP29C: bắt đầu session metric trước mọi engine.
+            // Nếu user hủy selection, session sau sẽ BeginScan lại sạch.
+            _aiPipelineService.BeginScan(
+                GetSmartAuditDrawingKey(doc),
+                "SMART_VALVE_DEVICE_TAKEOFF");
+
+            _lastAiMetricsSnapshot = null;
 
             _lastSmartContextEvaluatedCount = 0;
             _lastSmartContextAdjustedCount = 0;
@@ -58839,6 +59543,12 @@ namespace ClassLibrary4
             _lastYoloRawDetectionCount = 0;
             _lastYoloAcceptedCount = 0;
             _lastYoloRejectedCount = 0;
+
+            _lastFusionEvaluatedCount = 0;
+            _lastFusionAutoAcceptedCount = 0;
+            _lastFusionKeepCount = 0;
+            _lastFusionSwitchedCount = 0;
+            _lastFusionReviewCount = 0;
 
             _activeSmartPipeSpatialSource = null;
             _activeSmartPipeSpatialIndex = null;
@@ -59882,12 +60592,51 @@ namespace ClassLibrary4
                             LayerName =
                                 br.Layer ?? "",
                             AlternativeName =
-                                GetSmartPatternAlternativeName(
+                                GetSmartFusionAlternativeName(
                                     rules,
                                     onnxFallbackMatch &&
                                     matchedBlockOnnxPredictions.ContainsKey(blockId)
                                         ? matchedBlockOnnxPredictions[blockId]
-                                        : null),
+                                        : null,
+                                    rule.DisplayName),
+                            AlternativeConfidence =
+                                GetSmartFusionAlternativeConfidence(
+                                    rules,
+                                    onnxFallbackMatch &&
+                                    matchedBlockOnnxPredictions.ContainsKey(blockId)
+                                        ? matchedBlockOnnxPredictions[blockId]
+                                        : null,
+                                    rule.DisplayName),
+                            VisualMargin =
+                                onnxFallbackMatch &&
+                                matchedBlockOnnxPredictions.ContainsKey(blockId)
+                                    ? Math.Abs(
+                                        (contextDecision != null && contextDecision.Evaluated
+                                            ? contextDecision.SelectedVisualConfidence
+                                            : matchedBlockOnnxPredictions[blockId].Confidence) -
+                                        GetSmartFusionAlternativeConfidence(
+                                            rules,
+                                            matchedBlockOnnxPredictions[blockId],
+                                            rule.DisplayName))
+                                    : 1.0,
+                            ContextDecisionCode =
+                                contextDecision != null
+                                    ? (contextDecision.DecisionCode ?? "")
+                                    : "",
+                            ContextCurrentContribution =
+                                GetSmartFusionContextContribution(
+                                    contextDecision,
+                                    rule.DisplayName),
+                            ContextAlternativeContribution =
+                                GetSmartFusionContextContribution(
+                                    contextDecision,
+                                    GetSmartFusionAlternativeName(
+                                        rules,
+                                        onnxFallbackMatch &&
+                                        matchedBlockOnnxPredictions.ContainsKey(blockId)
+                                            ? matchedBlockOnnxPredictions[blockId]
+                                            : null,
+                                        rule.DisplayName)),
                             Note =
                                 onnxFallbackMatch &&
                                 matchedBlockOnnxPredictions.ContainsKey(blockId)
@@ -60250,11 +60999,48 @@ namespace ClassLibrary4
                                     tr,
                                     match.ObjectIds),
                             AlternativeName =
-                                GetSmartPatternAlternativeName(
+                                GetSmartFusionAlternativeName(
                                     rules,
                                     geometryOnnxMatch
                                         ? match.OnnxPrediction
-                                        : null),
+                                        : null,
+                                    rule.DisplayName),
+                            AlternativeConfidence =
+                                GetSmartFusionAlternativeConfidence(
+                                    rules,
+                                    geometryOnnxMatch
+                                        ? match.OnnxPrediction
+                                        : null,
+                                    rule.DisplayName),
+                            VisualMargin =
+                                geometryOnnxMatch &&
+                                match.OnnxPrediction != null
+                                    ? Math.Abs(
+                                        (geometryContextDecision != null && geometryContextDecision.Evaluated
+                                            ? geometryContextDecision.SelectedVisualConfidence
+                                            : match.OnnxPrediction.Confidence) -
+                                        GetSmartFusionAlternativeConfidence(
+                                            rules,
+                                            match.OnnxPrediction,
+                                            rule.DisplayName))
+                                    : 1.0,
+                            ContextDecisionCode =
+                                geometryContextDecision != null
+                                    ? (geometryContextDecision.DecisionCode ?? "")
+                                    : "",
+                            ContextCurrentContribution =
+                                GetSmartFusionContextContribution(
+                                    geometryContextDecision,
+                                    rule.DisplayName),
+                            ContextAlternativeContribution =
+                                GetSmartFusionContextContribution(
+                                    geometryContextDecision,
+                                    GetSmartFusionAlternativeName(
+                                        rules,
+                                        geometryOnnxMatch
+                                            ? match.OnnxPrediction
+                                            : null,
+                                        rule.DisplayName)),
                             Note =
                                 auditNote,
                             Point =
@@ -60712,7 +61498,19 @@ namespace ClassLibrary4
                 DeduplicateSmartAuditRows(
                     auditRows);
 
-            // Pattern có thể vừa resolve một số conflict, nên cập nhật coverage/Legend 0.
+            // STEP29D - mọi evidence đã sẵn sàng: visual + context + pattern + legend.
+            // Exact/Vector deterministic không bị AI xác suất ghi đè.
+            RunSmartUnifiedAiFusion(
+                auditRows,
+                rules,
+                currentLegendNames);
+
+            auditRows =
+                DeduplicateSmartAuditRows(
+                    auditRows);
+
+            // Pattern/Fusion có thể vừa resolve hoặc đưa candidate về REVIEW,
+            // nên cập nhật coverage/Legend 0 từ trạng thái cuối trước review.
             detectedLegendNames =
                 new HashSet<string>(
                     auditRows
@@ -60726,6 +61524,10 @@ namespace ClassLibrary4
                                 !string.Equals(
                                     r.Status,
                                     "CONTEXT_CONFLICT",
+                                    StringComparison.OrdinalIgnoreCase) &&
+                                !string.Equals(
+                                    r.Status,
+                                    "FUSION_REVIEW",
                                     StringComparison.OrdinalIgnoreCase) &&
                                 !string.IsNullOrWhiteSpace(
                                     r.Name))
@@ -60756,6 +61558,12 @@ namespace ClassLibrary4
 
             _smartValveStage =
                 "AUDIT_REVIEW_INTERACTIVE";
+
+            // STEP29C: chụp trạng thái TRƯỚC REVIEW để đo đúng
+            // auto-accept / review / unknown, không bị user correction làm mất dấu.
+            _aiPipelineService.CapturePreReview(
+                BuildSmartAiMetricCandidates(
+                    auditRows));
 
             AttachPreviewToAuditRows(
                 doc,
@@ -60804,6 +61612,10 @@ namespace ClassLibrary4
                                     r.Status,
                                     "CONTEXT_CONFLICT",
                                     StringComparison.OrdinalIgnoreCase) &&
+                                !string.Equals(
+                                    r.Status,
+                                    "FUSION_REVIEW",
+                                    StringComparison.OrdinalIgnoreCase) &&
                                 !string.IsNullOrWhiteSpace(
                                     r.Name))
                         .Select(
@@ -60836,6 +61648,14 @@ namespace ClassLibrary4
                 auditRows,
                 legendZero,
                 rules);
+
+            // STEP29C: hoàn tất metric sau user Apply/Correction.
+            // Store tự ghi JSONL tại %APPDATA%\TDL_MEP\AI_Metrics.
+            _lastAiMetricsSnapshot =
+                _aiPipelineService.CompleteScan(
+                    BuildSmartAiMetricCandidates(
+                        auditRows),
+                    BuildSmartAiScanDiagnostics());
 
             List<SmartValveStatRow> rows =
                 BuildSmartStatsFromAuditRows(
@@ -60918,6 +61738,9 @@ namespace ClassLibrary4
                         "0.0",
                         CultureInfo.InvariantCulture) +
                     "%\n\n" +
+                    MepAiMetricsStore.BuildCompactSummary(
+                        _lastAiMetricsSnapshot) +
+                    "\n\n" +
                     "Các tên bạn sửa trong bảng kiểm tra đã được học lại cho lần quét sau.",
                     "KIỂM TRA SÓT VAN / THIẾT BỊ");
             }
@@ -61920,6 +62743,14 @@ namespace ClassLibrary4
                              string.Equals(
                                  row.Status,
                                  "NO_DN",
+                                 StringComparison.OrdinalIgnoreCase) ||
+                             string.Equals(
+                                 row.Status,
+                                 "CONTEXT_CONFLICT",
+                                 StringComparison.OrdinalIgnoreCase) ||
+                             string.Equals(
+                                 row.Status,
+                                 "FUSION_REVIEW",
                                  StringComparison.OrdinalIgnoreCase))
                     {
                         layer =
@@ -61929,7 +62760,17 @@ namespace ClassLibrary4
                             210.0;
 
                         shortText =
-                            row.Size;
+                            string.Equals(
+                                row.Status,
+                                "FUSION_REVIEW",
+                                StringComparison.OrdinalIgnoreCase)
+                                ? "AI REVIEW"
+                                : string.Equals(
+                                    row.Status,
+                                    "CONTEXT_CONFLICT",
+                                    StringComparison.OrdinalIgnoreCase)
+                                    ? "AI XUNG ĐỘT"
+                                    : row.Size;
                     }
 
                     Circle marker =
@@ -62699,6 +63540,10 @@ namespace ClassLibrary4
                                  string.Equals(
                                      r.Status,
                                      "CONTEXT_CONFLICT",
+                                     StringComparison.OrdinalIgnoreCase) ||
+                                 string.Equals(
+                                     r.Status,
+                                     "FUSION_REVIEW",
                                      StringComparison.OrdinalIgnoreCase)));
 
                     int total =
@@ -62809,6 +63654,16 @@ namespace ClassLibrary4
                         _lastSmartPatternAutoSwitchCount +
                         "    |    GỢI Ý: " +
                         _lastSmartPatternSuggestedCount +
+                        "\r\nFUSION XÉT: " +
+                        _lastFusionEvaluatedCount +
+                        "    |    AUTO: " +
+                        _lastFusionAutoAcceptedCount +
+                        "    |    KEEP: " +
+                        _lastFusionKeepCount +
+                        "    |    SWITCH: " +
+                        _lastFusionSwitchedCount +
+                        "    |    REVIEW: " +
+                        _lastFusionReviewCount +
                         "\r\nOPENCV XÉT: " +
                         _lastOpenCvAnalyzedCount +
                         "    |    REFINE: " +
@@ -64186,10 +65041,14 @@ namespace ClassLibrary4
                 // Chỉ bấm ÁP DỤNG không được biến CONFLICT thành OK.
                 // Muốn chốt, người dùng phải vào SỬA (hoặc đổi tên/THEO DN)
                 // để row.UserEdited = true.
-                if (string.Equals(
-                        row.Status,
-                        "CONTEXT_CONFLICT",
-                        StringComparison.OrdinalIgnoreCase) &&
+                if ((string.Equals(
+                         row.Status,
+                         "CONTEXT_CONFLICT",
+                         StringComparison.OrdinalIgnoreCase) ||
+                     string.Equals(
+                         row.Status,
+                         "FUSION_REVIEW",
+                         StringComparison.OrdinalIgnoreCase)) &&
                     !row.UserEdited)
                 {
                     continue;
@@ -64383,6 +65242,10 @@ namespace ClassLibrary4
                         row.Status,
                         "CONTEXT_CONFLICT",
                         StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(
+                        row.Status,
+                        "FUSION_REVIEW",
+                        StringComparison.OrdinalIgnoreCase) ||
                     (row.PatternAutoResolved &&
                      !row.UserEdited) ||
                     string.IsNullOrWhiteSpace(
@@ -64536,6 +65399,10 @@ namespace ClassLibrary4
                                 r.Status,
                                 "CONTEXT_CONFLICT",
                                 StringComparison.OrdinalIgnoreCase) &&
+                            !string.Equals(
+                                r.Status,
+                                "FUSION_REVIEW",
+                                StringComparison.OrdinalIgnoreCase) &&
                             !string.IsNullOrWhiteSpace(
                                 r.Name) &&
                             !string.Equals(
@@ -64598,6 +65465,10 @@ namespace ClassLibrary4
             if (string.Equals(
                     status,
                     "CONTEXT_CONFLICT",
+                    StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(
+                    status,
+                    "FUSION_REVIEW",
                     StringComparison.OrdinalIgnoreCase))
             {
                 return 1;
@@ -64635,6 +65506,14 @@ namespace ClassLibrary4
                     StringComparison.OrdinalIgnoreCase))
             {
                 return "⚠ CONTEXT XUNG ĐỘT";
+            }
+
+            if (string.Equals(
+                    status,
+                    "FUSION_REVIEW",
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                return "⚠ AI FUSION CẦN KIỂM TRA";
             }
 
             if (string.Equals(
