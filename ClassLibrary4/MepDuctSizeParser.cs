@@ -1,4 +1,4 @@
-﻿#nullable disable
+#nullable disable
 using System;
 using System.Globalization;
 using System.Linq;
@@ -61,13 +61,23 @@ namespace ClassLibrary4
             new Regex(
                 @"(?ix)
                 (?<![A-Z0-9])
-                (?:W\s*)?
+                (?:W\s*[:=]?\s*)?
                 (?<w>\d{2,4}(?:[.,]\d+)?)
                 \s*
-                (?:X|×|\*)
+                (?:[xX×*\/])
                 \s*
-                (?:H\s*)?
+                (?:H\s*[:=]?\s*)?
                 (?<h>\d{2,4}(?:[.,]\d+)?)
+                (?!\d)",
+                RegexOptions.Compiled);
+
+        private static readonly Regex RectExplicitWhRegex =
+            new Regex(
+                @"(?ix)
+                (?<![A-Z0-9])
+                W\s*[:=]?\s*(?<w>\d{2,4}(?:[.,]\d+)?)
+                \s*[,;\s]\s*
+                H\s*[:=]?\s*(?<h>\d{2,4}(?:[.,]\d+)?)
                 (?!\d)",
                 RegexOptions.Compiled);
 
@@ -119,6 +129,12 @@ namespace ClassLibrary4
                     RawText = raw ?? ""
                 };
 
+            if (string.IsNullOrWhiteSpace(raw) &&
+                string.IsNullOrWhiteSpace(layer))
+            {
+                return false;
+            }
+
             string text =
                 NormalizeForSearch(raw);
 
@@ -133,8 +149,12 @@ namespace ClassLibrary4
                 HasDuctContext(combined);
 
             Match rect =
-                RectRegex.Match(
-                    raw ?? "");
+                RectRegex.Match(raw ?? "");
+
+            if (!rect.Success && !string.IsNullOrWhiteSpace(layer))
+            {
+                rect = RectRegex.Match(layer);
+            }
 
             if (rect.Success &&
                 TryReadNumber(
@@ -163,9 +183,48 @@ namespace ClassLibrary4
                 return true;
             }
 
+            Match rectWh =
+                RectExplicitWhRegex.Match(raw ?? "");
+
+            if (!rectWh.Success && !string.IsNullOrWhiteSpace(layer))
+            {
+                rectWh = RectExplicitWhRegex.Match(layer);
+            }
+
+            if (rectWh.Success &&
+                TryReadNumber(
+                    rectWh.Groups["w"].Value,
+                    out double whW) &&
+                TryReadNumber(
+                    rectWh.Groups["h"].Value,
+                    out double whH) &&
+                IsReasonableDimension(whW) &&
+                IsReasonableDimension(whH))
+            {
+                result.Shape = "RECT";
+                result.WidthMm = whW;
+                result.HeightMm = whH;
+                result.CanonicalSize =
+                    FormatMm(whW) +
+                    "x" +
+                    FormatMm(whH);
+                result.SystemCode =
+                    InferSystemCode(combined);
+                result.FireRating =
+                    ParseFireRating(combined);
+                result.HasStrongDuctContext =
+                    true;
+
+                return true;
+            }
+
             Match round =
-                RoundStrongRegex.Match(
-                    raw ?? "");
+                RoundStrongRegex.Match(raw ?? "");
+
+            if (!round.Success && !string.IsNullOrWhiteSpace(layer))
+            {
+                round = RoundStrongRegex.Match(layer);
+            }
 
             if (round.Success &&
                 TryReadNumber(
@@ -173,11 +232,9 @@ namespace ClassLibrary4
                     out double d) &&
                 IsReasonableDimension(d))
             {
-                // "Ø60" có thể là pipe. Chỉ nhận là duct nếu text/layer có
-                // dấu hiệu ACMV hoặc kích thước khá lớn.
                 bool accept =
                     strongContext ||
-                    d >= 180.0;
+                    d >= 150.0;
 
                 if (!accept)
                     return false;
@@ -200,8 +257,12 @@ namespace ClassLibrary4
             if (strongContext)
             {
                 Match weak =
-                    RoundWeakRegex.Match(
-                        raw ?? "");
+                    RoundWeakRegex.Match(raw ?? "");
+
+                if (!weak.Success && !string.IsNullOrWhiteSpace(layer))
+                {
+                    weak = RoundWeakRegex.Match(layer);
+                }
 
                 if (weak.Success &&
                     TryReadNumber(
@@ -258,7 +319,11 @@ namespace ClassLibrary4
                     "SMOKE",
                     "SEF",
                     "SKE",
-                    "OG HUT KHOI"))
+                    "OG HUT KHOI",
+                    "OG_HK",
+                    "OG-HK",
+                    "OG_SMOKE",
+                    "OG-SMOKE"))
             {
                 return "SMOKE";
             }
@@ -270,7 +335,11 @@ namespace ClassLibrary4
                     "FRESH",
                     "OA",
                     "FA",
-                    "OG TUOI"))
+                    "OG TUOI",
+                    "OG_TUOI",
+                    "OG-TUOI",
+                    "OG_FA",
+                    "OG-FA"))
             {
                 return "FA";
             }
@@ -281,6 +350,10 @@ namespace ClassLibrary4
                     "EXHAUST AIR",
                     "EXHAUST",
                     "OG THAI",
+                    "OG_THAI",
+                    "OG-THAI",
+                    "OG_EA",
+                    "OG-EA",
                     "EA"))
             {
                 return "EA";
@@ -292,6 +365,10 @@ namespace ClassLibrary4
                     "RETURN AIR",
                     "RETURN",
                     "OG HOI",
+                    "OG_HOI",
+                    "OG-HOI",
+                    "OG_RA",
+                    "OG-RA",
                     "RA"))
             {
                 return "RA";
@@ -303,6 +380,10 @@ namespace ClassLibrary4
                     "SUPPLY AIR",
                     "SUPPLY",
                     "OG CAP",
+                    "OG_CAP",
+                    "OG-CAP",
+                    "OG_SA",
+                    "OG-SA",
                     "SA"))
             {
                 return "SA";
@@ -313,6 +394,11 @@ namespace ClassLibrary4
                     "PRESSURIZATION",
                     "STAIR PRESS",
                     "TANG AP",
+                    "OG TANG AP",
+                    "OG_TA",
+                    "OG-TA",
+                    "OG_PA",
+                    "OG-PA",
                     "PA"))
             {
                 return "PA";
@@ -412,7 +498,7 @@ namespace ClassLibrary4
                     out value);
         }
 
-        private static string FormatMm(
+        public static string FormatMm(
             double value)
         {
             if (Math.Abs(
