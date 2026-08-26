@@ -1,4 +1,4 @@
-﻿using Autodesk.AutoCAD.Runtime;
+using Autodesk.AutoCAD.Runtime;
 using Autodesk.AutoCAD.Windows;
 
 namespace ClassLibrary4
@@ -8,10 +8,17 @@ namespace ClassLibrary4
         private static PaletteSet? ps = null;
         private static BOCTACHUI? ui = null;
 
+        static BocTachCommand()
+        {
+            MepPluginExtensionApp.RegisterResolvers();
+        }
+
         // Tên lệnh gọi bảng trong AutoCAD
         [CommandMethod("HIENBANG")]
         public void HienThiBang()
         {
+            MepPluginExtensionApp.RegisterResolvers();
+
             // LICENSE-ONLINE-20260811-02
             // Luôn kiểm tra trước khi tạo hoặc hiện Palette.
             // Nếu người dùng đóng cửa sổ kích hoạt hoặc key không hợp lệ,

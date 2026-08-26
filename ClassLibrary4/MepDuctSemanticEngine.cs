@@ -488,6 +488,13 @@ namespace ClassLibrary4
                 if (ent == null || IsAiDuctOutputLayer(ent.Layer))
                     continue;
 
+                // STEP30E FIX: Loại trừ ngay các đối tượng thuộc Layer PCCC, Chữa cháy, Cấp thoát nước
+                if (MepDuctSizeParser.HasPipeOrFireProtectionContext(ent.Layer) ||
+                    MepDuctSizeParser.HasDnPipeText(ent.Layer))
+                {
+                    continue;
+                }
+
                 if (!(ent is Curve curve))
                     continue;
 
@@ -775,24 +782,27 @@ namespace ClassLibrary4
                     continue;
                 }
 
-                // 3) Tuyến đơn (Single line)
-                MepDuctSegment single = CreateSegmentFromCandidate(
-                    segIdCounter++,
-                    a.Start,
-                    a.End,
-                    a.Seed,
-                    a.Layer,
-                    0.0,
-                    a.Seed != null ? 0.90 : 0.40,
-                    "CENTERLINE",
-                    new[] { a.Id },
-                    a.LayerLooksDuct ? "duct layer" : "candidate line");
-
-                if (single != null)
+                // 3) Tuyến đơn (Single line): Chỉ nhận nếu có Text Seed kích thước hoặc Layer rõ ràng là ống gió
+                if (a.Seed != null || a.LayerLooksDuct)
                 {
-                    output.Add(single);
-                    used.Add(a.Id);
-                    result.SingleCenterlineCount++;
+                    MepDuctSegment single = CreateSegmentFromCandidate(
+                        segIdCounter++,
+                        a.Start,
+                        a.End,
+                        a.Seed,
+                        a.Layer,
+                        0.0,
+                        a.Seed != null ? 0.90 : 0.40,
+                        "CENTERLINE",
+                        new[] { a.Id },
+                        a.LayerLooksDuct ? "duct layer" : "candidate line with duct seed");
+
+                    if (single != null)
+                    {
+                        output.Add(single);
+                        used.Add(a.Id);
+                        result.SingleCenterlineCount++;
+                    }
                 }
             }
 
@@ -1058,7 +1068,61 @@ namespace ClassLibrary4
                 }
             }
 
-            return fittings;
+            return DeduplicateFittings(fittings);
+        }
+
+        /// <summary>
+        /// Gom cụm (cluster) các fitting trong bán kính ClusterRadius.
+        /// Mỗi cụm chỉ giữ lại 1 fitting ưu tiên nhất (Tee &gt; Elbow &gt; Reducer &gt; ShoeTap).
+        /// Tránh vẽ chồng đống cross-marker đỏ tại 1 điểm nút.
+        /// </summary>
+        private static List<MepDuctFitting> DeduplicateFittings(List<MepDuctFitting> raw)
+        {
+            const double ClusterRadius = 350.0; // mm — nếu 2 fitting cách nhau dưới 350mm → cùng 1 nút vật lý
+
+            if (raw == null || raw.Count == 0)
+                return new List<MepDuctFitting>();
+
+            // Sắp xếp theo độ ưu tiên: Tee (1) > Elbow (2) > Reducer (3) > ShoeTap (4) > others
+            var sorted = raw.OrderBy(f => FittingPriority(f.Type)).ToList();
+
+            var kept = new List<MepDuctFitting>();
+            var eliminated = new HashSet<int>(); // index trong sorted
+
+            for (int i = 0; i < sorted.Count; i++)
+            {
+                if (eliminated.Contains(i))
+                    continue;
+
+                MepDuctFitting fi = sorted[i];
+                kept.Add(fi);
+
+                // Đánh dấu tất cả fitting gần hơn ClusterRadius là duplicate
+                for (int j = i + 1; j < sorted.Count; j++)
+                {
+                    if (eliminated.Contains(j))
+                        continue;
+
+                    if (PlanDistance(fi.Position, sorted[j].Position) < ClusterRadius)
+                        eliminated.Add(j);
+                }
+            }
+
+            return kept;
+        }
+
+        private static int FittingPriority(MepDuctFittingType type)
+        {
+            switch (type)
+            {
+                case MepDuctFittingType.Tee:     return 1;
+                case MepDuctFittingType.Elbow:   return 2;
+                case MepDuctFittingType.Reducer: return 3;
+                case MepDuctFittingType.ShoeTap: return 4;
+                case MepDuctFittingType.Cross:   return 5;
+                case MepDuctFittingType.EndCap:  return 6;
+                default:                         return 7;
+            }
         }
 
         // ============================================================
@@ -1311,93 +1375,62 @@ namespace ClassLibrary4
             if (result?.Segments == null)
                 return;
 
-            // 1) Tạo các Layer Ống Gió với Transparency = 60% (Alpha = 102)
-            foreach (MepDuctSegment segment in result.Segments)
+            var labeledPositions = new List<Point3d>();
+            const double MinLabelSpacingMm = 2500.0;
+
+            // Vẽ TẤT CẢ segment — không bỏ sót đoạn nào
+            foreach (MepDuctSegment seg in result.Segments)
             {
-                if (segment == null || segment.LengthMm < MinCurveLength)
+                if (seg == null || seg.LengthMm < MinCurveLength)
                     continue;
 
-                string layerName = BuildOverlayLayerName(segment);
+                string layerName = BuildOverlayLayerName(seg);
                 EnsureLayerWithTransparency(tr, db, layerName, GetLayerColor(layerName), DuctTransparencyAlpha);
 
-                // Vẽ LWPolyline 2D với ConstantWidth = Max(W, H)
+                // Polyline ConstantWidth = cạnh lớn nhất ống gió (giống VẼ OG TỰ ĐỘNG)
                 Polyline pl = new Polyline();
                 pl.SetDatabaseDefaults(db);
-                pl.AddVertexAt(0, new Point2d(segment.Start.X, segment.Start.Y), 0.0, 0.0, 0.0);
-                pl.AddVertexAt(1, new Point2d(segment.End.X, segment.End.Y), 0.0, 0.0, 0.0);
-                pl.Elevation = segment.Start.Z;
-
-                // Độ dày nét vẽ = Kích thước cạnh lớn nhất
-                pl.ConstantWidth = segment.MaxDimensionMm;
-
+                pl.AddVertexAt(0, new Point2d(seg.Start.X, seg.Start.Y), 0, 0, 0);
+                pl.AddVertexAt(1, new Point2d(seg.End.X, seg.End.Y), 0, 0, 0);
+                pl.Elevation = seg.Start.Z;
+                pl.ConstantWidth = seg.MaxDimensionMm;
                 pl.Layer = layerName;
-                pl.ColorIndex = 256; // ByLayer
+                pl.ColorIndex = 256;
 
                 space.AppendEntity(pl);
                 tr.AddNewlyCreatedDBObject(pl, true);
-                
-                try
+                try { pl.Transparency = new Transparency(DuctTransparencyAlpha); } catch { }
+
+                // Label: chỉ đoạn có annotation trực tiếp, đủ dài, không chồng
+                bool isDirectAnnotation =
+                    seg.HasExplicitSize &&
+                    !string.Equals(seg.Representation, "INHERITED", StringComparison.OrdinalIgnoreCase);
+
+                if (isDirectAnnotation && seg.LengthMm >= 1500.0 &&
+                    labeledPositions.All(p => p.DistanceTo(seg.Center) > MinLabelSpacingMm))
                 {
-                    pl.Transparency = new Transparency(DuctTransparencyAlpha); // 60% Trong suốt
-                }
-                catch { }
+                    string labelText = BuildOverlayLabel(seg);
+                    double textH = Math.Max(100.0, Math.Min(300.0, seg.MaxDimensionMm * 0.28));
 
-                // Gắn Text nhãn kích thước rõ ràng trên thân ống nếu chiều dài >= 1200mm
-                if (segment.LengthMm >= 1200.0)
-                {
-                    DBText label = new DBText();
-                    label.SetDatabaseDefaults(db);
-                    label.TextStyleId = db.Textstyle;
-                    label.TextString = BuildOverlayLabel(segment);
-                    label.Height = Math.Max(120.0, Math.Min(320.0, segment.MaxDimensionMm * 0.38));
-                    label.Layer = layerName;
-                    label.ColorIndex = 256;
-                    label.Justify = AttachmentPoint.MiddleCenter;
-                    label.AlignmentPoint = segment.Center;
-                    label.Position = segment.Center;
+                    DBText lbl = new DBText();
+                    lbl.SetDatabaseDefaults(db);
+                    lbl.TextStyleId = db.Textstyle;
+                    lbl.TextString = labelText;
+                    lbl.Height = textH;
+                    lbl.Layer = layerName;
+                    lbl.ColorIndex = 256;
+                    lbl.Justify = AttachmentPoint.MiddleCenter;
+                    lbl.AlignmentPoint = seg.Center;
+                    lbl.Position = seg.Center;
 
-                    double angle = PlanAngle(segment.Start, segment.End);
-                    if (angle > Math.PI * 0.5 && angle <= Math.PI * 1.5)
-                        angle -= Math.PI;
-                    else if (angle < -Math.PI * 0.5 && angle >= -Math.PI * 1.5)
-                        angle += Math.PI;
+                    double angle = PlanAngle(seg.Start, seg.End);
+                    if (angle > Math.PI * 0.5 && angle <= Math.PI * 1.5) angle -= Math.PI;
+                    else if (angle < -Math.PI * 0.5 && angle >= -Math.PI * 1.5) angle += Math.PI;
+                    lbl.Rotation = angle;
 
-                    label.Rotation = angle;
-
-                    space.AppendEntity(label);
-                    tr.AddNewlyCreatedDBObject(label, true);
-                }
-            }
-
-            // 2) Vẽ Phụ Kiện (Co, Tê, Giảm, Gót Giày) lên Layer riêng TDL_AI_DUCT_PHUKIEN
-            if (result.Fittings != null && result.Fittings.Count > 0)
-            {
-                EnsureLayerWithTransparency(tr, db, FittingLayerName, 1, DuctTransparencyAlpha); // Màu 1 (Đỏ)
-
-                foreach (MepDuctFitting f in result.Fittings)
-                {
-                    // Vẽ Marker điểm tâm phụ kiện
-                    DBPoint ptMarker = new DBPoint(f.Position);
-                    ptMarker.SetDatabaseDefaults(db);
-                    ptMarker.Layer = FittingLayerName;
-                    ptMarker.ColorIndex = 256;
-                    space.AppendEntity(ptMarker);
-                    tr.AddNewlyCreatedDBObject(ptMarker, true);
-
-                    // Nhãn phụ kiện
-                    DBText fText = new DBText();
-                    fText.SetDatabaseDefaults(db);
-                    fText.TextStyleId = db.Textstyle;
-                    fText.TextString = f.Description;
-                    fText.Height = 150.0;
-                    fText.Layer = FittingLayerName;
-                    fText.ColorIndex = 256;
-                    fText.Justify = AttachmentPoint.MiddleCenter;
-                    fText.AlignmentPoint = new Point3d(f.Position.X, f.Position.Y + 220.0, f.Position.Z);
-                    fText.Position = fText.AlignmentPoint;
-
-                    space.AppendEntity(fText);
-                    tr.AddNewlyCreatedDBObject(fText, true);
+                    space.AppendEntity(lbl);
+                    tr.AddNewlyCreatedDBObject(lbl, true);
+                    labeledPositions.Add(seg.Center);
                 }
             }
         }

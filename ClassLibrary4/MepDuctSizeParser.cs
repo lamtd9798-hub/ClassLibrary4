@@ -148,6 +148,13 @@ namespace ClassLibrary4
             bool strongContext =
                 HasDuctContext(combined);
 
+            // STEP30E FIX: Nếu text hoặc layer mang ngữ cảnh Ống thép PCCC hoặc Cấp thoát nước (CTN),
+            // hoặc chứa tiền tố kích thước ống DN..., tuyệt đối không nhận nhầm là Ống gió (Duct).
+            if (HasPipeOrFireProtectionContext(combined) || HasDnPipeText(raw) || HasDnPipeText(layer))
+            {
+                return false;
+            }
+
             Match rect =
                 RectRegex.Match(raw ?? "");
 
@@ -178,7 +185,7 @@ namespace ClassLibrary4
                 result.FireRating =
                     ParseFireRating(combined);
                 result.HasStrongDuctContext =
-                    true;
+                    strongContext || true;
 
                 return true;
             }
@@ -213,7 +220,7 @@ namespace ClassLibrary4
                 result.FireRating =
                     ParseFireRating(combined);
                 result.HasStrongDuctContext =
-                    true;
+                    strongContext || true;
 
                 return true;
             }
@@ -232,11 +239,9 @@ namespace ClassLibrary4
                     out double d) &&
                 IsReasonableDimension(d))
             {
-                bool accept =
-                    strongContext ||
-                    d >= 150.0;
-
-                if (!accept)
+                // STEP30E FIX: Ống tròn ØD chỉ được nhận là ỐNG GIÓ nếu có ngữ cảnh ACMV/HVAC rõ ràng
+                // (OG, Gió cấp, Gió hồi, Gió thải, Hút khói, v.v.). Tránh biến Ø150 PCCC thành duct!
+                if (!strongContext)
                     return false;
 
                 result.Shape = "ROUND";
@@ -249,7 +254,7 @@ namespace ClassLibrary4
                 result.FireRating =
                     ParseFireRating(combined);
                 result.HasStrongDuctContext =
-                    strongContext;
+                    true;
 
                 return true;
             }
@@ -444,6 +449,91 @@ namespace ClassLibrary4
                     "GIO THAI",
                     "GIO TUOI",
                     "SMOKE");
+        }
+
+        public static bool HasPipeOrFireProtectionContext(
+            string raw)
+        {
+            if (string.IsNullOrWhiteSpace(raw))
+                return false;
+
+            string s =
+                NormalizeForSearch(raw);
+
+            return
+                ContainsAny(
+                    s,
+                    // PCCC / Chữa cháy / Ống thép
+                    "PCCC",
+                    "CHUA CHAY",
+                    "CHUA-CHAY",
+                    "CHUA_CHAY",
+                    "SPRINKLER",
+                    "SPR",
+                    "DWF",
+                    "TRU TIEP NUOC",
+                    "TRU TIEP",
+                    "HONG THUY",
+                    "HONG KHO",
+                    "HYDRANT",
+                    "HOSE REEL",
+                    "FIRE",
+                    "FF_",
+                    "FF-",
+                    "FF ",
+                    "ONG THEP",
+                    "STEEL PIPE",
+                    "SCH40",
+                    "SCH20",
+                    "SCH80",
+                    "ALARM VALVE",
+                    "DELUGE",
+                    "KHOANG CHAY",
+                    "CU TRU",
+                    "VAN GOC",
+                    "VAN CONG",
+                    "VAN BUOM",
+                    "VAN 1 CHIEU",
+                    "VAN MOT CHIEU",
+                    // Cấp thoát nước / CTN
+                    "CTN",
+                    "CAP NUOC",
+                    "CAP-NUOC",
+                    "CAP_NUOC",
+                    "THOAT NUOC",
+                    "THOAT-NUOC",
+                    "THOAT_NUOC",
+                    "CAP THOAT NUOC",
+                    "NUOC LANH",
+                    "NUOC NONG",
+                    "PPR",
+                    "UPVC",
+                    "HDPE",
+                    "DRAIN",
+                    "SEWER",
+                    "PLUMBING",
+                    "WATER",
+                    "P_PIPE",
+                    "M_PIPE",
+                    "THONG HOI",
+                    "ONG DONG",
+                    "REFRIGERANT");
+        }
+
+        public static bool HasDnPipeText(
+            string raw)
+        {
+            if (string.IsNullOrWhiteSpace(raw))
+                return false;
+
+            string s =
+                NormalizeForSearch(raw);
+
+            // Khớp các tiền tố DN phổ biến trong MEP (DN15 -> DN600)
+            return Regex.IsMatch(
+                s,
+                @"(?<![A-Z0-9])DN\s*\d{1,4}(?![A-Z0-9])",
+                RegexOptions.IgnoreCase);
         }
 
         public static string NormalizeForSearch(
