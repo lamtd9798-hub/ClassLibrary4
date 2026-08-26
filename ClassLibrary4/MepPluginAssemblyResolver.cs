@@ -1,9 +1,13 @@
 #nullable disable
 using System;
+using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Reflection;
+using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Runtime.Loader;
+
 using Autodesk.AutoCAD.Runtime;
 
 [assembly: ExtensionApplication(typeof(ClassLibrary4.MepPluginExtensionApp))]
@@ -11,20 +15,50 @@ using Autodesk.AutoCAD.Runtime;
 namespace ClassLibrary4
 {
     /// <summary>
-    /// AutoCAD .NET 8 Assembly & Native Resolver.
-    /// 
-    /// Đăng ký tự động khi AutoCAD chạy NETLOAD qua [assembly: ExtensionApplication].
-    /// Tự động định vị và nạp các dependency của plugin nằm cạnh ClassLibrary4.dll:
-    /// - System.Drawing.Common (và các dependency phụ thuộc)
-    /// - OpenCvSharp / OpenCvSharp.Extensions / OpenCvSharpExtern.dll
-    /// - Microsoft.ML.OnnxRuntime / onnxruntime.dll
-    /// - Microsoft.Win32.SystemEvents
-    /// - System.Numerics.Tensors
+    /// Đăng ký resolver ngay khi module ClassLibrary4 được nạp, trước khi
+    /// AutoCAD khởi tạo Palette hoặc JIT các lớp OpenCV/ONNX.
     /// </summary>
-    public class MepPluginExtensionApp : IExtensionApplication
+    internal static class MepPluginModuleInitializer
     {
+#pragma warning disable CA2255 // Chủ ý: plugin AutoCAD cần resolver trước khi JIT lớp AI.
+        [ModuleInitializer]
+        internal static void Initialize()
+        {
+            MepPluginExtensionApp.RegisterResolvers();
+        }
+#pragma warning restore CA2255
+    }
+
+    /// <summary>
+    /// Resolver dependency dành riêng cho plugin AutoCAD .NET 8.
+    ///
+    /// Nguyên tắc:
+    /// - Chỉ tìm dependency trong thư mục plugin và runtimes/win-x64.
+    /// - Không nạp đè assembly của Windows Desktop Runtime như
+    ///   System.Drawing.Common hoặc Microsoft.Win32.SystemEvents.
+    /// - Managed DLL được nạp vào đúng AssemblyLoadContext đã yêu cầu nó.
+    /// - Native OpenCV/ONNX được tìm cạnh DLL hoặc trong thư mục runtimes.
+    /// </summary>
+    public sealed class MepPluginExtensionApp : IExtensionApplication
+    {
+        private static readonly object InitGate = new object();
         private static bool _initialized;
-        private static readonly object _initLock = new object();
+        private static string _pluginDirectory = "";
+        private static AssemblyLoadContext _pluginLoadContext;
+
+        private static readonly HashSet<string> HostFrameworkAssemblies =
+            new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            {
+                "System.Drawing.Common",
+                "System.Drawing",
+                "Microsoft.Win32.SystemEvents",
+                "System.Windows.Forms",
+                "PresentationCore",
+                "PresentationFramework",
+                "WindowsBase"
+            };
+
+        internal static string LastResolverError { get; private set; } = "";
 
         public void Initialize()
         {
@@ -40,221 +74,256 @@ namespace ClassLibrary4
             if (_initialized)
                 return;
 
-            lock (_initLock)
+            lock (InitGate)
             {
                 if (_initialized)
                     return;
 
                 try
                 {
-                    string pluginDir = GetPluginDirectory();
                     Assembly pluginAssembly = typeof(MepPluginExtensionApp).Assembly;
-                    AssemblyLoadContext pluginAlc = AssemblyLoadContext.GetLoadContext(pluginAssembly);
+                    _pluginDirectory = GetPluginDirectory(pluginAssembly);
+                    _pluginLoadContext =
+                        AssemblyLoadContext.GetLoadContext(pluginAssembly) ??
+                        AssemblyLoadContext.Default;
 
-                    // 1. Hook AssemblyLoadContext của chính plugin DLL (AutoCAD custom ALC)
-                    if (pluginAlc != null && pluginAlc != AssemblyLoadContext.Default)
-                    {
-                        pluginAlc.Resolving += (context, assemblyName) =>
-                        {
-                            return ResolveAssembly(context, assemblyName, pluginDir);
-                        };
+                    _pluginLoadContext.Resolving += ResolveManagedAssembly;
+                    _pluginLoadContext.ResolvingUnmanagedDll += ResolveNativeAssembly;
+                    AppDomain.CurrentDomain.AssemblyResolve += ResolveFromCurrentDomain;
 
-                        pluginAlc.ResolvingUnmanagedDll += (unmanagedDllAssembly, unmanagedDllName) =>
-                        {
-                            return ResolveUnmanagedDll(unmanagedDllName, pluginDir);
-                        };
-                    }
-
-                    // 2. Hook AssemblyLoadContext.Default (.NET 8 CoreCLR)
-                    AssemblyLoadContext.Default.Resolving += (context, assemblyName) =>
-                    {
-                        return ResolveAssembly(context, assemblyName, pluginDir);
-                    };
-
-                    AssemblyLoadContext.Default.ResolvingUnmanagedDll += (unmanagedDllAssembly, unmanagedDllName) =>
-                    {
-                        return ResolveUnmanagedDll(unmanagedDllName, pluginDir);
-                    };
-
-                    // 3. Hook AppDomain.CurrentDomain.AssemblyResolve (Fallback)
-                    AppDomain.CurrentDomain.AssemblyResolve += (sender, args) =>
-                    {
-                        AssemblyName asmName = new AssemblyName(args.Name);
-                        return ResolveAssembly(pluginAlc ?? AssemblyLoadContext.Default, asmName, pluginDir);
-                    };
-
-                    // 4. Eagerly Pre-load các dependency quan trọng nằm cạnh ClassLibrary4.dll
-                    EagerLoadPluginDependencies(pluginAlc, pluginDir);
-
+                    LastResolverError = "";
                     _initialized = true;
                 }
-                catch
+                catch (System.Exception ex)
                 {
-                    // Tránh ném lỗi chặn khởi động AutoCAD
+                    LastResolverError = ex.GetType().Name + ": " + ex.Message;
                 }
             }
         }
 
-        private static void EagerLoadPluginDependencies(AssemblyLoadContext alc, string pluginDir)
+        private static Assembly ResolveManagedAssembly(
+            AssemblyLoadContext context,
+            AssemblyName requestedName)
         {
-            if (string.IsNullOrWhiteSpace(pluginDir) || !Directory.Exists(pluginDir))
-                return;
+            return ResolveAssembly(
+                context ?? _pluginLoadContext ?? AssemblyLoadContext.Default,
+                requestedName,
+                _pluginDirectory);
+        }
 
-            string[] priorityDlls = new string[]
+        private static Assembly ResolveFromCurrentDomain(
+            object sender,
+            ResolveEventArgs args)
+        {
+            try
             {
-                "Microsoft.Win32.SystemEvents.dll",
-                "System.Drawing.Common.dll",
-                "OpenCvSharp.dll",
-                "OpenCvSharp.Extensions.dll",
-                "Microsoft.ML.OnnxRuntime.dll",
-                "System.Numerics.Tensors.dll"
-            };
+                if (string.IsNullOrWhiteSpace(args?.Name))
+                    return null;
 
-            foreach (string dllName in priorityDlls)
+                return ResolveAssembly(
+                    _pluginLoadContext ?? AssemblyLoadContext.Default,
+                    new AssemblyName(args.Name),
+                    _pluginDirectory);
+            }
+            catch
             {
-                string path = Path.Combine(pluginDir, dllName);
-                if (File.Exists(path))
-                {
-                    try
-                    {
-                        if (alc != null)
-                            alc.LoadFromAssemblyPath(path);
-                        else
-                            AssemblyLoadContext.Default.LoadFromAssemblyPath(path);
-                    }
-                    catch
+                return null;
+            }
+        }
+
+        private static IntPtr ResolveNativeAssembly(
+            Assembly requestingAssembly,
+            string unmanagedDllName)
+        {
+            return ResolveUnmanagedDll(unmanagedDllName, _pluginDirectory);
+        }
+
+        private static Assembly ResolveAssembly(
+            AssemblyLoadContext context,
+            AssemblyName requestedName,
+            string baseDirectory)
+        {
+            if (requestedName == null ||
+                string.IsNullOrWhiteSpace(requestedName.Name) ||
+                string.IsNullOrWhiteSpace(baseDirectory))
+            {
+                return null;
+            }
+
+            string simpleName = requestedName.Name;
+
+            if (simpleName.EndsWith(".resources", StringComparison.OrdinalIgnoreCase) ||
+                HostFrameworkAssemblies.Contains(simpleName))
+            {
+                // Bắt buộc để host .NET 8 tự resolve framework assembly.
+                return null;
+            }
+
+            try
+            {
+                Assembly alreadyLoaded = context.Assemblies.FirstOrDefault(
+                    assembly =>
                     {
                         try
                         {
-                            Assembly.LoadFrom(path);
+                            return AssemblyName.ReferenceMatchesDefinition(
+                                assembly.GetName(),
+                                requestedName);
                         }
                         catch
                         {
+                            return false;
                         }
-                    }
-                }
-            }
-        }
+                    });
 
-        private static string GetPluginDirectory()
-        {
-            try
-            {
-                string loc = typeof(MepPluginExtensionApp).Assembly.Location;
-                if (!string.IsNullOrWhiteSpace(loc))
-                {
-                    return Path.GetDirectoryName(loc);
-                }
+                if (alreadyLoaded != null)
+                    return alreadyLoaded;
             }
             catch
             {
             }
 
-            try
+            foreach (string directory in GetManagedSearchDirectories(baseDirectory))
             {
-                string baseDir = AppDomain.CurrentDomain.BaseDirectory;
-                return baseDir ?? "";
-            }
-            catch
-            {
-                return "";
-            }
-        }
+                string candidate = Path.Combine(directory, simpleName + ".dll");
 
-        private static Assembly ResolveAssembly(AssemblyLoadContext context, AssemblyName assemblyName, string baseDirectory)
-        {
-            if (string.IsNullOrWhiteSpace(baseDirectory) || assemblyName == null || string.IsNullOrWhiteSpace(assemblyName.Name))
-                return null;
-
-            string targetName = assemblyName.Name;
-
-            // 1. Thư mục chính của plugin
-            string candidatePath = Path.Combine(baseDirectory, targetName + ".dll");
-            if (File.Exists(candidatePath))
-            {
-                return TryLoadAssemblyPath(context, candidatePath);
-            }
-
-            // 2. Thư mục con runtimes/win-x64 hoặc runtimes/win
-            string[] subDirs = new string[]
-            {
-                Path.Combine(baseDirectory, "runtimes", "win-x64", "lib", "net8.0"),
-                Path.Combine(baseDirectory, "runtimes", "win", "lib", "net8.0"),
-                Path.Combine(baseDirectory, "runtimes", "win-x64", "native"),
-                Path.Combine(baseDirectory, "dll", "x64")
-            };
-
-            foreach (string sub in subDirs)
-            {
-                string subPath = Path.Combine(sub, targetName + ".dll");
-                if (File.Exists(subPath))
+                if (!File.Exists(candidate) ||
+                    !IsCompatibleManagedCandidate(candidate, requestedName))
                 {
-                    return TryLoadAssemblyPath(context, subPath);
+                    continue;
+                }
+
+                try
+                {
+                    return context.LoadFromAssemblyPath(Path.GetFullPath(candidate));
+                }
+                catch (System.Exception ex)
+                {
+                    LastResolverError =
+                        simpleName + " | " + ex.GetType().Name + ": " + ex.Message;
                 }
             }
 
             return null;
         }
 
-        private static Assembly TryLoadAssemblyPath(AssemblyLoadContext context, string path)
+        private static bool IsCompatibleManagedCandidate(
+            string path,
+            AssemblyName requestedName)
         {
-            if (context != null)
-            {
-                try
-                {
-                    return context.LoadFromAssemblyPath(path);
-                }
-                catch
-                {
-                }
-            }
-
             try
             {
-                return AssemblyLoadContext.Default.LoadFromAssemblyPath(path);
+                AssemblyName candidateName = AssemblyName.GetAssemblyName(path);
+
+                if (!string.Equals(
+                        candidateName.Name,
+                        requestedName.Name,
+                        StringComparison.OrdinalIgnoreCase))
+                {
+                    return false;
+                }
+
+                // Không nạp nhầm major version chỉ vì file có cùng tên.
+                if (requestedName.Version != null &&
+                    candidateName.Version != null &&
+                    requestedName.Version.Major != candidateName.Version.Major)
+                {
+                    return false;
+                }
+
+                return true;
             }
             catch
             {
-                try
-                {
-                    return Assembly.LoadFrom(path);
-                }
-                catch
-                {
-                    return null;
-                }
+                return false;
             }
         }
 
-        private static IntPtr ResolveUnmanagedDll(string unmanagedDllName, string baseDirectory)
+        private static IEnumerable<string> GetManagedSearchDirectories(
+            string baseDirectory)
         {
-            if (string.IsNullOrWhiteSpace(baseDirectory) || string.IsNullOrWhiteSpace(unmanagedDllName))
+            string[] values =
+            {
+                baseDirectory,
+                Path.Combine(baseDirectory, "runtimes", "win-x64", "lib", "net8.0"),
+                Path.Combine(baseDirectory, "runtimes", "win", "lib", "net8.0"),
+                Path.Combine(baseDirectory, "lib", "net8.0")
+            };
+
+            return values
+                .Where(x => !string.IsNullOrWhiteSpace(x) && Directory.Exists(x))
+                .Distinct(StringComparer.OrdinalIgnoreCase);
+        }
+
+        private static IntPtr ResolveUnmanagedDll(
+            string unmanagedDllName,
+            string baseDirectory)
+        {
+            if (string.IsNullOrWhiteSpace(unmanagedDllName) ||
+                string.IsNullOrWhiteSpace(baseDirectory))
+            {
                 return IntPtr.Zero;
+            }
 
-            string fileName = unmanagedDllName.EndsWith(".dll", StringComparison.OrdinalIgnoreCase)
-                ? unmanagedDllName
-                : unmanagedDllName + ".dll";
+            string simpleName = Path.GetFileNameWithoutExtension(unmanagedDllName);
 
-            string[] searchDirs = new string[]
+            if (!string.Equals(simpleName, "OpenCvSharpExtern", StringComparison.OrdinalIgnoreCase) &&
+                !string.Equals(simpleName, "onnxruntime", StringComparison.OrdinalIgnoreCase) &&
+                !simpleName.StartsWith("onnxruntime_providers_", StringComparison.OrdinalIgnoreCase))
+            {
+                return IntPtr.Zero;
+            }
+
+            string fileName = simpleName + ".dll";
+            string[] searchDirectories =
             {
                 baseDirectory,
                 Path.Combine(baseDirectory, "runtimes", "win-x64", "native"),
+                Path.Combine(baseDirectory, "runtimes", "win", "native"),
                 Path.Combine(baseDirectory, "dll", "x64")
             };
 
-            foreach (string dir in searchDirs)
+            foreach (string directory in searchDirectories)
             {
-                string fullPath = Path.Combine(dir, fileName);
-                if (File.Exists(fullPath))
+                string candidate = Path.Combine(directory, fileName);
+
+                try
                 {
-                    if (NativeLibrary.TryLoad(fullPath, out IntPtr handle))
+                    if (File.Exists(candidate) &&
+                        NativeLibrary.TryLoad(candidate, out IntPtr handle))
                     {
                         return handle;
                     }
                 }
+                catch (System.Exception ex)
+                {
+                    LastResolverError =
+                        fileName + " | " + ex.GetType().Name + ": " + ex.Message;
+                }
             }
 
             return IntPtr.Zero;
+        }
+
+        private static string GetPluginDirectory(Assembly pluginAssembly)
+        {
+            try
+            {
+                string location = pluginAssembly?.Location ?? "";
+
+                if (!string.IsNullOrWhiteSpace(location))
+                {
+                    string directory = Path.GetDirectoryName(location) ?? "";
+                    return string.IsNullOrWhiteSpace(directory)
+                        ? ""
+                        : Path.GetFullPath(directory);
+                }
+            }
+            catch
+            {
+            }
+
+            return "";
         }
     }
 }

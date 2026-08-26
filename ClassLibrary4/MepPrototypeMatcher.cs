@@ -6,7 +6,6 @@ using System.Globalization;
 using System.Linq;
 
 using OpenCvSharp;
-using OpenCvSharp.Extensions;
 
 namespace ClassLibrary4
 {
@@ -262,7 +261,7 @@ namespace ClassLibrary4
         private static float[] BuildDescriptorOpenCv(
             Bitmap source)
         {
-            using (Mat src = BitmapConverter.ToMat(source))
+            using (Mat src = MepOpenCvBitmapBridge.ToMat(source))
             using (Mat gray = new Mat())
             using (Mat binary = new Mat())
             using (Mat resized = new Mat())

@@ -64,11 +64,12 @@ namespace ClassLibrary4
                 (?:W\s*[:=]?\s*)?
                 (?<w>\d{2,4}(?:[.,]\d+)?)
                 \s*
-                (?:[xX×*\/])
+                (?:[xX×*])
                 \s*
                 (?:H\s*[:=]?\s*)?
                 (?<h>\d{2,4}(?:[.,]\d+)?)
-                (?!\d)",
+                (?!\d)
+                (?!\s*[xX×*]\s*\d)",
                 RegexOptions.Compiled);
 
         private static readonly Regex RectExplicitWhRegex =
@@ -145,12 +146,26 @@ namespace ClassLibrary4
                 (text + " " + layerText)
                     .Trim();
 
+            // "TRỤC HÚT KHÓI 3300x900" mô tả kích thước ô trục/shaft,
+            // không phải một đoạn ống gió nằm trong mặt bằng. Không biến
+            // annotation này thành seed vì sẽ tô kín cả ký hiệu trục.
+            if (HasShaftContext(raw) ||
+                HasShaftContext(layer))
+            {
+                return false;
+            }
+
             bool strongContext =
                 HasDuctContext(combined);
 
             // STEP30E FIX: Nếu text hoặc layer mang ngữ cảnh Ống thép PCCC hoặc Cấp thoát nước (CTN),
             // hoặc chứa tiền tố kích thước ống DN..., tuyệt đối không nhận nhầm là Ống gió (Duct).
-            if (HasPipeOrFireProtectionContext(combined) || HasDnPipeText(raw) || HasDnPipeText(layer))
+            bool pipeOrFireContext =
+                HasPipeOrFireProtectionContext(combined);
+
+            if (HasDnPipeText(raw) ||
+                HasDnPipeText(layer) ||
+                (pipeOrFireContext && !strongContext))
             {
                 return false;
             }
@@ -158,7 +173,11 @@ namespace ClassLibrary4
             Match rect =
                 RectRegex.Match(raw ?? "");
 
-            if (!rect.Success && !string.IsNullOrWhiteSpace(layer))
+            // Không lấy kích thước từ tên layer cho một TEXT không chứa size.
+            // Nếu không, mọi ghi chú trên layer "OG_800x400" đều trở thành seed.
+            if (!rect.Success &&
+                string.IsNullOrWhiteSpace(raw) &&
+                !string.IsNullOrWhiteSpace(layer))
             {
                 rect = RectRegex.Match(layer);
             }
@@ -185,7 +204,7 @@ namespace ClassLibrary4
                 result.FireRating =
                     ParseFireRating(combined);
                 result.HasStrongDuctContext =
-                    strongContext || true;
+                    strongContext;
 
                 return true;
             }
@@ -193,7 +212,9 @@ namespace ClassLibrary4
             Match rectWh =
                 RectExplicitWhRegex.Match(raw ?? "");
 
-            if (!rectWh.Success && !string.IsNullOrWhiteSpace(layer))
+            if (!rectWh.Success &&
+                string.IsNullOrWhiteSpace(raw) &&
+                !string.IsNullOrWhiteSpace(layer))
             {
                 rectWh = RectExplicitWhRegex.Match(layer);
             }
@@ -220,7 +241,7 @@ namespace ClassLibrary4
                 result.FireRating =
                     ParseFireRating(combined);
                 result.HasStrongDuctContext =
-                    strongContext || true;
+                    strongContext;
 
                 return true;
             }
@@ -228,7 +249,9 @@ namespace ClassLibrary4
             Match round =
                 RoundStrongRegex.Match(raw ?? "");
 
-            if (!round.Success && !string.IsNullOrWhiteSpace(layer))
+            if (!round.Success &&
+                string.IsNullOrWhiteSpace(raw) &&
+                !string.IsNullOrWhiteSpace(layer))
             {
                 round = RoundStrongRegex.Match(layer);
             }
@@ -264,7 +287,9 @@ namespace ClassLibrary4
                 Match weak =
                     RoundWeakRegex.Match(raw ?? "");
 
-                if (!weak.Success && !string.IsNullOrWhiteSpace(layer))
+                if (!weak.Success &&
+                    string.IsNullOrWhiteSpace(raw) &&
+                    !string.IsNullOrWhiteSpace(layer))
                 {
                     weak = RoundWeakRegex.Match(layer);
                 }
@@ -449,6 +474,31 @@ namespace ClassLibrary4
                     "GIO THAI",
                     "GIO TUOI",
                     "SMOKE");
+        }
+
+        public static bool HasShaftContext(
+            string raw)
+        {
+            string s =
+                NormalizeForSearch(raw);
+
+            return
+                ContainsAny(
+                    s,
+                    "TRUC HUT KHOI",
+                    "TRUC ONG GIO",
+                    "TRUC GIO",
+                    "TRUC DUNG",
+                    "ONG DUNG",
+                    "DUCT SHAFT",
+                    "SMOKE SHAFT",
+                    "MEP SHAFT",
+                    "SHAFT",
+                    "DUCT RISER",
+                    "RISER") ||
+                Regex.IsMatch(
+                    s,
+                    @"(?<![A-Z0-9])TRUC(?![A-Z0-9])");
         }
 
         public static bool HasPipeOrFireProtectionContext(

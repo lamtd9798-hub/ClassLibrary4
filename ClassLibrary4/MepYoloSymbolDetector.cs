@@ -11,7 +11,6 @@ using System.Threading;
 using Microsoft.ML.OnnxRuntime;
 using Microsoft.ML.OnnxRuntime.Tensors;
 using OpenCvSharp;
-using OpenCvSharp.Extensions;
 
 namespace ClassLibrary4
 {
@@ -284,7 +283,7 @@ namespace ClassLibrary4
             padX = left;
             padY = top;
 
-            using Mat src = BitmapConverter.ToMat(source);
+            using Mat src = MepOpenCvBitmapBridge.ToMat(source);
             using Mat rgb = new Mat();
             using Mat resized = new Mat();
             using Mat canvas = new Mat(

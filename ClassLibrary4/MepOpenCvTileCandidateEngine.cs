@@ -6,7 +6,6 @@ using System.Linq;
 using System.Threading;
 
 using OpenCvSharp;
-using OpenCvSharp.Extensions;
 
 namespace ClassLibrary4
 {
@@ -123,7 +122,7 @@ namespace ClassLibrary4
 
             try
             {
-                using (Mat src = BitmapConverter.ToMat(source))
+                using (Mat src = MepOpenCvBitmapBridge.ToMat(source))
                 using (Mat gray = new Mat())
                 using (Mat blur = new Mat())
                 using (Mat binary = new Mat())
@@ -297,6 +296,8 @@ namespace ClassLibrary4
                     ex.GetType().Name + ": " + ex.Message;
 
                 if (ex is DllNotFoundException ||
+                    ex is System.IO.FileNotFoundException ||
+                    ex is System.IO.FileLoadException ||
                     ex is BadImageFormatException ||
                     ex is EntryPointNotFoundException ||
                     ex is TypeInitializationException)

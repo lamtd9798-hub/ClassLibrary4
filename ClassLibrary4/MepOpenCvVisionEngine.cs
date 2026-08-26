@@ -8,7 +8,6 @@ using System.Runtime.InteropServices;
 using System.Threading;
 
 using OpenCvSharp;
-using OpenCvSharp.Extensions;
 
 namespace ClassLibrary4
 {
@@ -180,7 +179,7 @@ namespace ClassLibrary4
             try
             {
                 using (Mat src =
-                    BitmapConverter.ToMat(
+                    MepOpenCvBitmapBridge.ToMat(
                         source))
                 using (Mat gray =
                     new Mat())
@@ -504,7 +503,7 @@ namespace ClassLibrary4
                             classifierGray);
 
                         using (Bitmap rawBitmap =
-                            BitmapConverter.ToBitmap(
+                            MepOpenCvBitmapBridge.ToBitmap(
                                 classifierGray))
                         {
                             processedBitmap =
@@ -710,6 +709,8 @@ namespace ClassLibrary4
                 return;
 
             if (ex is DllNotFoundException ||
+                ex is FileNotFoundException ||
+                ex is FileLoadException ||
                 ex is BadImageFormatException ||
                 ex is TypeInitializationException ||
                 ex is EntryPointNotFoundException)

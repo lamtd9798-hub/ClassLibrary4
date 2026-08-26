@@ -48,7 +48,16 @@ namespace ClassLibrary4
             try
             {
                 MepPluginExtensionApp.RegisterResolvers();
-                UpdateAiLearningStatusUi();
+
+                // Status của AI học/ONNX/OpenCV là phần tùy chọn. Một package
+                // phụ lỗi không được chặn chức năng bóc PIPE + DUCT bằng CAD.
+                try
+                {
+                    UpdateAiLearningStatusUi();
+                }
+                catch
+                {
+                }
 
                 RunAiAutomaticPipeAndDuctTakeoff();
             }
@@ -58,9 +67,7 @@ namespace ClassLibrary4
                 {
                     MessageBox.Show(
                         "AI ĐƯỜNG ỐNG + ỐNG GIÓ gặp lỗi nhưng đã được chặn.\n\n" +
-                        ex.GetType().Name +
-                        "\n" +
-                        ex.Message,
+                        BuildCompactHvacError(ex),
                         "AI BÓC TÁCH MEP");
                 }
                 catch
@@ -156,6 +163,9 @@ namespace ClassLibrary4
                         (int)DxfCode.Start,
                         "MTEXT"),
                     new TypedValue(
+                        (int)DxfCode.Start,
+                        "HATCH"),
+                    new TypedValue(
                         (int)DxfCode.Operator,
                         "OR>")
                 };
@@ -177,32 +187,63 @@ namespace ClassLibrary4
             SelectionSet workingSelection =
                 psr.Value;
 
-            AiPipeTakeoffRunResult pipeRun =
-                AnalyzeAndDrawAiPipeTakeoff(
-                    doc,
-                    workingSelection);
+            List<string> nonBlockingErrors =
+                new List<string>();
+
+            AiPipeTakeoffRunResult pipeRun = null;
+
+            try
+            {
+                pipeRun =
+                    AnalyzeAndDrawAiPipeTakeoff(
+                        doc,
+                        workingSelection);
+            }
+            catch (System.Exception ex)
+            {
+                nonBlockingErrors.Add(
+                    "PIPE: " + BuildCompactHvacError(ex));
+            }
 
             _lastAiAutoPipeRun =
                 pipeRun;
 
-            MepDuctScanResult ductRun =
-                _aiDuctSemanticEngine
-                    .AnalyzeAndDraw(
-                        doc,
-                        workingSelection
-                            .GetObjectIds(),
-                        true,
-                        true);
+            MepDuctScanResult ductRun = null;
+
+            try
+            {
+                ductRun =
+                    _aiDuctSemanticEngine
+                        .AnalyzeAndDraw(
+                            doc,
+                            workingSelection
+                                .GetObjectIds(),
+                            true,
+                            true);
+            }
+            catch (System.Exception ex)
+            {
+                nonBlockingErrors.Add(
+                    "DUCT: " + BuildCompactHvacError(ex));
+            }
 
             _lastAiDuctRun =
                 ductRun;
 
             // Graph hiện vẫn dùng PIPE DN. Duct Graph sẽ nối vào STEP30B-D4.
-            BuildMepGraphFromSelection(
-                doc,
-                workingSelection
-                    .GetObjectIds(),
-                false);
+            try
+            {
+                BuildMepGraphFromSelection(
+                    doc,
+                    workingSelection
+                        .GetObjectIds(),
+                    false);
+            }
+            catch (System.Exception ex)
+            {
+                nonBlockingErrors.Add(
+                    "GRAPH: " + BuildCompactHvacError(ex));
+            }
 
             int pipeCount =
                 pipeRun != null
@@ -220,7 +261,11 @@ namespace ClassLibrary4
                 MessageBox.Show(
                     "Chưa có tuyến nào đủ bằng chứng để AI chốt.\n\n" +
                     "PIPE cần text DN100 / D60 / Ø60 song song tuyến.\n" +
-                    "DUCT cần text 800x400 / W800xH400 hoặc ØD có context ACMV.",
+                    "DUCT cần text 800x400 / W800xH400 hoặc ØD có context ACMV." +
+                    (nonBlockingErrors.Count > 0
+                        ? "\n\nChi tiết phần bị chặn:\n• " +
+                          string.Join("\n• ", nonBlockingErrors)
+                        : ""),
                     "AI ĐƯỜNG ỐNG MEP");
 
                 return;
@@ -270,6 +315,39 @@ namespace ClassLibrary4
                 " đoạn | DUCT=" +
                 ductCount +
                 " đoạn.");
+
+            if (nonBlockingErrors.Count > 0)
+            {
+                MessageBox.Show(
+                    "AI đã hoàn thành các phần còn chạy được.\n\n" +
+                    "Các phần lỗi đã được cô lập, không làm mất kết quả còn lại:\n• " +
+                    string.Join("\n• ", nonBlockingErrors),
+                    "AI BÓC TÁCH MEP",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Warning);
+            }
+        }
+
+        private static string BuildCompactHvacError(
+            System.Exception ex)
+        {
+            if (ex == null)
+                return "Lỗi không xác định.";
+
+            System.Exception root = ex;
+
+            while (root.InnerException != null && root.InnerException != root)
+                root = root.InnerException;
+
+            string message = (root.Message ?? "").Trim();
+
+            if (message.Length > 420)
+                message = message.Substring(0, 420) + "...";
+
+            return root.GetType().Name +
+                   (string.IsNullOrWhiteSpace(message)
+                       ? ""
+                       : " - " + message);
         }
 
         // ============================================================
@@ -282,8 +360,16 @@ namespace ClassLibrary4
         {
             try
             {
-                UpdateAiLearningStatusUi();
-                UpdateOnnxStatusUi();
+                MepPluginExtensionApp.RegisterResolvers();
+
+                try
+                {
+                    UpdateAiLearningStatusUi();
+                    UpdateOnnxStatusUi();
+                }
+                catch
+                {
+                }
 
                 Document doc =
                     Autodesk.AutoCAD.ApplicationServices.Core.Application
@@ -330,13 +416,24 @@ namespace ClassLibrary4
 
                 // Duct context chạy im lặng để VCD/FD/FSD lấy đúng WxH.
                 MepDuctScanResult ductContext =
-                    _aiDuctSemanticEngine
-                        .AnalyzeAndDraw(
-                            doc,
-                            workingSelection
-                                .GetObjectIds(),
-                            false,
-                            false);
+                    new MepDuctScanResult();
+
+                try
+                {
+                    ductContext =
+                        _aiDuctSemanticEngine
+                            .AnalyzeAndDraw(
+                                doc,
+                                workingSelection
+                                    .GetObjectIds(),
+                                false,
+                                false);
+                }
+                catch
+                {
+                    // Duct context chỉ là evidence bổ sung. Exact Block/Vector
+                    // và pipeline VAN/TB chính vẫn phải tiếp tục.
+                }
 
                 _lastAiDuctRun =
                     ductContext;
@@ -402,6 +499,8 @@ namespace ClassLibrary4
             if (_aiAutoPipelineBusy)
                 return;
 
+            MepPluginExtensionApp.RegisterResolvers();
+
             Document doc =
                 Autodesk.AutoCAD.ApplicationServices.Core.Application
                     .DocumentManager
@@ -412,6 +511,9 @@ namespace ClassLibrary4
 
             Editor ed =
                 doc.Editor;
+
+            List<string> nonBlockingErrors =
+                new List<string>();
 
             try
             {
@@ -443,15 +545,34 @@ namespace ClassLibrary4
                         "AI ENGINE: ĐANG CHUẨN BỊ MODEL / LEGEND / HVAC...";
                 }
 
-                UpdateOnnxStatusUi();
-                UpdateAiGnnStatusUi();
+                try
+                {
+                    UpdateOnnxStatusUi();
+                    UpdateAiGnnStatusUi();
+                }
+                catch (System.Exception ex)
+                {
+                    nonBlockingErrors.Add(
+                        "MODEL STATUS: " + BuildCompactHvacError(ex));
+                }
 
-                bool hasCurrentProjectLegend;
+                bool hasCurrentProjectLegend = false;
 
                 List<SmartSymbolRule> autoDeviceRules =
-                    ResolveAiAutoDeviceRules(
-                        doc,
-                        out hasCurrentProjectLegend);
+                    new List<SmartSymbolRule>();
+
+                try
+                {
+                    autoDeviceRules =
+                        ResolveAiAutoDeviceRules(
+                            doc,
+                            out hasCurrentProjectLegend);
+                }
+                catch (System.Exception ex)
+                {
+                    nonBlockingErrors.Add(
+                        "DEVICE RULE: " + BuildCompactHvacError(ex));
+                }
 
                 autoDeviceRules =
                     MergeBuiltInHvacRules(
@@ -488,22 +609,42 @@ namespace ClassLibrary4
                         "AI ENGINE: 1/4 • PIPE + DUCT...";
                 }
 
-                AiPipeTakeoffRunResult pipeRun =
-                    AnalyzeAndDrawAiPipeTakeoff(
-                        doc,
-                        workingSelection);
+                AiPipeTakeoffRunResult pipeRun = null;
+
+                try
+                {
+                    pipeRun =
+                        AnalyzeAndDrawAiPipeTakeoff(
+                            doc,
+                            workingSelection);
+                }
+                catch (System.Exception ex)
+                {
+                    nonBlockingErrors.Add(
+                        "PIPE: " + BuildCompactHvacError(ex));
+                }
 
                 _lastAiAutoPipeRun =
                     pipeRun;
 
-                MepDuctScanResult ductRun =
-                    _aiDuctSemanticEngine
-                        .AnalyzeAndDraw(
-                            doc,
-                            workingSelection
-                                .GetObjectIds(),
-                            true,
-                            true);
+                MepDuctScanResult ductRun = null;
+
+                try
+                {
+                    ductRun =
+                        _aiDuctSemanticEngine
+                            .AnalyzeAndDraw(
+                                doc,
+                                workingSelection
+                                    .GetObjectIds(),
+                                true,
+                                true);
+                }
+                catch (System.Exception ex)
+                {
+                    nonBlockingErrors.Add(
+                        "DUCT: " + BuildCompactHvacError(ex));
+                }
 
                 _lastAiDuctRun =
                     ductRun;
@@ -514,11 +655,19 @@ namespace ClassLibrary4
                         "AI ENGINE: 2/4 • GRAPH / TOPOLOGY...";
                 }
 
-                BuildMepGraphFromSelection(
-                    doc,
-                    workingSelection
-                        .GetObjectIds(),
-                    false);
+                try
+                {
+                    BuildMepGraphFromSelection(
+                        doc,
+                        workingSelection
+                            .GetObjectIds(),
+                        false);
+                }
+                catch (System.Exception ex)
+                {
+                    nonBlockingErrors.Add(
+                        "GRAPH: " + BuildCompactHvacError(ex));
+                }
 
                 if (hasDeviceRules)
                 {
@@ -528,13 +677,21 @@ namespace ClassLibrary4
                             "AI ENGINE: 3/4 • VAN / THIẾT BỊ / YOLO...";
                     }
 
-                    ScanSmartValveDeviceStatistics(
-                        doc,
-                        autoDeviceRules,
-                        workingSelection,
-                        false,
-                        true,
-                        hasCurrentProjectLegend);
+                    try
+                    {
+                        ScanSmartValveDeviceStatistics(
+                            doc,
+                            autoDeviceRules,
+                            workingSelection,
+                            false,
+                            true,
+                            hasCurrentProjectLegend);
+                    }
+                    catch (System.Exception ex)
+                    {
+                        nonBlockingErrors.Add(
+                            "VAN/TB: " + BuildCompactHvacError(ex));
+                    }
                 }
 
                 if (TxtAiAutoStatus != null)
@@ -543,13 +700,23 @@ namespace ClassLibrary4
                         "AI ENGINE: 4/4 • HVAC VAN GIÓ / MIỆNG GIÓ...";
                 }
 
-                MepHvacDeviceScanResult hvacRun =
-                    _aiHvacDeviceEngine
-                        .Analyze(
-                            doc,
-                            workingSelection
-                                .GetObjectIds(),
-                            ductRun);
+                MepHvacDeviceScanResult hvacRun = null;
+
+                try
+                {
+                    hvacRun =
+                        _aiHvacDeviceEngine
+                            .Analyze(
+                                doc,
+                                workingSelection
+                                    .GetObjectIds(),
+                                ductRun);
+                }
+                catch (System.Exception ex)
+                {
+                    nonBlockingErrors.Add(
+                        "HVAC DEVICE: " + BuildCompactHvacError(ex));
+                }
 
                 _lastAiHvacDeviceRun =
                     hvacRun;
@@ -557,11 +724,19 @@ namespace ClassLibrary4
                 _lastAiAutoRunUtc =
                     DateTime.UtcNow;
 
-                UpdateAiAutoHubStatusUi();
-                UpdateAiGraphStatusUi();
-                UpdateAiLegendStatusUi();
-                UpdateAiLearningStatusUi();
-                UpdateAiDatasetStatusUi();
+                try
+                {
+                    UpdateAiAutoHubStatusUi();
+                    UpdateAiGraphStatusUi();
+                    UpdateAiLegendStatusUi();
+                    UpdateAiLearningStatusUi();
+                    UpdateAiDatasetStatusUi();
+                }
+                catch (System.Exception ex)
+                {
+                    nonBlockingErrors.Add(
+                        "STATUS UI: " + BuildCompactHvacError(ex));
+                }
 
                 int pipeCount =
                     pipeRun != null
@@ -634,7 +809,11 @@ namespace ClassLibrary4
                     "Cần kiểm tra: " +
                     needReview +
                     ductSummary +
-                    hvacSummary,
+                    hvacSummary +
+                    (nonBlockingErrors.Count > 0
+                        ? "\n\nPHẦN ĐÃ CÔ LẬP LỖI:\n• " +
+                          string.Join("\n• ", nonBlockingErrors)
+                        : ""),
                     "AI MEP");
 
                 if (TxtAiAutoSummary != null)
@@ -652,9 +831,15 @@ namespace ClassLibrary4
                         needReview;
                 }
 
-                RequestAiCloudAutoSyncQuiet(
-                    "AUTO_PIPE_DUCT_HVAC_FINISHED",
-                    true);
+                try
+                {
+                    RequestAiCloudAutoSyncQuiet(
+                        "AUTO_PIPE_DUCT_HVAC_FINISHED",
+                        true);
+                }
+                catch
+                {
+                }
             }
             catch (System.Exception ex)
             {

@@ -47,6 +47,8 @@ namespace ClassLibrary4
         public string Description { get; set; } = "";
         public Point3d ReducerStart { get; set; } = Point3d.Origin;
         public Point3d ReducerEnd { get; set; } = Point3d.Origin;
+        public bool HasBranchEdgePosition { get; set; }
+        public Point3d BranchEdgePosition { get; set; } = Point3d.Origin;
         public double WideWidth { get; set; }
         public double NarrowWidth { get; set; }
     }
@@ -152,6 +154,7 @@ namespace ClassLibrary4
         public int InheritedSizeCount { get; set; }
         public int RejectedCount { get; set; }
         public int AmbiguousCount { get; set; }
+        public int ShaftExcludedCount { get; set; }
         public int OutputSegmentCount => Segments?.Count ?? 0;
 
         public double TotalLengthMm =>
@@ -184,7 +187,7 @@ namespace ClassLibrary4
     /// - Ràng buộc kích thước theo bề rộng đo thực tế từ bản vẽ (Measured Plan Width) -> Tránh nhận nhầm size.
     /// - Nhận diện toàn diện phụ kiện: Co (Elbow), Tê (Tee), Giảm (Reducer), Gót giày (Shoe tap).
     /// - Lan truyền kích thước thông minh qua đồ thị tôpô cho các đoạn không ghi text kích thước.
-    /// - Kéo dài phụ kiện 50/50 vào đúng tâm giao điểm đỉnh.
+    /// - Co gặp đúng đỉnh; nhánh Tê/Gót giày chỉ chạm mép ngoài ống chính.
     /// - Vẽ Polyline với ConstantWidth = Max(W, H) và Độ Trong Suốt 60%.
     /// - Vẽ các ký hiệu/nhãn Phụ Kiện rõ ràng trên layer riêng TDL_AI_DUCT_PHUKIEN.
     /// </summary>
@@ -200,10 +203,13 @@ namespace ClassLibrary4
         private const double MaxTextAngleRadians = Math.PI / 7.2; // 25 deg
         private const double DoubleLineAngleRadians = Math.PI / 25.0; // ~7.2 deg
         private const double MinCurveLength = 50.0;
-        private const double MaxSeedDistanceBase = 1200.0;
+        private const double MaxTopologyReachMm = 1200.0;
+        private const double MaxElbowReachMm = 2400.0;
+        private const double MinTrustedConfidence = 0.68;
 
         private sealed class CurveCandidate
         {
+            public int CandidateId { get; set; }
             public ObjectId Id { get; set; } = ObjectId.Null;
             public Curve Curve { get; set; }
             public Entity Entity { get; set; }
@@ -218,7 +224,64 @@ namespace ClassLibrary4
             public MepDuctTextSeed Seed { get; set; }
             public double SeedDistance { get; set; } = double.MaxValue;
             public double SeedAngle { get; set; } = double.MaxValue;
+            public double SeedScore { get; set; } = double.MaxValue;
             public bool LayerLooksDuct { get; set; }
+        }
+
+        private sealed class ShaftMarker
+        {
+            public Point3d Position { get; set; } = Point3d.Origin;
+        }
+
+        private sealed class ShaftExclusionZone
+        {
+            public double MinX { get; set; }
+            public double MinY { get; set; }
+            public double MaxX { get; set; }
+            public double MaxY { get; set; }
+
+            public double Width => Math.Max(0.0, MaxX - MinX);
+            public double Height => Math.Max(0.0, MaxY - MinY);
+            public double MaxSide => Math.Max(Width, Height);
+
+            public Point3d Center =>
+                new Point3d(
+                    (MinX + MaxX) * 0.5,
+                    (MinY + MaxY) * 0.5,
+                    0.0);
+
+            public bool Contains2D(
+                Point3d point,
+                double tolerance = 0.0)
+            {
+                return point.X >= MinX - tolerance &&
+                       point.X <= MaxX + tolerance &&
+                       point.Y >= MinY - tolerance &&
+                       point.Y <= MaxY + tolerance;
+            }
+        }
+
+        private sealed class OverlayPath
+        {
+            public MepDuctSegment Template { get; set; }
+            public double Width { get; set; }
+            public bool Closed { get; set; }
+            public List<Point3d> Points { get; set; } = new List<Point3d>();
+        }
+
+        private sealed class OverlayGraphNode
+        {
+            public Point3d Position { get; set; } = Point3d.Origin;
+            public int SampleCount { get; set; }
+            public List<int> EdgeIds { get; set; } = new List<int>();
+        }
+
+        private sealed class OverlayGraphEdge
+        {
+            public MepDuctSegment Segment { get; set; }
+            public int NodeA { get; set; }
+            public int NodeB { get; set; }
+            public bool Used { get; set; }
         }
 
         public MepDuctScanResult AnalyzeAndDraw(
@@ -249,12 +312,18 @@ namespace ClassLibrary4
                     db.CurrentSpaceId,
                     drawOverlay ? OpenMode.ForWrite : OpenMode.ForRead) as BlockTableRecord;
 
+                // 0) Tìm vùng ký hiệu trục/shaft để không tô ống gió vào
+                // phần gạch chéo của ô trục.
+                List<ShaftExclusionZone> shaftZones =
+                    ReadShaftExclusionZones(tr, ids);
+
                 // 1) Đọc text kích thước WxH, ØD, EI, Hệ thống
                 List<MepDuctTextSeed> seeds = ReadDuctTextSeeds(tr, ids);
                 result.DuctSizeTextCount = seeds.Count;
 
                 // 2) Đọc tất cả đối tượng đường nét CAD
-                List<CurveCandidate> curves = ReadCurveCandidates(tr, ids);
+                List<CurveCandidate> curves =
+                    ReadCurveCandidates(tr, ids, shaftZones);
                 result.RawCurveCount = curves.Count;
 
                 // 3) Gán seed cho các đường phù hợp (kết hợp khoảng cách, góc và bề rộng thực tế)
@@ -263,31 +332,53 @@ namespace ClassLibrary4
                 // 4) Xây dựng các đoạn tim tuyến ban đầu (kể cả đoạn chưa có text)
                 List<MepDuctSegment> segments = BuildInitialSegments(curves, ref result);
 
+                // Cắt tuyến tại mép ô trục và loại phần nằm trong vùng hatch.
+                segments = ExcludeShaftZones(
+                    segments,
+                    shaftZones,
+                    ref result);
+
+                // Loại trùng trước khi dựng topology để fitting không tham chiếu
+                // các segment ảo/trùng ID.
+                segments = DeduplicateSegments(segments);
+                ReindexSegments(segments);
+
                 // 5) Xây dựng Đồ Thị Tôpô & Nhận diện Phụ kiện (Co, Tê, Giảm, Gót Giày)
                 List<MepDuctFitting> fittings = DetectFittingsAndBuildTopology(segments);
-                result.Fittings = fittings;
 
                 // 6) Lan truyền kích thước cho các đoạn CHƯA CÓ TEXT qua đồ thị
-                int propagatedCount = PropagateSizesThroughTopology(segments, fittings, seeds);
-                result.InheritedSizeCount = propagatedCount;
+                PropagateSizesThroughTopology(segments, fittings, seeds);
 
-                // 7) Áp dụng quy tắc cắt nối 50/50 tại phụ kiện (Kéo dài tim tuyến gặp nhau tại tâm giao)
+                // 7) Chỉnh điểm nối: co gặp đỉnh; Tê/Gót giày dừng tại mép ống chính.
                 ApplyFitting5050Adjustment(segments, fittings);
 
-                // 8) Lọc các đoạn hợp lệ có kích thước và chiều dài đạt chuẩn
+                // 8) Chỉ giữ các đoạn có bằng chứng đủ mạnh. Đây là gate chặn
+                // nét thiết bị/phụ kiện bị biến thành mảng tím lớn.
+                int beforeTrustGate = segments.Count;
                 segments = segments
-                    .Where(x => x != null &&
-                                !string.IsNullOrWhiteSpace(x.Size) &&
-                                x.LengthMm >= MinCurveLength)
+                    .Where(IsTrustedDuctSegment)
                     .ToList();
 
-                for (int i = 0; i < segments.Count; i++)
-                {
-                    segments[i].Id = i;
-                }
-
-                // Loại bỏ đoạn trùng lặp
                 segments = DeduplicateSegments(segments);
+                ReindexSegments(segments);
+
+                result.RejectedCount += Math.Max(0, beforeTrustGate - segments.Count);
+                result.InheritedSizeCount = segments.Count(x =>
+                    x != null &&
+                    (string.Equals(x.Representation, "INHERITED", StringComparison.OrdinalIgnoreCase) ||
+                     string.Equals(x.Representation, "INFERRED_FROM_CAD_WIDTH", StringComparison.OrdinalIgnoreCase)));
+
+                // Dựng lại fitting từ danh sách cuối để ConnectedSegmentIds
+                // luôn khớp sau bước lọc/deduplicate/reindex.
+                result.Fittings = DetectFittingsAndBuildTopology(segments);
+
+                // Topology cuối có thêm các segment vừa được truyền size.
+                // Áp dụng lại để co 90 có khoảng hở/bo cong vẫn gặp đúng đỉnh,
+                // còn nhánh tee/gót giày chỉ chạm MÉP ống chính.
+                ApplyFitting5050Adjustment(segments, result.Fittings);
+                ConnectCollinearSameSizeRuns(segments);
+
+                result.Fittings = DetectFittingsAndBuildTopology(segments);
 
                 result.Segments = segments;
                 result.Stats = BuildStats(segments);
@@ -386,7 +477,10 @@ namespace ClassLibrary4
                 " | Gót giày=" + run.ShoeTapCount +
                 (run.CrossCount > 0 ? " | Thập=" + run.CrossCount : ""),
                 "• Tổng chiều dài: " + (run.TotalLengthMm / 1000.0).ToString("0.00", CultureInfo.InvariantCulture) + " m" +
-                " | Diện tích tôn: " + run.TotalAreaM2.ToString("0.00", CultureInfo.InvariantCulture) + " m²"
+                " | Diện tích tôn: " + run.TotalAreaM2.ToString("0.00", CultureInfo.InvariantCulture) + " m²" +
+                (run.ShaftExcludedCount > 0
+                    ? " | Loại khỏi trục: " + run.ShaftExcludedCount
+                    : "")
             };
 
             foreach (MepDuctTakeoffRow row in (run.Stats ?? new List<MepDuctTakeoffRow>()).Take(Math.Max(1, maxRows)))
@@ -476,11 +570,231 @@ namespace ClassLibrary4
             return result;
         }
 
-        private static List<CurveCandidate> ReadCurveCandidates(
+        private static List<ShaftExclusionZone> ReadShaftExclusionZones(
             Transaction tr,
             ObjectId[] ids)
         {
+            List<ShaftMarker> markers = new List<ShaftMarker>();
+            List<(ShaftExclusionZone Zone, bool Preferred)> boundaries =
+                new List<(ShaftExclusionZone, bool)>();
+
+            foreach (ObjectId id in ids ?? Array.Empty<ObjectId>())
+            {
+                Entity ent = SafeOpenEntity(tr, id);
+                if (ent == null || IsAiDuctOutputLayer(ent.Layer))
+                    continue;
+
+                if (ent is DBText text)
+                {
+                    string raw = text.TextString ?? "";
+
+                    if (MepDuctSizeParser.HasShaftContext(
+                            raw + " " + (text.Layer ?? "")))
+                    {
+                        Point3d position = text.Position;
+
+                        try
+                        {
+                            if (text.Justify != AttachmentPoint.BaseLeft)
+                                position = text.AlignmentPoint;
+                        }
+                        catch
+                        {
+                        }
+
+                        markers.Add(new ShaftMarker { Position = position });
+                    }
+
+                    continue;
+                }
+
+                if (ent is MText mtext)
+                {
+                    if (MepDuctSizeParser.HasShaftContext(
+                            (mtext.Text ?? "") + " " + (mtext.Layer ?? "")))
+                    {
+                        markers.Add(new ShaftMarker { Position = mtext.Location });
+                    }
+
+                    continue;
+                }
+
+                bool preferred =
+                    ent is Hatch ||
+                    MepDuctSizeParser.HasShaftContext(ent.Layer);
+
+                bool eligible =
+                    preferred ||
+                    (ent is Polyline polyline && polyline.Closed) ||
+                    (ent is Polyline2d polyline2d && polyline2d.Closed) ||
+                    (ent is Polyline3d polyline3d && polyline3d.Closed);
+
+                if (ent is BlockReference blockReference)
+                {
+                    string blockName = "";
+
+                    try
+                    {
+                        blockName = blockReference.Name ?? "";
+                    }
+                    catch
+                    {
+                    }
+
+                    if (MepDuctSizeParser.HasShaftContext(
+                            blockName + " " + (ent.Layer ?? "")))
+                    {
+                        eligible = true;
+                        preferred = true;
+                    }
+                }
+
+                if (!eligible ||
+                    !TryCreateShaftZone(ent, out ShaftExclusionZone zone))
+                {
+                    continue;
+                }
+
+                boundaries.Add((zone, preferred));
+            }
+
+            if (markers.Count == 0 || boundaries.Count == 0)
+                return new List<ShaftExclusionZone>();
+
+            List<ShaftExclusionZone> result =
+                new List<ShaftExclusionZone>();
+
+            foreach (ShaftMarker marker in markers)
+            {
+                ShaftExclusionZone best = null;
+                double bestScore = double.MaxValue;
+
+                foreach (var boundary in boundaries)
+                {
+                    ShaftExclusionZone zone = boundary.Zone;
+                    double distance = DistancePointToZone2D(marker.Position, zone);
+                    double maxSearch = Math.Min(
+                        3500.0,
+                        Math.Max(1600.0, zone.MaxSide * 0.75 + 500.0));
+
+                    if (distance > maxSearch)
+                        continue;
+
+                    double areaPenalty =
+                        Math.Sqrt(Math.Max(1.0, zone.Width * zone.Height)) * 0.04;
+
+                    double score =
+                        distance +
+                        areaPenalty +
+                        (boundary.Preferred ? -450.0 : 0.0);
+
+                    if (score < bestScore)
+                    {
+                        bestScore = score;
+                        best = zone;
+                    }
+                }
+
+                if (best == null)
+                    continue;
+
+                bool duplicate = result.Any(existing =>
+                    PlanDistance(existing.Center, best.Center) <= 120.0 &&
+                    Math.Abs(existing.Width - best.Width) <= 160.0 &&
+                    Math.Abs(existing.Height - best.Height) <= 160.0);
+
+                if (!duplicate)
+                    result.Add(best);
+            }
+
+            return result;
+        }
+
+        private static bool TryCreateShaftZone(
+            Entity entity,
+            out ShaftExclusionZone zone)
+        {
+            zone = null;
+
+            if (entity == null)
+                return false;
+
+            try
+            {
+                Extents3d extents = entity.GeometricExtents;
+                double width = Math.Abs(extents.MaxPoint.X - extents.MinPoint.X);
+                double height = Math.Abs(extents.MaxPoint.Y - extents.MinPoint.Y);
+                double minSide = Math.Min(width, height);
+                double maxSide = Math.Max(width, height);
+
+                // Ô trục trên bản vẽ MEP thường từ vài trăm đến vài nghìn mm.
+                // Loại hatch tường/sàn quá lớn để không che mất tuyến thật.
+                if (minSide < 120.0 ||
+                    maxSide > 8000.0 ||
+                    width * height > 36000000.0)
+                {
+                    return false;
+                }
+
+                zone = new ShaftExclusionZone
+                {
+                    MinX = Math.Min(extents.MinPoint.X, extents.MaxPoint.X),
+                    MinY = Math.Min(extents.MinPoint.Y, extents.MaxPoint.Y),
+                    MaxX = Math.Max(extents.MinPoint.X, extents.MaxPoint.X),
+                    MaxY = Math.Max(extents.MinPoint.Y, extents.MaxPoint.Y)
+                };
+
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        private static double DistancePointToZone2D(
+            Point3d point,
+            ShaftExclusionZone zone)
+        {
+            if (zone == null)
+                return double.MaxValue;
+
+            double dx = Math.Max(
+                Math.Max(zone.MinX - point.X, 0.0),
+                point.X - zone.MaxX);
+
+            double dy = Math.Max(
+                Math.Max(zone.MinY - point.Y, 0.0),
+                point.Y - zone.MaxY);
+
+            return Math.Sqrt(dx * dx + dy * dy);
+        }
+
+        private static bool IsSegmentFullyInsideShaftZone(
+            Point3d start,
+            Point3d end,
+            List<ShaftExclusionZone> zones,
+            double tolerance)
+        {
+            if (zones == null || zones.Count == 0)
+                return false;
+
+            Point3d center = MidPoint(start, end);
+
+            return zones.Any(zone =>
+                zone != null &&
+                zone.Contains2D(start, tolerance) &&
+                zone.Contains2D(end, tolerance) &&
+                zone.Contains2D(center, tolerance));
+        }
+
+        private static List<CurveCandidate> ReadCurveCandidates(
+            Transaction tr,
+            ObjectId[] ids,
+            List<ShaftExclusionZone> shaftZones)
+        {
             List<CurveCandidate> result = new List<CurveCandidate>();
+            int candidateId = 0;
 
             foreach (ObjectId id in ids)
             {
@@ -488,9 +802,17 @@ namespace ClassLibrary4
                 if (ent == null || IsAiDuctOutputLayer(ent.Layer))
                     continue;
 
-                // STEP30E FIX: Loại trừ ngay các đối tượng thuộc Layer PCCC, Chữa cháy, Cấp thoát nước
-                if (MepDuctSizeParser.HasPipeOrFireProtectionContext(ent.Layer) ||
-                    MepDuctSizeParser.HasDnPipeText(ent.Layer))
+                if (MepDuctSizeParser.HasShaftContext(ent.Layer))
+                    continue;
+
+                bool layerLooksDuct =
+                    MepDuctSizeParser.HasDuctContext(ent.Layer);
+
+                // Layer FIRE RATED DUCT vẫn là duct. Chỉ loại PCCC/CTN khi
+                // layer không có ngữ cảnh HVAC/DUCT rõ ràng.
+                if (!layerLooksDuct &&
+                    (MepDuctSizeParser.HasPipeOrFireProtectionContext(ent.Layer) ||
+                     MepDuctSizeParser.HasDnPipeText(ent.Layer)))
                 {
                     continue;
                 }
@@ -498,41 +820,147 @@ namespace ClassLibrary4
                 if (!(ent is Curve curve))
                     continue;
 
+                if (ent is Arc)
+                {
+                    // Arc là hình học fitting, không được lấy dây cung Start-End
+                    // làm một tuyến thẳng xuyên qua co/cút.
+                    continue;
+                }
+
+                if (ent is Polyline polyline)
+                {
+                    if (TryGetClosedRectangleCenterline(
+                            polyline,
+                            out Point3d centerStart,
+                            out Point3d centerEnd,
+                            out double rectWidth))
+                    {
+                        if (IsSegmentFullyInsideShaftZone(
+                                centerStart,
+                                centerEnd,
+                                shaftZones,
+                                120.0))
+                        {
+                            continue;
+                        }
+
+                        result.Add(new CurveCandidate
+                        {
+                            CandidateId = candidateId++,
+                            Id = id,
+                            Curve = curve,
+                            Entity = ent,
+                            Layer = ent.Layer ?? "",
+                            Start = polyline.StartPoint,
+                            End = polyline.EndPoint,
+                            Length = centerStart.DistanceTo(centerEnd),
+                            ClosedRectangle = true,
+                            RectCenterStart = centerStart,
+                            RectCenterEnd = centerEnd,
+                            RectWidth = rectWidth,
+                            LayerLooksDuct = layerLooksDuct
+                        });
+
+                        continue;
+                    }
+
+                    // Closed polyline không phải khung duct thường là outline
+                    // thiết bị/ký hiệu. Không tách nó thành các tuyến ống.
+                    if (polyline.Closed || polyline.NumberOfVertices < 2)
+                        continue;
+
+                    for (int index = 0;
+                        index < polyline.NumberOfVertices - 1;
+                        index++)
+                    {
+                        try
+                        {
+                            if (polyline.GetSegmentType(index) != SegmentType.Line)
+                                continue;
+
+                            LineSegment3d lineSegment =
+                                polyline.GetLineSegmentAt(index);
+
+                            Point3d start = lineSegment.StartPoint;
+                            Point3d end = lineSegment.EndPoint;
+                            double length = start.DistanceTo(end);
+
+                            if (length < MinCurveLength ||
+                                IsSegmentFullyInsideShaftZone(
+                                    start,
+                                    end,
+                                    shaftZones,
+                                    80.0))
+                            {
+                                continue;
+                            }
+
+                            result.Add(new CurveCandidate
+                            {
+                                CandidateId = candidateId++,
+                                Id = id,
+                                Curve = curve,
+                                Entity = ent,
+                                Layer = ent.Layer ?? "",
+                                Start = start,
+                                End = end,
+                                Length = length,
+                                LayerLooksDuct = layerLooksDuct
+                            });
+                        }
+                        catch
+                        {
+                        }
+                    }
+
+                    continue;
+                }
+
                 if (!(ent is Line) &&
-                    !(ent is Polyline) &&
                     !(ent is Polyline2d) &&
-                    !(ent is Polyline3d) &&
-                    !(ent is Arc))
+                    !(ent is Polyline3d))
                 {
                     continue;
                 }
 
-                double length = GetCurveLength(curve);
-                if (length < MinCurveLength)
-                    continue;
-
-                CurveCandidate candidate = new CurveCandidate
+                if ((ent is Polyline2d polyline2d && polyline2d.Closed) ||
+                    (ent is Polyline3d polyline3d && polyline3d.Closed))
                 {
+                    continue;
+                }
+
+                double curveLength = GetCurveLength(curve);
+                double chordLength = curve.StartPoint.DistanceTo(curve.EndPoint);
+
+                if (curveLength < MinCurveLength ||
+                    chordLength < MinCurveLength ||
+                    chordLength / Math.Max(curveLength, 1.0) < 0.985)
+                {
+                    // Không dùng Start-End chord của polyline nhiều đỉnh/cong.
+                    continue;
+                }
+
+                if (IsSegmentFullyInsideShaftZone(
+                        curve.StartPoint,
+                        curve.EndPoint,
+                        shaftZones,
+                        80.0))
+                {
+                    continue;
+                }
+
+                result.Add(new CurveCandidate
+                {
+                    CandidateId = candidateId++,
                     Id = id,
                     Curve = curve,
                     Entity = ent,
                     Layer = ent.Layer ?? "",
                     Start = curve.StartPoint,
                     End = curve.EndPoint,
-                    Length = length,
-                    LayerLooksDuct = MepDuctSizeParser.HasDuctContext(ent.Layer)
-                };
-
-                if (ent is Polyline pl &&
-                    TryGetClosedRectangleCenterline(pl, out Point3d centerStart, out Point3d centerEnd, out double rectWidth))
-                {
-                    candidate.ClosedRectangle = true;
-                    candidate.RectCenterStart = centerStart;
-                    candidate.RectCenterEnd = centerEnd;
-                    candidate.RectWidth = rectWidth;
-                }
-
-                result.Add(candidate);
+                    Length = chordLength,
+                    LayerLooksDuct = layerLooksDuct
+                });
             }
 
             return result;
@@ -587,10 +1015,23 @@ namespace ClassLibrary4
                     Point3d b = curve.ClosedRectangle ? curve.RectCenterEnd : curve.End;
 
                     double distance = DistancePointToSegment2D(seed.Position, a, b);
-                    double maxDistance = Math.Max(MaxSeedDistanceBase, seed.Size.MaxDimensionMm * 1.5 + 300.0);
+                    double maxDistance = Math.Min(
+                        1800.0,
+                        Math.Max(
+                            450.0,
+                            seed.Size.MaxDimensionMm * 0.85 + 250.0));
 
                     if (distance > maxDistance)
                         continue;
+
+                    // Size trần như "800x400" không có context HVAC chỉ được
+                    // gắn vào nét rất gần; tránh hút nhầm kích thước kiến trúc.
+                    if (!curve.LayerLooksDuct &&
+                        !seed.Size.HasStrongDuctContext &&
+                        distance > Math.Min(350.0, seed.Size.MaxDimensionMm * 0.45 + 80.0))
+                    {
+                        continue;
+                    }
 
                     double angleDiff = curve.ClosedRectangle
                         ? 0.0
@@ -635,6 +1076,37 @@ namespace ClassLibrary4
                 curve.Seed = best;
                 curve.SeedDistance = bestDistance;
                 curve.SeedAngle = bestAngle;
+                curve.SeedScore = bestScore;
+            }
+
+            // Một annotation kích thước chỉ được quyền "khởi tạo" một ứng
+            // viên hình học tốt nhất. Bản cũ gắn cùng một text 3300x700 cho
+            // mọi LINE/POLYLINE nằm trong bán kính lớn, khiến outline AHU,
+            // co và thiết bị đều bị tô ConstantWidth thành mảng tím khổng lồ.
+            // Các đoạn còn lại phải nhận size qua double-line/topology, không
+            // được dùng lại text như một nhãn toàn vùng.
+            foreach (IGrouping<ObjectId, CurveCandidate> group in curves
+                .Where(x => x?.Seed != null && !x.Seed.Id.IsNull)
+                .GroupBy(x => x.Seed.Id))
+            {
+                CurveCandidate winner = group
+                    .OrderBy(x => x.SeedScore)
+                    .ThenBy(x => x.SeedDistance)
+                    .ThenByDescending(x => x.LayerLooksDuct)
+                    .ThenByDescending(x => x.Length)
+                    .FirstOrDefault();
+
+                foreach (CurveCandidate candidate in group)
+                {
+                    if (ReferenceEquals(candidate, winner))
+                        continue;
+
+                    candidate.Seed = null;
+                    candidate.SeedDistance = double.MaxValue;
+                    candidate.SeedAngle = double.MaxValue;
+                    candidate.SeedScore = double.MaxValue;
+                    result.AmbiguousCount++;
+                }
             }
         }
 
@@ -650,12 +1122,25 @@ namespace ClassLibrary4
             if (curves == null || curves.Count == 0)
                 return output;
 
-            HashSet<ObjectId> used = new HashSet<ObjectId>();
+            HashSet<int> used = new HashSet<int>();
             int segIdCounter = 0;
 
             // 1) Khung chữ nhật khép kín
             foreach (CurveCandidate curve in curves.Where(c => c != null && c.ClosedRectangle))
             {
+                bool trustedUnseededFrame =
+                    curve.Seed == null &&
+                    curve.LayerLooksDuct &&
+                    curve.RectWidth > 0.0 &&
+                    curve.RectCenterStart.DistanceTo(curve.RectCenterEnd) >=
+                        curve.RectWidth * 1.35;
+
+                if (curve.Seed == null && !trustedUnseededFrame)
+                {
+                    result.RejectedCount++;
+                    continue;
+                }
+
                 MepDuctSegment segment = CreateSegmentFromCandidate(
                     segIdCounter++,
                     curve.RectCenterStart,
@@ -671,21 +1156,21 @@ namespace ClassLibrary4
                 if (segment != null)
                 {
                     output.Add(segment);
-                    used.Add(curve.Id);
+                    used.Add(curve.CandidateId);
                     result.RectFrameCount++;
                 }
             }
 
             // 2) Ghép cặp đường song song (Double-line)
             List<CurveCandidate> open = curves
-                .Where(c => c != null && !c.ClosedRectangle && !used.Contains(c.Id))
+                .Where(c => c != null && !c.ClosedRectangle && !used.Contains(c.CandidateId))
                 .OrderByDescending(c => c.Length)
                 .ToList();
 
             for (int i = 0; i < open.Count; i++)
             {
                 CurveCandidate a = open[i];
-                if (a == null || used.Contains(a.Id))
+                if (a == null || used.Contains(a.CandidateId))
                     continue;
 
                 CurveCandidate bestPair = null;
@@ -695,7 +1180,19 @@ namespace ClassLibrary4
                 for (int j = i + 1; j < open.Count; j++)
                 {
                     CurveCandidate b = open[j];
-                    if (b == null || used.Contains(b.Id))
+                    if (b == null || used.Contains(b.CandidateId))
+                        continue;
+
+                    // Hai cạnh lấy từ cùng một open polyline thường là outline
+                    // của thiết bị/co. Closed rectangle hợp lệ đã xử lý ở trên.
+                    if (a.Id == b.Id)
+                        continue;
+
+                    double lengthRatio =
+                        Math.Min(a.Length, b.Length) /
+                        Math.Max(1.0, Math.Max(a.Length, b.Length));
+
+                    if (lengthRatio < 0.45)
                         continue;
 
                     double angle = ParallelAngleDifference(PlanAngle(a.Start, a.End), PlanAngle(b.Start, b.End));
@@ -703,20 +1200,42 @@ namespace ClassLibrary4
                         continue;
 
                     double overlap = SegmentOverlapRatio(a.Start, a.End, b.Start, b.End);
-                    if (overlap < 0.35)
+                    if (overlap < 0.55)
                         continue;
 
                     double separation = ParallelSeparation2D(a.Start, a.End, b.Start, b.End);
-                    if (separation < 50.0 || separation > 4500.0)
+                    MepDuctTextSeed pairSeed = ChooseBetterSeed(a, b);
+                    double maxSeparation =
+                        pairSeed?.Size != null
+                            ? Math.Min(4500.0, pairSeed.Size.MaxDimensionMm * 1.30 + 180.0)
+                            : 2500.0;
+
+                    if (separation < 50.0 || separation > maxSeparation)
                         continue;
+
+                    string systemA = MepDuctSizeParser.InferSystemCode(a.Layer);
+                    string systemB = MepDuctSizeParser.InferSystemCode(b.Layer);
+
+                    if (!string.IsNullOrWhiteSpace(systemA) &&
+                        !string.IsNullOrWhiteSpace(systemB) &&
+                        !string.Equals(systemA, systemB, StringComparison.OrdinalIgnoreCase))
+                    {
+                        continue;
+                    }
+
+                    if (pairSeed == null &&
+                        !(a.LayerLooksDuct && b.LayerLooksDuct))
+                    {
+                        continue;
+                    }
 
                     // Kiểm tra xem khoảng cách 2 đường có khớp với text seed không
                     bool seedMatchesSeparation = true;
-                    if (a.Seed?.Size != null)
+                    if (pairSeed?.Size != null)
                     {
-                        double expW = a.Seed.Size.WidthMm;
-                        double expH = a.Seed.Size.HeightMm;
-                        double expD = a.Seed.Size.DiameterMm;
+                        double expW = pairSeed.Size.WidthMm;
+                        double expH = pairSeed.Size.HeightMm;
+                        double expD = pairSeed.Size.DiameterMm;
                         bool matchW = Math.Abs(expW - separation) / separation <= 0.25;
                         bool matchH = Math.Abs(expH - separation) / separation <= 0.25;
                         bool matchD = Math.Abs(expD - separation) / separation <= 0.25;
@@ -724,9 +1243,21 @@ namespace ClassLibrary4
                             seedMatchesSeparation = false;
                     }
 
-                    double score = (1.0 - overlap) * 300.0 + angle * 400.0;
                     if (!seedMatchesSeparation)
-                        score += 500.0; // Penalty nếu text lệch nhiều so với bề rộng đo thực tế
+                        continue;
+
+                    double overlapLength =
+                        Math.Min(a.Length, b.Length) * overlap;
+
+                    if (pairSeed == null && overlapLength < separation * 1.35)
+                        continue;
+
+                    double score =
+                        (1.0 - overlap) * 300.0 +
+                        angle * 400.0 +
+                        (string.Equals(a.Layer, b.Layer, StringComparison.OrdinalIgnoreCase)
+                            ? -80.0
+                            : 0.0);
 
                     if (score < bestPairScore)
                     {
@@ -746,19 +1277,6 @@ namespace ClassLibrary4
 
                     MepDuctTextSeed seed = ChooseBetterSeed(a, bestPair);
 
-                    // Nếu seed không khớp với khoảng cách thực tế của 2 đường nét, bỏ seed để topology lan truyền đúng size
-                    if (seed?.Size != null)
-                    {
-                        double expW = seed.Size.WidthMm;
-                        double expH = seed.Size.HeightMm;
-                        double expD = seed.Size.DiameterMm;
-                        bool matchW = Math.Abs(expW - bestSeparation) / bestSeparation <= 0.25;
-                        bool matchH = Math.Abs(expH - bestSeparation) / bestSeparation <= 0.25;
-                        bool matchD = Math.Abs(expD - bestSeparation) / bestSeparation <= 0.25;
-                        if (!matchW && !matchH && !matchD)
-                            seed = null; // Huỷ seed sai để lan truyền đúng
-                    }
-
                     MepDuctSegment segment = CreateSegmentFromCandidate(
                         segIdCounter++,
                         centerStart,
@@ -774,8 +1292,8 @@ namespace ClassLibrary4
                     if (segment != null)
                     {
                         output.Add(segment);
-                        used.Add(a.Id);
-                        used.Add(bestPair.Id);
+                        used.Add(a.CandidateId);
+                        used.Add(bestPair.CandidateId);
                         result.DoubleLinePairCount++;
                     }
 
@@ -783,30 +1301,283 @@ namespace ClassLibrary4
                 }
 
                 // 3) Tuyến đơn (Single line): Chỉ nhận nếu có Text Seed kích thước hoặc Layer rõ ràng là ống gió
-                if (a.Seed != null || a.LayerLooksDuct)
+                bool explicitSingleTrusted =
+                    a.Seed?.Size != null &&
+                    (a.LayerLooksDuct ||
+                     a.Seed.Size.HasStrongDuctContext ||
+                     (a.SeedDistance <= 300.0 &&
+                      a.Length >= a.Seed.Size.MaxDimensionMm * 1.50));
+
+                if (explicitSingleTrusted || a.LayerLooksDuct)
                 {
                     MepDuctSegment single = CreateSegmentFromCandidate(
                         segIdCounter++,
                         a.Start,
                         a.End,
-                        a.Seed,
+                        explicitSingleTrusted ? a.Seed : null,
                         a.Layer,
                         0.0,
-                        a.Seed != null ? 0.90 : 0.40,
+                        explicitSingleTrusted ? 0.90 : 0.40,
                         "CENTERLINE",
                         new[] { a.Id },
-                        a.LayerLooksDuct ? "duct layer" : "candidate line with duct seed");
+                        explicitSingleTrusted
+                            ? "centerline with trusted duct seed"
+                            : "duct layer without direct size");
 
                     if (single != null)
                     {
                         output.Add(single);
-                        used.Add(a.Id);
+                        used.Add(a.CandidateId);
                         result.SingleCenterlineCount++;
                     }
                 }
             }
 
             return output;
+        }
+
+        private static List<MepDuctSegment> ExcludeShaftZones(
+            List<MepDuctSegment> segments,
+            List<ShaftExclusionZone> zones,
+            ref MepDuctScanResult result)
+        {
+            if (segments == null || segments.Count == 0 ||
+                zones == null || zones.Count == 0)
+            {
+                return segments ?? new List<MepDuctSegment>();
+            }
+
+            List<MepDuctSegment> output =
+                new List<MepDuctSegment>();
+
+            foreach (MepDuctSegment segment in segments)
+            {
+                if (segment == null)
+                    continue;
+
+                List<MepDuctSegment> pieces =
+                    new List<MepDuctSegment> { segment };
+
+                bool changedByShaft = false;
+
+                foreach (ShaftExclusionZone zone in zones)
+                {
+                    List<MepDuctSegment> next =
+                        new List<MepDuctSegment>();
+
+                    foreach (MepDuctSegment piece in pieces)
+                    {
+                        next.AddRange(
+                            SubtractShaftZoneFromSegment(
+                                piece,
+                                zone,
+                                out bool changed));
+
+                        changedByShaft |= changed;
+                    }
+
+                    pieces = next;
+
+                    if (pieces.Count == 0)
+                        break;
+                }
+
+                if (changedByShaft)
+                    result.ShaftExcludedCount++;
+
+                if (pieces.Count == 0)
+                {
+                    result.RejectedCount++;
+                    continue;
+                }
+
+                output.AddRange(pieces);
+            }
+
+            return output;
+        }
+
+        private static List<MepDuctSegment> SubtractShaftZoneFromSegment(
+            MepDuctSegment segment,
+            ShaftExclusionZone sourceZone,
+            out bool changed)
+        {
+            changed = false;
+
+            if (segment == null || sourceZone == null)
+                return new List<MepDuctSegment>();
+
+            double padding = Math.Max(
+                30.0,
+                Math.Min(120.0, GetOverlayPlanWidth(segment) * 0.06));
+
+            ShaftExclusionZone zone = new ShaftExclusionZone
+            {
+                MinX = sourceZone.MinX - padding,
+                MinY = sourceZone.MinY - padding,
+                MaxX = sourceZone.MaxX + padding,
+                MaxY = sourceZone.MaxY + padding
+            };
+
+            if (!TryGetSegmentInsideZoneInterval(
+                    segment.Start,
+                    segment.End,
+                    zone,
+                    out double insideStart,
+                    out double insideEnd))
+            {
+                return new List<MepDuctSegment> { segment };
+            }
+
+            if (insideEnd - insideStart <= 1e-6)
+                return new List<MepDuctSegment> { segment };
+
+            changed = true;
+            List<MepDuctSegment> pieces =
+                new List<MepDuctSegment>();
+
+            if (insideStart > 1e-6)
+            {
+                Point3d outsideEnd = InterpolatePoint(
+                    segment.Start,
+                    segment.End,
+                    insideStart);
+
+                MepDuctSegment before = CloneSegmentPiece(
+                    segment,
+                    segment.Start,
+                    outsideEnd,
+                    "clipped before shaft edge");
+
+                if (before != null)
+                    pieces.Add(before);
+            }
+
+            if (insideEnd < 1.0 - 1e-6)
+            {
+                Point3d outsideStart = InterpolatePoint(
+                    segment.Start,
+                    segment.End,
+                    insideEnd);
+
+                MepDuctSegment after = CloneSegmentPiece(
+                    segment,
+                    outsideStart,
+                    segment.End,
+                    "clipped after shaft edge");
+
+                if (after != null)
+                    pieces.Add(after);
+            }
+
+            return pieces;
+        }
+
+        private static bool TryGetSegmentInsideZoneInterval(
+            Point3d start,
+            Point3d end,
+            ShaftExclusionZone zone,
+            out double enter,
+            out double exit)
+        {
+            enter = 0.0;
+            exit = 1.0;
+
+            if (zone == null)
+                return false;
+
+            double dx = end.X - start.X;
+            double dy = end.Y - start.Y;
+
+            if (!ClipParameter(-dx, start.X - zone.MinX, ref enter, ref exit) ||
+                !ClipParameter(dx, zone.MaxX - start.X, ref enter, ref exit) ||
+                !ClipParameter(-dy, start.Y - zone.MinY, ref enter, ref exit) ||
+                !ClipParameter(dy, zone.MaxY - start.Y, ref enter, ref exit))
+            {
+                return false;
+            }
+
+            return exit >= enter && exit >= 0.0 && enter <= 1.0;
+        }
+
+        private static bool ClipParameter(
+            double p,
+            double q,
+            ref double enter,
+            ref double exit)
+        {
+            if (Math.Abs(p) <= 1e-12)
+                return q >= 0.0;
+
+            double ratio = q / p;
+
+            if (p < 0.0)
+            {
+                if (ratio > exit)
+                    return false;
+
+                if (ratio > enter)
+                    enter = ratio;
+            }
+            else
+            {
+                if (ratio < enter)
+                    return false;
+
+                if (ratio < exit)
+                    exit = ratio;
+            }
+
+            return true;
+        }
+
+        private static Point3d InterpolatePoint(
+            Point3d start,
+            Point3d end,
+            double parameter)
+        {
+            double t = Math.Max(0.0, Math.Min(1.0, parameter));
+
+            return new Point3d(
+                start.X + (end.X - start.X) * t,
+                start.Y + (end.Y - start.Y) * t,
+                start.Z + (end.Z - start.Z) * t);
+        }
+
+        private static MepDuctSegment CloneSegmentPiece(
+            MepDuctSegment source,
+            Point3d start,
+            Point3d end,
+            string evidence)
+        {
+            double length = start.DistanceTo(end);
+
+            if (source == null || length < MinCurveLength)
+                return null;
+
+            return new MepDuctSegment
+            {
+                Id = source.Id,
+                Start = start,
+                End = end,
+                OriginalStart = start,
+                OriginalEnd = end,
+                LengthMm = length,
+                Layer = source.Layer,
+                SystemCode = source.SystemCode,
+                FireRating = source.FireRating,
+                Size = source.Size,
+                Shape = source.Shape,
+                WidthMm = source.WidthMm,
+                HeightMm = source.HeightMm,
+                DiameterMm = source.DiameterMm,
+                MeasuredPlanWidth = source.MeasuredPlanWidth,
+                Confidence = source.Confidence,
+                HasExplicitSize = source.HasExplicitSize,
+                Evidence = (source.Evidence ?? "") + " | " + (evidence ?? "shaft clip"),
+                Representation = source.Representation,
+                SourceIds = (source.SourceIds ?? new List<ObjectId>()).ToList()
+            };
         }
 
         private static MepDuctSegment CreateSegmentFromCandidate(
@@ -899,25 +1670,43 @@ namespace ClassLibrary4
             for (int i = 0; i < count; i++)
             {
                 MepDuctSegment s1 = segments[i];
-                if (s1 == null) continue;
+                if (!IsTopologyCandidate(s1)) continue;
 
                 for (int j = i + 1; j < count; j++)
                 {
                     MepDuctSegment s2 = segments[j];
-                    if (s2 == null) continue;
+                    if (!IsTopologyCandidate(s2) ||
+                        !AreSystemsCompatible(s1, s2))
+                    {
+                        continue;
+                    }
 
                     double angle = ParallelAngleDifference(PlanAngle(s1.Start, s1.End), PlanAngle(s2.Start, s2.End));
 
                     // CO: góc bẻ hướng từ 25° đến 155° (chuẩn 90° hoặc 45°)
-                    if (angle >= Math.PI / 7.2 && angle <= Math.PI * 0.85)
+                    if (angle >= Math.PI / 7.2 &&
+                        angle <= Math.PI * 0.5 + 1e-6 &&
+                        AreElbowSizesCompatible(s1, s2))
                     {
                         if (TryIntersectRays2D(s1.Start, s1.End, s2.Start, s2.End, out Point3d pInt))
                         {
-                            double maxAllowedDist = Math.Max(s1.MaxDimensionMm, s2.MaxDimensionMm) * 2.2 + 400.0;
+                            double maxPlanWidth = Math.Max(
+                                GetOverlayPlanWidth(s1),
+                                GetOverlayPlanWidth(s2));
+
+                            double maxAllowedDist = Math.Min(
+                                MaxElbowReachMm,
+                                Math.Max(
+                                    450.0,
+                                    maxPlanWidth * 1.35 + 350.0));
+
                             double d1 = Math.Min(PlanDistance(s1.Start, pInt), PlanDistance(s1.End, pInt));
                             double d2 = Math.Min(PlanDistance(s2.Start, pInt), PlanDistance(s2.End, pInt));
+                            double endpointGap = MinDistanceBetweenEndpoints(s1, s2);
 
-                            if (d1 <= maxAllowedDist && d2 <= maxAllowedDist)
+                            if (d1 <= maxAllowedDist &&
+                                d2 <= maxAllowedDist &&
+                                endpointGap <= maxAllowedDist * 1.55)
                             {
                                 double deg = Math.Round(angle * 180.0 / Math.PI);
                                 double fittingAngle = (deg >= 70 && deg <= 110) ? 90.0 : ((deg >= 35 && deg <= 55) ? 45.0 : deg);
@@ -1002,13 +1791,17 @@ namespace ClassLibrary4
             for (int i = 0; i < count; i++)
             {
                 MepDuctSegment branch = segments[i];
-                if (branch == null) continue;
+                if (!IsTopologyCandidate(branch)) continue;
 
                 for (int j = 0; j < count; j++)
                 {
                     if (i == j) continue;
                     MepDuctSegment main = segments[j];
-                    if (main == null) continue;
+                    if (!IsTopologyCandidate(main) ||
+                        !AreSystemsCompatible(branch, main))
+                    {
+                        continue;
+                    }
 
                     // Kiểm tra cả 2 đầu mút của branch xem đầu nào đâm vào main
                     Point3d[] branchEnds = { branch.Start, branch.End };
@@ -1021,13 +1814,36 @@ namespace ClassLibrary4
 
                         Point3d pProj = ProjectPointOnLine2D(brAt, main.Start, main.End);
                         double distFromMain = PlanDistance(brAt, pProj);
+                        double mainParameter = ProjectionParameter2D(
+                            pProj,
+                            main.Start,
+                            main.End);
 
-                        double maxBranchReach = main.MaxDimensionMm * 1.5 + 250.0;
+                        double mainInteriorMargin = Math.Min(
+                            0.20,
+                            Math.Max(
+                                0.025,
+                                GetOverlayPlanWidth(main) /
+                                Math.Max(1.0, main.LengthMm) * 0.30));
 
-                        if (distFromMain <= maxBranchReach && IsPointWithinSegmentBounds(pProj, main.Start, main.End, 150.0))
+                        double maxBranchReach = Math.Min(
+                            MaxTopologyReachMm,
+                            Math.Max(
+                                250.0,
+                                main.MaxDimensionMm * 0.65 + 200.0));
+
+                        if (distFromMain <= maxBranchReach &&
+                            IsPointWithinSegmentBounds(pProj, main.Start, main.End, 150.0) &&
+                            mainParameter >= mainInteriorMargin &&
+                            mainParameter <= 1.0 - mainInteriorMargin)
                         {
                             double angleToMain = ParallelAngleDifference(PlanAngle(brOther, brAt), PlanAngle(main.Start, main.End));
                             double angleDeg = Math.Round(angleToMain * 180.0 / Math.PI);
+                            Point3d branchEdge = ComputeBranchEdgeConnectionPoint(
+                                pProj,
+                                brOther,
+                                main,
+                                angleToMain);
 
                             // Tê 90°
                             if (angleDeg >= 68.0 && angleDeg <= 112.0)
@@ -1040,6 +1856,8 @@ namespace ClassLibrary4
                                     ConnectedSegmentIds = { main.Id, branch.Id },
                                     MainSegmentId = main.Id,
                                     BranchSegmentId = branch.Id,
+                                    HasBranchEdgePosition = true,
+                                    BranchEdgePosition = branchEdge,
                                     AngleDegrees = 90.0,
                                     SizeIn = main.Size,
                                     SizeBranch = branch.Size,
@@ -1057,6 +1875,8 @@ namespace ClassLibrary4
                                     ConnectedSegmentIds = { main.Id, branch.Id },
                                     MainSegmentId = main.Id,
                                     BranchSegmentId = branch.Id,
+                                    HasBranchEdgePosition = true,
+                                    BranchEdgePosition = branchEdge,
                                     AngleDegrees = angleDeg,
                                     SizeIn = main.Size,
                                     SizeBranch = branch.Size,
@@ -1071,6 +1891,123 @@ namespace ClassLibrary4
             return DeduplicateFittings(fittings);
         }
 
+        private static bool IsTopologyCandidate(MepDuctSegment segment)
+        {
+            if (segment == null || segment.LengthMm < MinCurveLength)
+                return false;
+
+            if (segment.HasExplicitSize ||
+                !string.IsNullOrWhiteSpace(segment.Size))
+            {
+                return segment.Confidence >= 0.60;
+            }
+
+            bool ductLayer =
+                MepDuctSizeParser.HasDuctContext(segment.Layer) &&
+                !MepDuctSizeParser.HasShaftContext(segment.Layer);
+
+            if (!ductLayer)
+            {
+                return
+                    segment.MeasuredPlanWidth > 0.0 &&
+                    segment.Confidence >= 0.60 &&
+                    (string.Equals(segment.Representation, "DOUBLE_LINE", StringComparison.OrdinalIgnoreCase) ||
+                     string.Equals(segment.Representation, "RECT_FRAME", StringComparison.OrdinalIgnoreCase));
+            }
+
+            if (segment.MeasuredPlanWidth > 0.0)
+            {
+                return segment.LengthMm >= segment.MeasuredPlanWidth * 1.10;
+            }
+
+            return segment.LengthMm >= 500.0;
+        }
+
+        private static bool AreElbowSizesCompatible(
+            MepDuctSegment first,
+            MepDuctSegment second)
+        {
+            if (first == null || second == null)
+                return false;
+
+            if (!string.IsNullOrWhiteSpace(first.Size) &&
+                !string.IsNullOrWhiteSpace(second.Size))
+            {
+                return string.Equals(
+                    first.Size,
+                    second.Size,
+                    StringComparison.OrdinalIgnoreCase);
+            }
+
+            bool firstHasWidthEvidence =
+                first.MeasuredPlanWidth > 0.0 ||
+                first.WidthMm > 0.0 ||
+                first.DiameterMm > 0.0;
+
+            bool secondHasWidthEvidence =
+                second.MeasuredPlanWidth > 0.0 ||
+                second.WidthMm > 0.0 ||
+                second.DiameterMm > 0.0;
+
+            if (!firstHasWidthEvidence || !secondHasWidthEvidence)
+                return true;
+
+            double firstWidth = GetOverlayPlanWidth(first);
+            double secondWidth = GetOverlayPlanWidth(second);
+
+            if (firstWidth > 0.0 && secondWidth > 0.0)
+            {
+                double tolerance = Math.Max(
+                    80.0,
+                    Math.Max(firstWidth, secondWidth) * 0.18);
+
+                return Math.Abs(firstWidth - secondWidth) <= tolerance;
+            }
+
+            return true;
+        }
+
+        private static Point3d ComputeBranchEdgeConnectionPoint(
+            Point3d mainCenterIntersection,
+            Point3d branchOutsidePoint,
+            MepDuctSegment main,
+            double branchAngleToMain)
+        {
+            double vx = branchOutsidePoint.X - mainCenterIntersection.X;
+            double vy = branchOutsidePoint.Y - mainCenterIntersection.Y;
+            double length = Math.Sqrt(vx * vx + vy * vy);
+
+            if (length <= 1e-9)
+                return mainCenterIntersection;
+
+            double mainHalfWidth = Math.Max(
+                25.0,
+                GetOverlayPlanWidth(main) * 0.5);
+
+            double sinAngle = Math.Abs(Math.Sin(branchAngleToMain));
+            double travel = mainHalfWidth / Math.Max(0.35, sinAngle);
+            travel = Math.Min(travel, mainHalfWidth * 2.5);
+
+            return new Point3d(
+                mainCenterIntersection.X + vx / length * travel,
+                mainCenterIntersection.Y + vy / length * travel,
+                branchOutsidePoint.Z);
+        }
+
+        private static bool AreSystemsCompatible(
+            MepDuctSegment first,
+            MepDuctSegment second)
+        {
+            string a = first?.SystemCode ?? "";
+            string b = second?.SystemCode ?? "";
+
+            return string.IsNullOrWhiteSpace(a) ||
+                   string.IsNullOrWhiteSpace(b) ||
+                   string.Equals(a, b, StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(a, "DUCT", StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(b, "DUCT", StringComparison.OrdinalIgnoreCase);
+        }
+
         /// <summary>
         /// Gom cụm (cluster) các fitting trong bán kính ClusterRadius.
         /// Mỗi cụm chỉ giữ lại 1 fitting ưu tiên nhất (Tee &gt; Elbow &gt; Reducer &gt; ShoeTap).
@@ -1078,7 +2015,7 @@ namespace ClassLibrary4
         /// </summary>
         private static List<MepDuctFitting> DeduplicateFittings(List<MepDuctFitting> raw)
         {
-            const double ClusterRadius = 350.0; // mm — nếu 2 fitting cách nhau dưới 350mm → cùng 1 nút vật lý
+            const double ClusterRadius = 250.0;
 
             if (raw == null || raw.Count == 0)
                 return new List<MepDuctFitting>();
@@ -1103,8 +2040,21 @@ namespace ClassLibrary4
                     if (eliminated.Contains(j))
                         continue;
 
-                    if (PlanDistance(fi.Position, sorted[j].Position) < ClusterRadius)
+                    MepDuctFitting fj = sorted[j];
+                    double distance = PlanDistance(fi.Position, fj.Position);
+                    bool sharesSegment =
+                        fi.ConnectedSegmentIds != null &&
+                        fj.ConnectedSegmentIds != null &&
+                        fi.ConnectedSegmentIds.Intersect(fj.ConnectedSegmentIds).Any();
+
+                    // Hai ống song song có thể cách nhau <250 mm nhưng không
+                    // phải cùng fitting. Chỉ gom khi cùng segment hoặc gần như
+                    // trùng đúng một điểm hình học.
+                    if (distance < ClusterRadius &&
+                        (sharesSegment || distance <= 40.0))
+                    {
                         eliminated.Add(j);
+                    }
                 }
             }
 
@@ -1195,11 +2145,22 @@ namespace ClassLibrary4
                         MepDuctSegment s2 = segments[j];
                         if (s2 == null) continue;
 
+                        if (!AreSystemsCompatible(s1, s2))
+                            continue;
+
                         double angle = ParallelAngleDifference(PlanAngle(s1.Start, s1.End), PlanAngle(s2.Start, s2.End));
                         if (angle <= Math.PI / 15.0) // Thẳng hàng
                         {
+                            double lateralOffset = PerpendicularDistanceToLine2D(
+                                s2.Center,
+                                s1.Start,
+                                s1.End);
+
+                            if (lateralOffset > 80.0)
+                                continue;
+
                             double d = MinDistanceBetweenEndpoints(s1, s2);
-                            if (d <= 500.0)
+                            if (d <= 300.0)
                             {
                                 // Chỉ lan truyền nếu bề rộng đo thực tế tương thích
                                 if (s1.MeasuredPlanWidth <= 0 || s2.MeasuredPlanWidth <= 0 ||
@@ -1226,7 +2187,14 @@ namespace ClassLibrary4
             }
 
             // 3) Gán fallback cho các đoạn có MeasuredPlanWidth nhưng chưa có Text (ví dụ: Wx(W/2))
-            foreach (MepDuctSegment s in segments.Where(x => string.IsNullOrWhiteSpace(x.Size) && x.MeasuredPlanWidth >= 100.0))
+            foreach (MepDuctSegment s in segments.Where(x =>
+                x != null &&
+                string.IsNullOrWhiteSpace(x.Size) &&
+                x.MeasuredPlanWidth >= 100.0 &&
+                MepDuctSizeParser.HasDuctContext(x.Layer) &&
+                (string.Equals(x.Representation, "DOUBLE_LINE", StringComparison.OrdinalIgnoreCase) ||
+                 string.Equals(x.Representation, "RECT_FRAME", StringComparison.OrdinalIgnoreCase)) &&
+                x.LengthMm >= x.MeasuredPlanWidth * 1.35))
             {
                 double w = s.MeasuredPlanWidth;
                 double h = Math.Round(w * 0.5); // Tỷ lệ tiêu chuẩn 2:1 nếu không có chiều cao
@@ -1236,7 +2204,7 @@ namespace ClassLibrary4
                 s.Size = MepDuctSizeParser.FormatMm(w) + "x" + MepDuctSizeParser.FormatMm(h);
                 if (string.IsNullOrWhiteSpace(s.SystemCode))
                     s.SystemCode = MepDuctSizeParser.InferSystemCode(s.Layer);
-                s.Confidence = 0.70;
+                s.Confidence = Math.Max(0.72, s.Confidence);
                 s.Representation = "INFERRED_FROM_CAD_WIDTH";
                 propagatedCount++;
             }
@@ -1250,6 +2218,9 @@ namespace ClassLibrary4
                 return false;
 
             if (string.IsNullOrWhiteSpace(from.Size) || !string.IsNullOrWhiteSpace(to.Size))
+                return false;
+
+            if (!AreSystemsCompatible(from, to))
                 return false;
 
             // Kiểm tra ràng buộc bề rộng đo được: Không gán size lớn vào đoạn nhỏ
@@ -1306,34 +2277,32 @@ namespace ClassLibrary4
                     {
                         Point3d pApex = f.Position;
 
-                        // Kéo dài đầu gần nhất của s1 tới pApex
-                        if (PlanDistance(s1.Start, pApex) <= PlanDistance(s1.End, pApex))
-                            s1.Start = pApex;
-                        else
-                            s1.End = pApex;
+                        TryMoveNearestEndpointTo(
+                            s1,
+                            pApex,
+                            GetSafeElbowMoveDistance(s1));
 
-                        // Kéo dài đầu gần nhất của s2 tới pApex
-                        if (PlanDistance(s2.Start, pApex) <= PlanDistance(s2.End, pApex))
-                            s2.Start = pApex;
-                        else
-                            s2.End = pApex;
-
-                        s1.LengthMm = s1.Start.DistanceTo(s1.End);
-                        s2.LengthMm = s2.Start.DistanceTo(s2.End);
+                        TryMoveNearestEndpointTo(
+                            s2,
+                            pApex,
+                            GetSafeElbowMoveDistance(s2));
                     }
                 }
-                // 2) Tê và Gót Giày (50/50): Nhánh rẽ kéo dài đâm trọn vẹn vào tim trục chính
+                // 2) Tê và Gót Giày: nhánh chỉ chạm mép ngoài ống chính.
+                // Không kéo tim nhánh vào giữa làm overlay đè nửa thân ống lớn.
                 else if (f.Type == MepDuctFittingType.Tee || f.Type == MepDuctFittingType.ShoeTap)
                 {
                     if (f.BranchSegmentId.HasValue && segMap.TryGetValue(f.BranchSegmentId.Value, out MepDuctSegment sBranch))
                     {
-                        Point3d pJunc = f.Position;
-                        if (PlanDistance(sBranch.Start, pJunc) <= PlanDistance(sBranch.End, pJunc))
-                            sBranch.Start = pJunc;
-                        else
-                            sBranch.End = pJunc;
+                        Point3d pJunc =
+                            f.HasBranchEdgePosition
+                                ? f.BranchEdgePosition
+                                : f.Position;
 
-                        sBranch.LengthMm = sBranch.Start.DistanceTo(sBranch.End);
+                        TryMoveNearestEndpointTo(
+                            sBranch,
+                            pJunc,
+                            GetSafeTopologyMoveDistance(sBranch));
                     }
                 }
                 // 3) Giảm (Reducer 50/50): Đoạn trước kéo dài 50% tới tâm, đoạn sau kéo dài 50% từ tâm
@@ -1345,21 +2314,250 @@ namespace ClassLibrary4
                     {
                         Point3d pMid = f.Position;
 
-                        if (PlanDistance(s1.Start, pMid) <= PlanDistance(s1.End, pMid))
-                            s1.Start = pMid;
-                        else
-                            s1.End = pMid;
+                        TryMoveNearestEndpointTo(
+                            s1,
+                            pMid,
+                            GetSafeTopologyMoveDistance(s1));
 
-                        if (PlanDistance(s2.Start, pMid) <= PlanDistance(s2.End, pMid))
-                            s2.Start = pMid;
-                        else
-                            s2.End = pMid;
-
-                        s1.LengthMm = s1.Start.DistanceTo(s1.End);
-                        s2.LengthMm = s2.Start.DistanceTo(s2.End);
+                        TryMoveNearestEndpointTo(
+                            s2,
+                            pMid,
+                            GetSafeTopologyMoveDistance(s2));
                     }
                 }
             }
+        }
+
+        private static double GetSafeTopologyMoveDistance(
+            MepDuctSegment segment)
+        {
+            return Math.Min(
+                MaxTopologyReachMm,
+                Math.Max(
+                    250.0,
+                    (segment?.MaxDimensionMm ?? 0.0) * 0.75 + 250.0));
+        }
+
+        private static double GetSafeElbowMoveDistance(
+            MepDuctSegment segment)
+        {
+            return Math.Min(
+                MaxElbowReachMm,
+                Math.Max(
+                    450.0,
+                    GetOverlayPlanWidth(segment) * 1.35 + 350.0));
+        }
+
+        private static bool TryMoveNearestEndpointTo(
+            MepDuctSegment segment,
+            Point3d target,
+            double maxDistance)
+        {
+            if (segment == null)
+                return false;
+
+            double startDistance = PlanDistance(segment.Start, target);
+            double endDistance = PlanDistance(segment.End, target);
+            double nearest = Math.Min(startDistance, endDistance);
+
+            if (nearest > Math.Max(1.0, maxDistance))
+                return false;
+
+            if (startDistance <= endDistance)
+                segment.Start = target;
+            else
+                segment.End = target;
+
+            segment.LengthMm = segment.Start.DistanceTo(segment.End);
+            return true;
+        }
+
+        private static void ConnectCollinearSameSizeRuns(
+            List<MepDuctSegment> segments)
+        {
+            if (segments == null || segments.Count < 2)
+                return;
+
+            for (int pass = 0; pass < 4; pass++)
+            {
+                bool changed = false;
+
+                for (int i = 0; i < segments.Count; i++)
+                {
+                    MepDuctSegment first = segments[i];
+                    if (!IsTrustedDuctSegment(first))
+                        continue;
+
+                    for (int j = i + 1; j < segments.Count; j++)
+                    {
+                        MepDuctSegment second = segments[j];
+
+                        if (!IsTrustedDuctSegment(second) ||
+                            !HaveSameOverlayStyle(first, second))
+                        {
+                            continue;
+                        }
+
+                        double angle = ParallelAngleDifference(
+                            PlanAngle(first.Start, first.End),
+                            PlanAngle(second.Start, second.End));
+
+                        if (angle > Math.PI / 45.0) // 4°
+                            continue;
+
+                        double width = Math.Max(
+                            GetOverlayPlanWidth(first),
+                            GetOverlayPlanWidth(second));
+
+                        double lateralTolerance = Math.Max(
+                            18.0,
+                            Math.Min(45.0, width * 0.04));
+
+                        if (PerpendicularDistanceToLine2D(
+                                second.Center,
+                                first.Start,
+                                first.End) > lateralTolerance)
+                        {
+                            continue;
+                        }
+
+                        Point3d[] firstEnds = { first.Start, first.End };
+                        Point3d[] secondEnds = { second.Start, second.End };
+                        int firstIndex = 0;
+                        int secondIndex = 0;
+                        double nearest = double.MaxValue;
+
+                        for (int a = 0; a < 2; a++)
+                        {
+                            for (int b = 0; b < 2; b++)
+                            {
+                                double distance = PlanDistance(
+                                    firstEnds[a],
+                                    secondEnds[b]);
+
+                                if (distance < nearest)
+                                {
+                                    nearest = distance;
+                                    firstIndex = a;
+                                    secondIndex = b;
+                                }
+                            }
+                        }
+
+                        double maxGap = Math.Min(
+                            500.0,
+                            Math.Max(120.0, width * 0.45));
+
+                        if (nearest > maxGap)
+                            continue;
+
+                        Point3d target = MidPoint(
+                            firstEnds[firstIndex],
+                            secondEnds[secondIndex]);
+
+                        if (firstIndex == 0)
+                            first.Start = target;
+                        else
+                            first.End = target;
+
+                        if (secondIndex == 0)
+                            second.Start = target;
+                        else
+                            second.End = target;
+
+                        first.LengthMm = first.Start.DistanceTo(first.End);
+                        second.LengthMm = second.Start.DistanceTo(second.End);
+                        changed = true;
+                    }
+                }
+
+                if (!changed)
+                    break;
+            }
+        }
+
+        private static bool HaveSameOverlayStyle(
+            MepDuctSegment first,
+            MepDuctSegment second)
+        {
+            if (first == null || second == null)
+                return false;
+
+            return string.Equals(
+                       BuildOverlayLayerName(first),
+                       BuildOverlayLayerName(second),
+                       StringComparison.OrdinalIgnoreCase) &&
+                   string.Equals(
+                       first.Shape ?? "",
+                       second.Shape ?? "",
+                       StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static bool IsTrustedDuctSegment(MepDuctSegment segment)
+        {
+            if (segment == null ||
+                string.IsNullOrWhiteSpace(segment.Size) ||
+                segment.LengthMm < MinCurveLength ||
+                segment.Confidence < MinTrustedConfidence)
+            {
+                return false;
+            }
+
+            double planWidth = GetOverlayPlanWidth(segment);
+
+            if (planWidth < 50.0 || planWidth > 5000.0)
+                return false;
+
+            bool ductLayer =
+                MepDuctSizeParser.HasDuctContext(segment.Layer) &&
+                !MepDuctSizeParser.HasShaftContext(segment.Layer);
+            bool isInferredFromCadWidth =
+                string.Equals(
+                    segment.Representation,
+                    "INFERRED_FROM_CAD_WIDTH",
+                    StringComparison.OrdinalIgnoreCase);
+
+            if (isInferredFromCadWidth)
+            {
+                return ductLayer &&
+                       segment.MeasuredPlanWidth > 0.0 &&
+                       segment.LengthMm >= planWidth * 1.35;
+            }
+
+            bool isInherited =
+                string.Equals(
+                    segment.Representation,
+                    "INHERITED",
+                    StringComparison.OrdinalIgnoreCase);
+
+            if (isInherited &&
+                !ductLayer &&
+                string.IsNullOrWhiteSpace(segment.SystemCode))
+            {
+                return false;
+            }
+
+            // Một "tuyến" ngắn hơn chính bề rộng của nó thường là outline
+            // thiết bị, co hoặc côn. Không tô ConstantWidth lên vùng đó.
+            double minimumRunRatio = segment.HasExplicitSize ? 0.75 : 1.00;
+            return segment.LengthMm >= planWidth * minimumRunRatio;
+        }
+
+        private static double GetOverlayPlanWidth(MepDuctSegment segment)
+        {
+            if (segment == null)
+                return 0.0;
+
+            if (segment.MeasuredPlanWidth > 0.0)
+                return segment.MeasuredPlanWidth;
+
+            if (string.Equals(segment.Shape, "ROUND", StringComparison.OrdinalIgnoreCase))
+                return segment.DiameterMm;
+
+            if (segment.WidthMm > 0.0)
+                return segment.WidthMm;
+
+            return segment.MaxDimensionMm;
         }
 
         // ============================================================
@@ -1375,31 +2573,74 @@ namespace ClassLibrary4
             if (result?.Segments == null)
                 return;
 
-            var labeledPositions = new List<Point3d>();
+            List<MepDuctSegment> trusted = result.Segments
+                .Where(IsTrustedDuctSegment)
+                .ToList();
+
+            // Các segment cùng system/size/EI được dựng thành một graph nhỏ.
+            // Qua node bậc 2 (nối thẳng hoặc co), vẽ MỘT wide polyline liên
+            // tục nên không còn khe/gờ giữa các đoạn như Hình 1 và Hình 3.
+            foreach (OverlayPath path in BuildOverlayPaths(trusted))
+            {
+                if (path?.Template == null ||
+                    path.Points == null ||
+                    path.Points.Count < 2 ||
+                    path.Width < 50.0 ||
+                    path.Width > 5000.0)
+                {
+                    continue;
+                }
+
+                string layerName = BuildOverlayLayerName(path.Template);
+                EnsureLayerWithTransparency(
+                    tr,
+                    db,
+                    layerName,
+                    GetLayerColor(layerName),
+                    DuctTransparencyAlpha);
+
+                Polyline polyline = new Polyline();
+                polyline.SetDatabaseDefaults(db);
+
+                for (int index = 0; index < path.Points.Count; index++)
+                {
+                    Point3d point = path.Points[index];
+                    polyline.AddVertexAt(
+                        index,
+                        new Point2d(point.X, point.Y),
+                        0.0,
+                        0.0,
+                        0.0);
+                }
+
+                polyline.Elevation = path.Points[0].Z;
+                polyline.ConstantWidth = path.Width;
+                polyline.Closed = path.Closed && path.Points.Count >= 3;
+                polyline.Layer = layerName;
+                polyline.ColorIndex = 256;
+
+                space.AppendEntity(polyline);
+                tr.AddNewlyCreatedDBObject(polyline, true);
+
+                try
+                {
+                    polyline.Transparency =
+                        new Transparency(DuctTransparencyAlpha);
+                }
+                catch
+                {
+                }
+            }
+
+            List<Point3d> labeledPositions = new List<Point3d>();
             const double MinLabelSpacingMm = 2500.0;
 
-            // Vẽ TẤT CẢ segment — không bỏ sót đoạn nào
-            foreach (MepDuctSegment seg in result.Segments)
+            // Label vẫn lấy theo segment có text trực tiếp để không lặp nhãn
+            // trên các đoạn chỉ được truyền size.
+            foreach (MepDuctSegment seg in trusted)
             {
-                if (seg == null || seg.LengthMm < MinCurveLength)
-                    continue;
-
+                double overlayWidth = GetOverlayPlanWidth(seg);
                 string layerName = BuildOverlayLayerName(seg);
-                EnsureLayerWithTransparency(tr, db, layerName, GetLayerColor(layerName), DuctTransparencyAlpha);
-
-                // Polyline ConstantWidth = cạnh lớn nhất ống gió (giống VẼ OG TỰ ĐỘNG)
-                Polyline pl = new Polyline();
-                pl.SetDatabaseDefaults(db);
-                pl.AddVertexAt(0, new Point2d(seg.Start.X, seg.Start.Y), 0, 0, 0);
-                pl.AddVertexAt(1, new Point2d(seg.End.X, seg.End.Y), 0, 0, 0);
-                pl.Elevation = seg.Start.Z;
-                pl.ConstantWidth = seg.MaxDimensionMm;
-                pl.Layer = layerName;
-                pl.ColorIndex = 256;
-
-                space.AppendEntity(pl);
-                tr.AddNewlyCreatedDBObject(pl, true);
-                try { pl.Transparency = new Transparency(DuctTransparencyAlpha); } catch { }
 
                 // Label: chỉ đoạn có annotation trực tiếp, đủ dài, không chồng
                 bool isDirectAnnotation =
@@ -1410,7 +2651,7 @@ namespace ClassLibrary4
                     labeledPositions.All(p => p.DistanceTo(seg.Center) > MinLabelSpacingMm))
                 {
                     string labelText = BuildOverlayLabel(seg);
-                    double textH = Math.Max(100.0, Math.Min(300.0, seg.MaxDimensionMm * 0.28));
+                    double textH = Math.Max(100.0, Math.Min(300.0, overlayWidth * 0.28));
 
                     DBText lbl = new DBText();
                     lbl.SetDatabaseDefaults(db);
@@ -1433,6 +2674,244 @@ namespace ClassLibrary4
                     labeledPositions.Add(seg.Center);
                 }
             }
+        }
+
+        private static List<OverlayPath> BuildOverlayPaths(
+            List<MepDuctSegment> segments)
+        {
+            List<OverlayPath> result = new List<OverlayPath>();
+
+            if (segments == null || segments.Count == 0)
+                return result;
+
+            foreach (IGrouping<string, MepDuctSegment> group in segments
+                .Where(x => x != null)
+                .GroupBy(
+                    BuildOverlayLayerName,
+                    StringComparer.OrdinalIgnoreCase))
+            {
+                List<MepDuctSegment> groupSegments = group.ToList();
+                List<double> widths = groupSegments
+                    .Select(GetOverlayPlanWidth)
+                    .Where(x => x >= 50.0 && x <= 5000.0)
+                    .OrderBy(x => x)
+                    .ToList();
+
+                if (widths.Count == 0)
+                    continue;
+
+                double pathWidth = widths[widths.Count / 2];
+                double nodeTolerance = Math.Max(
+                    35.0,
+                    Math.Min(180.0, pathWidth * 0.18));
+
+                List<OverlayGraphNode> nodes =
+                    new List<OverlayGraphNode>();
+
+                List<OverlayGraphEdge> edges =
+                    new List<OverlayGraphEdge>();
+
+                foreach (MepDuctSegment segment in groupSegments)
+                {
+                    int nodeA = FindOrCreateOverlayNode(
+                        nodes,
+                        segment.Start,
+                        nodeTolerance);
+
+                    int nodeB = FindOrCreateOverlayNode(
+                        nodes,
+                        segment.End,
+                        nodeTolerance);
+
+                    if (nodeA == nodeB)
+                        continue;
+
+                    int edgeId = edges.Count;
+                    edges.Add(new OverlayGraphEdge
+                    {
+                        Segment = segment,
+                        NodeA = nodeA,
+                        NodeB = nodeB
+                    });
+
+                    nodes[nodeA].EdgeIds.Add(edgeId);
+                    nodes[nodeB].EdgeIds.Add(edgeId);
+                }
+
+                // Đi từ đầu hở/điểm nhánh trước. Node bậc 2 được đi xuyên
+                // qua để ghép thành một polyline duy nhất.
+                for (int nodeId = 0; nodeId < nodes.Count; nodeId++)
+                {
+                    if (nodes[nodeId].EdgeIds.Count == 2)
+                        continue;
+
+                    foreach (int edgeId in nodes[nodeId].EdgeIds.ToList())
+                    {
+                        if (edgeId < 0 || edgeId >= edges.Count || edges[edgeId].Used)
+                            continue;
+
+                        OverlayPath path = WalkOverlayPath(
+                            nodes,
+                            edges,
+                            nodeId,
+                            edgeId,
+                            pathWidth);
+
+                        if (path != null)
+                            result.Add(path);
+                    }
+                }
+
+                // Phần còn lại là loop kín: chọn một cạnh bất kỳ làm điểm đầu.
+                for (int edgeId = 0; edgeId < edges.Count; edgeId++)
+                {
+                    if (edges[edgeId].Used)
+                        continue;
+
+                    OverlayPath path = WalkOverlayPath(
+                        nodes,
+                        edges,
+                        edges[edgeId].NodeA,
+                        edgeId,
+                        pathWidth);
+
+                    if (path != null)
+                        result.Add(path);
+                }
+            }
+
+            return result;
+        }
+
+        private static int FindOrCreateOverlayNode(
+            List<OverlayGraphNode> nodes,
+            Point3d point,
+            double tolerance)
+        {
+            int bestIndex = -1;
+            double bestDistance = double.MaxValue;
+
+            for (int index = 0; index < nodes.Count; index++)
+            {
+                double distance = PlanDistance(nodes[index].Position, point);
+
+                if (distance <= tolerance && distance < bestDistance)
+                {
+                    bestIndex = index;
+                    bestDistance = distance;
+                }
+            }
+
+            if (bestIndex < 0)
+            {
+                nodes.Add(new OverlayGraphNode
+                {
+                    Position = point,
+                    SampleCount = 1
+                });
+
+                return nodes.Count - 1;
+            }
+
+            OverlayGraphNode node = nodes[bestIndex];
+            int oldCount = Math.Max(1, node.SampleCount);
+            int newCount = oldCount + 1;
+
+            node.Position = new Point3d(
+                (node.Position.X * oldCount + point.X) / newCount,
+                (node.Position.Y * oldCount + point.Y) / newCount,
+                (node.Position.Z * oldCount + point.Z) / newCount);
+
+            node.SampleCount = newCount;
+            return bestIndex;
+        }
+
+        private static OverlayPath WalkOverlayPath(
+            List<OverlayGraphNode> nodes,
+            List<OverlayGraphEdge> edges,
+            int startNode,
+            int startEdge,
+            double width)
+        {
+            if (startNode < 0 || startNode >= nodes.Count ||
+                startEdge < 0 || startEdge >= edges.Count)
+            {
+                return null;
+            }
+
+            OverlayPath path = new OverlayPath
+            {
+                Template = edges[startEdge].Segment,
+                Width = width
+            };
+
+            int currentNode = startNode;
+            int currentEdge = startEdge;
+            path.Points.Add(nodes[currentNode].Position);
+
+            while (currentEdge >= 0 && currentEdge < edges.Count)
+            {
+                OverlayGraphEdge edge = edges[currentEdge];
+
+                if (edge.Used)
+                    break;
+
+                edge.Used = true;
+
+                int nextNode =
+                    edge.NodeA == currentNode
+                        ? edge.NodeB
+                        : edge.NodeA;
+
+                if (nextNode < 0 || nextNode >= nodes.Count)
+                    break;
+
+                Point3d nextPoint = nodes[nextNode].Position;
+
+                if (path.Points.Count == 0 ||
+                    PlanDistance(path.Points[path.Points.Count - 1], nextPoint) > 1e-6)
+                {
+                    path.Points.Add(nextPoint);
+                }
+
+                if (nextNode == startNode)
+                {
+                    path.Closed = path.Points.Count >= 4;
+                    break;
+                }
+
+                if (nodes[nextNode].EdgeIds.Count != 2)
+                    break;
+
+                int followingEdge = nodes[nextNode].EdgeIds
+                    .FirstOrDefault(id =>
+                        id >= 0 &&
+                        id < edges.Count &&
+                        id != currentEdge &&
+                        !edges[id].Used);
+
+                // FirstOrDefault trả 0 khi không có; cần kiểm tra lại rõ ràng.
+                bool hasFollowing = nodes[nextNode].EdgeIds.Any(id =>
+                    id >= 0 &&
+                    id < edges.Count &&
+                    id != currentEdge &&
+                    !edges[id].Used);
+
+                if (!hasFollowing)
+                    break;
+
+                currentNode = nextNode;
+                currentEdge = followingEdge;
+            }
+
+            if (path.Closed &&
+                path.Points.Count > 1 &&
+                PlanDistance(path.Points[0], path.Points[path.Points.Count - 1]) <= 1e-6)
+            {
+                path.Points.RemoveAt(path.Points.Count - 1);
+            }
+
+            return path.Points.Count >= 2 ? path : null;
         }
 
         private static void DeleteOldOverlay(
@@ -1535,6 +3014,9 @@ namespace ClassLibrary4
                     LayerTableRecord rec = tr.GetObject(layerId, OpenMode.ForWrite) as LayerTableRecord;
                     if (rec != null)
                     {
+                        rec.Color = Autodesk.AutoCAD.Colors.Color.FromColorIndex(
+                            Autodesk.AutoCAD.Colors.ColorMethod.ByAci,
+                            aci);
                         rec.Transparency = new Transparency(alpha);
                     }
                 }
@@ -1589,7 +3071,7 @@ namespace ClassLibrary4
                 }
 
                 short[] colors = { 1, 2, 3, 4, 5, 6, 30, 40, 50, 80, 90, 110, 120, 140, 170, 200, 210, 220 };
-                int index = Math.Abs(hash) % colors.Length;
+                int index = (hash & 0x7FFFFFFF) % colors.Length;
                 return colors[index];
             }
         }
@@ -1632,6 +3114,24 @@ namespace ClassLibrary4
             double t = (wx * vx + wy * vy) / vv;
 
             return new Point3d(lineStart.X + t * vx, lineStart.Y + t * vy, p.Z);
+        }
+
+        private static double ProjectionParameter2D(
+            Point3d point,
+            Point3d lineStart,
+            Point3d lineEnd)
+        {
+            double vx = lineEnd.X - lineStart.X;
+            double vy = lineEnd.Y - lineStart.Y;
+            double vv = vx * vx + vy * vy;
+
+            if (vv <= 1e-9)
+                return 0.0;
+
+            return
+                ((point.X - lineStart.X) * vx +
+                 (point.Y - lineStart.Y) * vy) /
+                vv;
         }
 
         private static bool IsPointWithinSegmentBounds(Point3d p, Point3d a, Point3d b, double tolerance)
@@ -1686,7 +3186,7 @@ namespace ClassLibrary4
             double max = edges.Max(x => x.Length);
             double min = edges.Min(x => x.Length);
 
-            if (max < 60.0 || min < 20.0 || max / Math.Max(1.0, min) < 1.10)
+            if (max < 60.0 || min < 20.0 || max / Math.Max(1.0, min) < 1.35)
                 return false;
 
             var shortEdges = edges.OrderBy(x => x.Length).Take(2).ToList();
@@ -1813,6 +3313,26 @@ namespace ClassLibrary4
             return PlanDistance(p, q);
         }
 
+        private static double PerpendicularDistanceToLine2D(
+            Point3d point,
+            Point3d lineStart,
+            Point3d lineEnd)
+        {
+            double vx = lineEnd.X - lineStart.X;
+            double vy = lineEnd.Y - lineStart.Y;
+            double length = Math.Sqrt(vx * vx + vy * vy);
+
+            if (length <= 1e-9)
+                return PlanDistance(point, lineStart);
+
+            double cross =
+                Math.Abs(
+                    vx * (lineStart.Y - point.Y) -
+                    (lineStart.X - point.X) * vy);
+
+            return cross / length;
+        }
+
         private static double PlanDistance(Point3d a, Point3d b)
         {
             double dx = a.X - b.X;
@@ -1877,21 +3397,88 @@ namespace ClassLibrary4
 
             foreach (MepDuctSegment candidate in segments
                 .Where(x => x != null)
-                .OrderByDescending(x => x.Confidence)
+                .OrderByDescending(x => x.HasExplicitSize)
+                .ThenByDescending(x => x.Confidence)
                 .ThenByDescending(x => x.LengthMm))
             {
                 bool duplicate = output.Any(existing =>
-                    string.Equals(existing.Size, candidate.Size, StringComparison.OrdinalIgnoreCase) &&
-                    SegmentCenterDistance(existing, candidate) <= 50.0 &&
-                    ParallelAngleDifference(
-                        PlanAngle(existing.Start, existing.End),
-                        PlanAngle(candidate.Start, candidate.End)) <= Math.PI / 36.0);
+                    AreDuplicateSegments(existing, candidate));
 
                 if (!duplicate)
                     output.Add(candidate);
             }
 
             return output;
+        }
+
+        private static bool AreDuplicateSegments(
+            MepDuctSegment first,
+            MepDuctSegment second)
+        {
+            if (first == null || second == null ||
+                !AreSystemsCompatible(first, second))
+            {
+                return false;
+            }
+
+            if (!string.IsNullOrWhiteSpace(first.Size) &&
+                !string.IsNullOrWhiteSpace(second.Size) &&
+                !string.Equals(first.Size, second.Size, StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            if (first.MeasuredPlanWidth > 0.0 &&
+                second.MeasuredPlanWidth > 0.0 &&
+                Math.Abs(first.MeasuredPlanWidth - second.MeasuredPlanWidth) > 70.0)
+            {
+                return false;
+            }
+
+            const double EndpointTolerance = 80.0;
+
+            bool sameEndpoints =
+                (PlanDistance(first.Start, second.Start) <= EndpointTolerance &&
+                 PlanDistance(first.End, second.End) <= EndpointTolerance) ||
+                (PlanDistance(first.Start, second.End) <= EndpointTolerance &&
+                 PlanDistance(first.End, second.Start) <= EndpointTolerance);
+
+            if (sameEndpoints)
+                return true;
+
+            double angleDifference = ParallelAngleDifference(
+                PlanAngle(first.Start, first.End),
+                PlanAngle(second.Start, second.End));
+
+            if (angleDifference > Math.PI / 36.0)
+                return false;
+
+            double separation = ParallelSeparation2D(
+                first.Start,
+                first.End,
+                second.Start,
+                second.End);
+
+            if (separation > 50.0)
+                return false;
+
+            return SegmentOverlapRatio(
+                first.Start,
+                first.End,
+                second.Start,
+                second.End) >= 0.85;
+        }
+
+        private static void ReindexSegments(List<MepDuctSegment> segments)
+        {
+            if (segments == null)
+                return;
+
+            for (int i = 0; i < segments.Count; i++)
+            {
+                if (segments[i] != null)
+                    segments[i].Id = i;
+            }
         }
 
         private static List<MepDuctTakeoffRow> BuildStats(List<MepDuctSegment> segments)

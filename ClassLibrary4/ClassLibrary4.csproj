@@ -8,6 +8,10 @@
 		<!-- AutoCAD 2025 + ONNX Runtime + OpenCV: x64 -->
 		<Platforms>x64</Platforms>
 		<PlatformTarget>x64</PlatformTarget>
+		<RuntimeIdentifier>win-x64</RuntimeIdentifier>
+		<SelfContained>false</SelfContained>
+		<AppendRuntimeIdentifierToOutputPath>false</AppendRuntimeIdentifierToOutputPath>
+		<GenerateDependencyFile>true</GenerateDependencyFile>
 
 		<!-- Giữ dependency NuGet/native cạnh DLL output để NETLOAD ổn định -->
 		<CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
@@ -22,9 +26,16 @@
 	<ItemGroup>
 		<PackageReference Include="Microsoft.ML.OnnxRuntime" Version="1.29.0" />
 
-		<!-- STEP29A - OpenCV Vision Engine -->
-		<PackageReference Include="OpenCvSharp4" Version="4.13.0.20260627" />
-		<PackageReference Include="OpenCvSharp4.Extensions" Version="4.13.0.20260627" />
+		<!--
+		  STEP29A - OpenCV Vision Engine.
+		  KHÔNG dùng OpenCvSharp4.Extensions 4.13 tại đây: package đó kéo
+		  System.Drawing.Common 10.x vào AutoCAD 2025 (.NET 8) và gây
+		  FileLoadException khi bấm AI. Việc đổi Bitmap <-> Mat đã được
+		  MepOpenCvBitmapBridge xử lý bằng API lõi của OpenCvSharp4.
+		-->
+		<!-- Analyzer 4.13 hiện được build bằng compiler mới hơn SDK .NET 8;
+		     loại riêng analyzer, không ảnh hưởng OpenCvSharp runtime/API. -->
+		<PackageReference Include="OpenCvSharp4" Version="4.13.0.20260627" ExcludeAssets="analyzers" />
 		<PackageReference Include="OpenCvSharp4.runtime.win" Version="4.13.0.20260627" />
 
 		<!--
@@ -48,5 +59,24 @@
 			<CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
 		</None>
 	</ItemGroup>
+
+	<!--
+	  Nếu người dùng Build đè lên thư mục bin cũ, xóa các DLL 10.x còn sót
+	  từ OpenCvSharp4.Extensions. AutoCAD cung cấp System.Drawing.Common 8
+	  từ Windows Desktop Runtime; không được nạp bản 10 cạnh plugin.
+	-->
+	<Target Name="RemoveStaleDrawingBridgeAssemblies" AfterTargets="Build">
+		<Delete Files="$(TargetDir)OpenCvSharp.Extensions.dll;$(TargetDir)System.Drawing.Common.dll;$(TargetDir)Microsoft.Win32.SystemEvents.dll" />
+	</Target>
+
+	<!-- Package 4.13 đang đóng kèm analyzer build bằng Roslyn 4.14, trong khi
+	     SDK .NET 8 dùng Roslyn 4.11. Gỡ analyzer build-time này trước CoreCompile;
+	     thư viện OpenCvSharp runtime không bị ảnh hưởng. -->
+	<Target Name="RemoveIncompatibleOpenCvSharpAnalyzer" BeforeTargets="CoreCompile">
+		<ItemGroup>
+			<Analyzer Remove="@(Analyzer)"
+				Condition="'%(Analyzer.Filename)' == 'OpenCvSharp.Analyzers'" />
+		</ItemGroup>
+	</Target>
 
 </Project>
