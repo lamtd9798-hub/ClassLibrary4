@@ -1,0 +1,53 @@
+CLASSLIBRARY4 - PLUGIN V5 CHO AUTOCAD 2025 (.NET 8, x64)
+=========================================================
+
+QUAN TRỌNG: KHÔNG CẦN CHÉP CẢ HAI GÓI.
+
+- Muốn dùng ngay trong AutoCAD: chỉ dùng gói PLUGIN_NETLOAD_V5 này.
+- Gói SOURCE_GHI_DE_V5 chỉ dành cho máy có project/Visual Studio và muốn build lại.
+
+CÁCH CÀI CHẮC CHẮN KHÔNG NHẦM DLL CŨ
+
+1. Giải nén toàn bộ gói vào MỘT THƯ MỤC MỚI, ví dụ:
+   C:\TDL_AI_MEP_V5
+
+2. Không trộn file V5 với thư mục V3/V4 cũ. Tất cả DLL trong gói phải nằm
+   cạnh nhau. File chính của bản này là:
+   ClassLibrary4.V5.dll
+
+3. Mở AutoCAD 2025, gõ NETLOAD và chọn đúng:
+   C:\TDL_AI_MEP_V5\ClassLibrary4.V5.dll
+
+4. Gõ lệnh:
+   TDLVERSIONV5
+
+   Dòng lệnh phải báo Version=5.0.0.0 và đường dẫn có ClassLibrary4.V5.dll.
+
+5. Gõ lệnh RIÊNG của bản mới:
+   HIENBANGV5
+
+   Không gõ HIENBANG, vì lệnh đó có thể vẫn gọi plugin cũ đang tự nạp.
+
+6. Tiêu đề bảng phải là "Bốc Tách Khối Lượng V5" và trạng thái phải có:
+   AI ENGINE V5: SẴN SÀNG
+
+Nếu chỉ thấy "AI ENGINE: SẴN SÀNG" hoặc "AI ENGINE V4" thì đó vẫn là bảng cũ.
+Đóng bảng đó và gọi lại HIENBANGV5.
+
+NẾU WINDOWS CHẶN DLL
+
+- Đóng AutoCAD.
+- Bấm phải file ZIP > Properties > chọn Unblock (nếu có), rồi giải nén lại.
+- Không đặt các file System.Drawing.Common.dll, OpenCvSharp.Extensions.dll hoặc
+  Microsoft.Win32.SystemEvents.dll cũ vào thư mục V5.
+
+THÔNG TIN KIỂM TRA
+
+- Assembly: ClassLibrary4.V5.dll
+- Version: 5.0.0.0
+- Target: AutoCAD 2025 / net8.0-windows / win-x64
+- Release build: 0 lỗi, 0 cảnh báo
+- Parser smoke: 21/21 passed
+- SHA-256 ClassLibrary4.V5.dll:
+  30cbdcd9d100303ec766b652e7727d1d13d23f19fc6acf4db2920558816e4b86
+

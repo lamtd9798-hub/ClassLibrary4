@@ -57,6 +57,9 @@ namespace ClassLibrary4
         private const double AutomaticLabelScale = 2.2;
         // Độ dày nét cố định cho ống DN và ống đồng (không phụ thuộc size)
         private const double FixedDnPipeDisplayWidth = 50.0;
+        // Overlay AI PIPE dày hơn nhẹ để nhìn rõ trên nền bản vẽ kiến trúc.
+        // Tách riêng khỏi FixedDnPipeDisplayWidth để không đổi nét vẽ thủ công.
+        private const double AiPipeRecognizedOverlayWidth = 65.0;
         private const string LayerChangeBuild = "DL-20260808-12";
         private const string AutoConvertBuild =
             "AUTO-20260811-11-FF-RING-TOPOLOGY";
@@ -75962,7 +75965,7 @@ namespace ClassLibrary4
                         CreateAiPipeOverlay(
                             item.Segment.Curve,
                             layerName,
-                            FixedDnPipeDisplayWidth);
+                            AiPipeRecognizedOverlayWidth);
 
                     if (overlay == null)
                         continue;
@@ -79999,8 +80002,73 @@ namespace ClassLibrary4
 
             try
             {
-                Entity clone =
-                    source.Clone() as Entity;
+                Entity clone = null;
+
+                // LINE không hỗ trợ ConstantWidth. Chuyển riêng output AI
+                // sang LWPOLYLINE để độ dày ống luôn nhìn thấy, kể cả khi
+                // LWDISPLAY đang tắt. Nét gốc vẫn được giữ nguyên.
+                if (width > 0.0 && source is Line sourceLine)
+                {
+                    Polyline pipeLine = new Polyline();
+                    pipeLine.SetDatabaseDefaults();
+                    pipeLine.AddVertexAt(
+                        0,
+                        new Point2d(
+                            sourceLine.StartPoint.X,
+                            sourceLine.StartPoint.Y),
+                        0.0,
+                        0.0,
+                        0.0);
+                    pipeLine.AddVertexAt(
+                        1,
+                        new Point2d(
+                            sourceLine.EndPoint.X,
+                            sourceLine.EndPoint.Y),
+                        0.0,
+                        0.0,
+                        0.0);
+                    pipeLine.Elevation = sourceLine.StartPoint.Z;
+                    pipeLine.ConstantWidth = width;
+                    clone = pipeLine;
+                }
+                else if (width > 0.0 && source is Arc sourceArc)
+                {
+                    Polyline pipeArc = new Polyline();
+                    pipeArc.SetDatabaseDefaults();
+
+                    double normalSign =
+                        sourceArc.Normal.Z < 0.0
+                            ? -1.0
+                            : 1.0;
+
+                    double bulge =
+                        normalSign *
+                        Math.Tan(sourceArc.TotalAngle * 0.25);
+
+                    pipeArc.AddVertexAt(
+                        0,
+                        new Point2d(
+                            sourceArc.StartPoint.X,
+                            sourceArc.StartPoint.Y),
+                        bulge,
+                        0.0,
+                        0.0);
+                    pipeArc.AddVertexAt(
+                        1,
+                        new Point2d(
+                            sourceArc.EndPoint.X,
+                            sourceArc.EndPoint.Y),
+                        0.0,
+                        0.0,
+                        0.0);
+                    pipeArc.Elevation = sourceArc.StartPoint.Z;
+                    pipeArc.ConstantWidth = width;
+                    clone = pipeArc;
+                }
+                else
+                {
+                    clone = source.Clone() as Entity;
+                }
 
                 if (clone == null)
                     return null;
@@ -80012,7 +80080,9 @@ namespace ClassLibrary4
                         256);
 
                 clone.LineWeight =
-                    Autodesk.AutoCAD.DatabaseServices.LineWeight.ByLayer;
+                    width > 0.0
+                        ? Autodesk.AutoCAD.DatabaseServices.LineWeight.LineWeight035
+                        : Autodesk.AutoCAD.DatabaseServices.LineWeight.ByLayer;
 
                 if (clone is Polyline pl)
                 {

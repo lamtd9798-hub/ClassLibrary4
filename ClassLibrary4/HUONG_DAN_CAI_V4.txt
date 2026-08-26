@@ -1,0 +1,38 @@
+CLASSLIBRARY4 - BẢN V4 (AUTOCAD 2025, .NET 8, x64)
+====================================================
+
+CÁCH NHANH NHẤT - DÙNG FILE PLUGIN ĐÃ BUILD
+
+1. THOÁT HẲN tất cả cửa sổ AutoCAD. Kiểm tra Task Manager không còn acad.exe.
+   AutoCAD/.NET không gỡ được DLL đã NETLOAD trong cùng một phiên, vì vậy
+   chép file rồi NETLOAD lại ngay vẫn có thể chạy code cũ trong bộ nhớ.
+
+2. Giải nén ClassLibrary4_PLUGIN_NETLOAD_V4.zip.
+
+3. Chép TOÀN BỘ file trong gói vào thư mục đang chứa ClassLibrary4.dll và
+   chọn Replace/Overwrite. Không chỉ chép riêng ClassLibrary4.dll.
+
+4. Nếu thư mục plugin cũ còn ba file dưới đây thì xóa chúng trước khi mở CAD:
+   - OpenCvSharp.Extensions.dll
+   - System.Drawing.Common.dll
+   - Microsoft.Win32.SystemEvents.dll
+   Đây là dependency cũ gây FileLoadException System.Drawing.Common 10.0.0.0.
+
+5. Mở lại AutoCAD, NETLOAD đúng file ClassLibrary4.dll vừa chép.
+
+6. Kiểm tra panel phải hiện: "AI ENGINE V4: SẴN SÀNG".
+   Nếu không thấy chữ V4 thì AutoCAD đang nạp DLL ở đường dẫn cũ.
+
+GÓI SOURCE_GHI_DE
+
+- Giải nén ClassLibrary4_SOURCE_GHI_DE_V4.zip trực tiếp vào thư mục project
+  ClassLibrary4 và chọn Replace/Overwrite.
+- Build cấu hình Release | x64.
+- Sau đó vẫn phải chép output mới vào thư mục plugin và khởi động lại AutoCAD.
+
+THÔNG TIN BUILD
+
+- Assembly version: 4.0.0.0
+- Target: net8.0-windows / win-x64 / AutoCAD 2025
+- ClassLibrary4.dll SHA-256:
+  58a293c42eaa60af9a8156a828409a0731ef60e9f16f8b38f7be0c6fa09992bc

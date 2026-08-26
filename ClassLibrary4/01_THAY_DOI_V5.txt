@@ -1,0 +1,30 @@
+CLASSLIBRARY4 V5 - CÁC THAY ĐỔI CHÍNH
+=====================================
+
+ĐƯỜNG ỐNG
+
+1. Các mảnh nhỏ liên thông, cùng DN/cùng layer được nhập thành polyline liên tục.
+2. Qua co hoặc nút bậc 2 vẫn giữ một polyline, kể cả co 90 độ.
+3. Tại tê/cross, tuyến chính đi xuyên theo cặp gần thẳng hàng; nhánh vẫn là
+   polyline riêng, không nối ziczac qua nút.
+4. Giữ cung thật bằng bulge khi nhập ARC/polyline cong.
+5. Nét overlay ống giữ độ dày 65 đơn vị và LineWeight 0.35 mm.
+
+ỐNG GIÓ (TOÀN BỘ SỬA V4 ĐƯỢC GIỮ TRONG V5)
+
+1. Loại nhãn thiết bị/trục như SAG, RAG, EAG, PRD, NRD, VCD, MFD khỏi seed thân ống.
+2. Không tô kín khung thiết bị hoặc ô trục có ký hiệu gạch chéo.
+3. Không dùng nét ngắn của co/côn/gót giày để kéo sai thân ống.
+4. Nhánh tee/gót giày dừng tại mép ống chính, không kéo tới tim ống lớn.
+5. Các đoạn cùng hệ, cùng kích thước và EI được nối thành tuyến liên tục.
+6. Côn chuyển tiết diện dùng bề rộng biến thiên, tránh chồng hai thân ống.
+7. Co 90 độ chỉ bo khi topology xác nhận; góc vuông thường không bị bo tùy tiện.
+8. Nét viền overlay ống gió dùng LineWeight 0.50 mm.
+
+CHỐNG NẠP NHẦM
+
+- Assembly mới: ClassLibrary4.V5.dll
+- Lệnh mở riêng: HIENBANGV5
+- Lệnh kiểm tra đường dẫn/version: TDLVERSIONV5
+- Nhãn giao diện: AI ENGINE V5
+

@@ -269,6 +269,13 @@ namespace ClassLibrary4
             public List<Point3d> Points { get; set; } = new List<Point3d>();
         }
 
+        private sealed class OverlayVertex
+        {
+            public Point3d Point { get; set; } = Point3d.Origin;
+            // Bulge của đoạn từ vertex hiện tại tới vertex kế tiếp.
+            public double Bulge { get; set; }
+        }
+
         private sealed class OverlayGraphNode
         {
             public Point3d Position { get; set; } = Point3d.Origin;
@@ -2578,8 +2585,8 @@ namespace ClassLibrary4
                 .ToList();
 
             // Các segment cùng system/size/EI được dựng thành một graph nhỏ.
-            // Qua node bậc 2 (nối thẳng hoặc co), vẽ MỘT wide polyline liên
-            // tục nên không còn khe/gờ giữa các đoạn như Hình 1 và Hình 3.
+            // Qua node bậc 2 vẽ MỘT wide polyline liên tục; góc 90° được thay
+            // bằng cung bo có bán kính theo bề rộng ống thay vì góc vuông sắc.
             foreach (OverlayPath path in BuildOverlayPaths(trusted))
             {
                 if (path?.Template == null ||
@@ -2590,6 +2597,12 @@ namespace ClassLibrary4
                 {
                     continue;
                 }
+
+                List<OverlayVertex> overlayVertices =
+                    BuildRoundedOverlayVertices(path);
+
+                if (overlayVertices.Count < 2)
+                    continue;
 
                 string layerName = BuildOverlayLayerName(path.Template);
                 EnsureLayerWithTransparency(
@@ -2602,20 +2615,21 @@ namespace ClassLibrary4
                 Polyline polyline = new Polyline();
                 polyline.SetDatabaseDefaults(db);
 
-                for (int index = 0; index < path.Points.Count; index++)
+                for (int index = 0; index < overlayVertices.Count; index++)
                 {
-                    Point3d point = path.Points[index];
+                    OverlayVertex vertex = overlayVertices[index];
+                    Point3d point = vertex.Point;
                     polyline.AddVertexAt(
                         index,
                         new Point2d(point.X, point.Y),
-                        0.0,
+                        vertex.Bulge,
                         0.0,
                         0.0);
                 }
 
-                polyline.Elevation = path.Points[0].Z;
+                polyline.Elevation = overlayVertices[0].Point.Z;
                 polyline.ConstantWidth = path.Width;
-                polyline.Closed = path.Closed && path.Points.Count >= 3;
+                polyline.Closed = path.Closed && overlayVertices.Count >= 3;
                 polyline.Layer = layerName;
                 polyline.ColorIndex = 256;
 
@@ -2674,6 +2688,218 @@ namespace ClassLibrary4
                     labeledPositions.Add(seg.Center);
                 }
             }
+        }
+
+        private static List<OverlayVertex> BuildRoundedOverlayVertices(
+            OverlayPath path)
+        {
+            List<OverlayVertex> result =
+                new List<OverlayVertex>();
+
+            if (path?.Points == null || path.Points.Count < 2)
+                return result;
+
+            List<Point3d> points = new List<Point3d>();
+
+            foreach (Point3d point in path.Points)
+            {
+                if (points.Count == 0 ||
+                    PlanDistance(points[points.Count - 1], point) > 1e-6)
+                {
+                    points.Add(point);
+                }
+            }
+
+            if (path.Closed &&
+                points.Count > 2 &&
+                PlanDistance(points[0], points[points.Count - 1]) <= 1e-6)
+            {
+                points.RemoveAt(points.Count - 1);
+            }
+
+            if (points.Count < 2)
+                return result;
+
+            if (points.Count == 2)
+            {
+                AddOverlayVertex(result, points[0], 0.0);
+                AddOverlayVertex(result, points[1], 0.0);
+                return result;
+            }
+
+            if (path.Closed)
+            {
+                for (int index = 0; index < points.Count; index++)
+                {
+                    Point3d previous =
+                        points[(index - 1 + points.Count) % points.Count];
+
+                    Point3d corner = points[index];
+                    Point3d next = points[(index + 1) % points.Count];
+
+                    if (TryCreateRoundedNinetyCorner(
+                            previous,
+                            corner,
+                            next,
+                            path.Width,
+                            out Point3d entry,
+                            out Point3d exit,
+                            out double bulge))
+                    {
+                        AddOverlayVertex(result, entry, bulge);
+                        AddOverlayVertex(result, exit, 0.0);
+                    }
+                    else
+                    {
+                        AddOverlayVertex(result, corner, 0.0);
+                    }
+                }
+
+                return result;
+            }
+
+            AddOverlayVertex(result, points[0], 0.0);
+
+            for (int index = 1; index < points.Count - 1; index++)
+            {
+                Point3d previous = points[index - 1];
+                Point3d corner = points[index];
+                Point3d next = points[index + 1];
+
+                if (TryCreateRoundedNinetyCorner(
+                        previous,
+                        corner,
+                        next,
+                        path.Width,
+                        out Point3d entry,
+                        out Point3d exit,
+                        out double bulge))
+                {
+                    AddOverlayVertex(result, entry, bulge);
+                    AddOverlayVertex(result, exit, 0.0);
+                }
+                else
+                {
+                    AddOverlayVertex(result, corner, 0.0);
+                }
+            }
+
+            AddOverlayVertex(result, points[points.Count - 1], 0.0);
+            return result;
+        }
+
+        private static bool TryCreateRoundedNinetyCorner(
+            Point3d previous,
+            Point3d corner,
+            Point3d next,
+            double ductWidth,
+            out Point3d entry,
+            out Point3d exit,
+            out double bulge)
+        {
+            entry = corner;
+            exit = corner;
+            bulge = 0.0;
+
+            double incomingX = corner.X - previous.X;
+            double incomingY = corner.Y - previous.Y;
+            double outgoingX = next.X - corner.X;
+            double outgoingY = next.Y - corner.Y;
+
+            double incomingLength = Math.Sqrt(
+                incomingX * incomingX + incomingY * incomingY);
+
+            double outgoingLength = Math.Sqrt(
+                outgoingX * outgoingX + outgoingY * outgoingY);
+
+            if (incomingLength <= 1e-6 || outgoingLength <= 1e-6)
+                return false;
+
+            double uxIn = incomingX / incomingLength;
+            double uyIn = incomingY / incomingLength;
+            double uxOut = outgoingX / outgoingLength;
+            double uyOut = outgoingY / outgoingLength;
+
+            double dot = Math.Max(
+                -1.0,
+                Math.Min(1.0, uxIn * uxOut + uyIn * uyOut));
+
+            double turnAngle = Math.Acos(dot);
+            double minNinetyAngle = 70.0 * Math.PI / 180.0;
+            double maxNinetyAngle = 110.0 * Math.PI / 180.0;
+
+            // Chỉ bo các co gần 90°. Co 45° và các nút khác giữ nguyên.
+            if (turnAngle < minNinetyAngle || turnAngle > maxNinetyAngle)
+                return false;
+
+            double cross = uxIn * uyOut - uyIn * uxOut;
+
+            if (Math.Abs(cross) <= 1e-6)
+                return false;
+
+            double safeWidth = Math.Max(50.0, ductWidth);
+            double desiredRadius = Math.Max(
+                180.0,
+                Math.Min(1400.0, safeWidth * 0.65));
+
+            double tangentFactor = Math.Tan(turnAngle * 0.5);
+
+            if (tangentFactor <= 1e-6)
+                return false;
+
+            double desiredSetback = desiredRadius * tangentFactor;
+            double availableSetback =
+                Math.Min(incomingLength, outgoingLength) * 0.42;
+
+            double setback = Math.Min(desiredSetback, availableSetback);
+            double actualRadius = setback / tangentFactor;
+
+            // Không cố bo khi hai chân co quá ngắn: bán kính nhỏ hơn nửa
+            // bề rộng sẽ làm mép trong wide polyline tự chồng lên nhau.
+            if (actualRadius < Math.Max(90.0, safeWidth * 0.52))
+                return false;
+
+            entry = new Point3d(
+                corner.X - uxIn * setback,
+                corner.Y - uyIn * setback,
+                corner.Z);
+
+            exit = new Point3d(
+                corner.X + uxOut * setback,
+                corner.Y + uyOut * setback,
+                corner.Z);
+
+            bulge =
+                Math.Sign(cross) *
+                Math.Tan(turnAngle * 0.25);
+
+            return Math.Abs(bulge) > 1e-6;
+        }
+
+        private static void AddOverlayVertex(
+            List<OverlayVertex> vertices,
+            Point3d point,
+            double bulge)
+        {
+            if (vertices == null)
+                return;
+
+            if (vertices.Count > 0 &&
+                PlanDistance(vertices[vertices.Count - 1].Point, point) <= 1e-6)
+            {
+                vertices[vertices.Count - 1].Point = point;
+
+                if (Math.Abs(bulge) > 1e-9)
+                    vertices[vertices.Count - 1].Bulge = bulge;
+
+                return;
+            }
+
+            vertices.Add(new OverlayVertex
+            {
+                Point = point,
+                Bulge = bulge
+            });
         }
 
         private static List<OverlayPath> BuildOverlayPaths(

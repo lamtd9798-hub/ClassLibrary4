@@ -1,0 +1,34 @@
+BẢN CHẠY CLASSLIBRARY4 V10 - AUTOCAD 2025 / .NET 8 / x64
+==========================================================
+
+V10 sửa co 90 độ theo đúng thuật toán đã chạy tốt ở nút
+"VẼ OG TỰ ĐỘNG" trong tab ACMV:
+- Đọc trực tiếp ARC và đoạn cong (bulge) của polyline gốc.
+- Ghép đúng hai cung biên đồng tâm để lấy cung tim thật.
+- Chỉ nhận khi cung khớp bề rộng, tiếp tuyến và co 90 cùng size.
+- Cắt hai thân ống tại đúng tiếp điểm rồi vẽ lại cung CAD gốc.
+- Nếu bản vẽ không có đủ hai cung biên thì tự quay về cách bo ổn định của V5.
+
+V10 vẫn giữ các sửa đúng của V9:
+- Không cứu nét ngắn cấu tạo thành ống gió giả.
+- Nhánh tê/gót giày dừng tại mép ống chính.
+- Không nhận nhầm khung thiết bị, louver, MFD hoặc ký hiệu trục.
+- Côn đồng tâm không bị vẽ lệch do sai số nhỏ.
+- Bảng thống kê ống gió đã phóng lớn 3 lần.
+
+CÀI BẢN MỚI (LÀM ĐÚNG ĐỂ KHÔNG NẠP NHẦM DLL CŨ)
+1. Thoát HẲN tất cả cửa sổ AutoCAD.
+2. Giải nén TOÀN BỘ gói vào thư mục mới, ví dụ C:\TDL_AI_V10.
+3. Mở AutoCAD, gõ NETLOAD và chọn đúng:
+   C:\TDL_AI_V10\ClassLibrary4.V10.dll
+4. Gõ TDLVERSIONV10.
+   Phải hiện [TDL V10] Version=10.0.0.0 và đường dẫn có ClassLibrary4.V10.dll.
+5. Gõ HIENBANGV10.
+   Tiêu đề bảng phải là "Bốc Tách Khối Lượng V10".
+
+QUAN TRỌNG
+- Không gõ HIENBANG chung để kiểm tra, vì lệnh chung có thể thuộc DLL cũ
+  đã được AutoCAD/Startup Suite nạp trước.
+- Không dùng HIENBANGV9 hoặc TDLVERSIONV9 cho bản này.
+- Phải chép toàn bộ file trong gói, không chỉ chép riêng DLL.
+
