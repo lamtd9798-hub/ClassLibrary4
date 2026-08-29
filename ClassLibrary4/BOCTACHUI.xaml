@@ -1823,7 +1823,7 @@
                                                FontWeight="Bold"
                                                FontSize="15"
                                                HorizontalAlignment="Center"/>
-                                    <TextBlock Text="BƯỚC 1 · ĐỌC THÔNG TIN MẶT BẰNG"
+                                    <TextBlock Text="BƯỚC 1–2 · ĐỌC MẶT BẰNG VÀ THÔNG TIN"
                                                Foreground="#FFFFE8E8"
                                                FontSize="9"
                                                Margin="0,3,0,0"
@@ -1996,6 +1996,116 @@
                                                 Height="27"
                                                 Cursor="Hand"
                                                 Click="BtnFireClearAreas_Click"/>
+                                    </Grid>
+                                </StackPanel>
+                            </Border>
+
+                            <Border BorderBrush="#FFC8D8E8"
+                                    BorderThickness="1"
+                                    CornerRadius="5"
+                                    Background="#FFF7FBFF"
+                                    Padding="8"
+                                    Margin="0,0,0,8"
+                                    Loaded="FireDrawingReaderPanel_Loaded">
+                                <StackPanel>
+                                    <TextBlock Text="3. ĐỌC THÔNG TIN TRÊN BẢN VẼ"
+                                               FontWeight="Bold"
+                                               Foreground="#FF214F78"/>
+                                    <TextBlock Text="Quét TEXT, MTEXT và Block để nhận tên tầng, phòng, cao độ và gợi ý công năng."
+                                               TextWrapping="Wrap"
+                                               FontSize="9"
+                                               Foreground="#FF5B6770"
+                                               Margin="0,3,0,7"/>
+
+                                    <Button Content="QUÉT CHỮ / BLOCK TRÊN MẶT BẰNG"
+                                            Height="32"
+                                            Background="#FF2E75B6"
+                                            Foreground="White"
+                                            FontWeight="Bold"
+                                            Cursor="Hand"
+                                            Click="BtnFireScanDrawingTexts_Click"
+                                            ToolTip="Quét vùng bản vẽ có chứa chữ hoặc block thuộc tính"/>
+
+                                    <DataGrid x:Name="DgFireDrawingTexts"
+                                              Height="170"
+                                              Margin="0,8,0,6"
+                                              AutoGenerateColumns="False"
+                                              CanUserAddRows="False"
+                                              CanUserDeleteRows="False"
+                                              IsReadOnly="True"
+                                              HeadersVisibility="Column"
+                                              GridLinesVisibility="Horizontal"
+                                              SelectionMode="Extended"
+                                              SelectionUnit="FullRow"
+                                              FontSize="9"
+                                              RowHeight="23">
+                                        <DataGrid.Columns>
+                                            <DataGridTextColumn Header="STT"
+                                                                Binding="{Binding Index}"
+                                                                Width="34"/>
+                                            <DataGridTextColumn Header="Loại"
+                                                                Binding="{Binding CategoryName}"
+                                                                Width="72"/>
+                                            <DataGridTextColumn Header="Nội dung"
+                                                                Binding="{Binding Content}"
+                                                                Width="*"/>
+                                            <DataGridTextColumn Header="Layer"
+                                                                Binding="{Binding LayerName}"
+                                                                Width="65"/>
+                                        </DataGrid.Columns>
+                                    </DataGrid>
+
+                                    <Border Background="White"
+                                            BorderBrush="#FFD4E1EC"
+                                            BorderThickness="1"
+                                            CornerRadius="3"
+                                            Padding="6"
+                                            Margin="0,0,0,6">
+                                        <StackPanel>
+                                            <TextBlock x:Name="TxtFireTextScanSummary"
+                                                       Text="Chưa quét thông tin bản vẽ."
+                                                       TextWrapping="Wrap"
+                                                       FontSize="9"
+                                                       Foreground="#FF555555"/>
+                                            <TextBlock x:Name="TxtFireDetectedFloors"
+                                                       Text="Tầng nhận được: —"
+                                                       TextWrapping="Wrap"
+                                                       FontSize="9"
+                                                       Margin="0,3,0,0"/>
+                                            <TextBlock x:Name="TxtFireDetectedRooms"
+                                                       Text="Phòng/khu vực: —"
+                                                       TextWrapping="Wrap"
+                                                       FontSize="9"
+                                                       Margin="0,3,0,0"/>
+                                            <TextBlock x:Name="TxtFireSuggestedUse"
+                                                       Text="Công năng gợi ý: —"
+                                                       TextWrapping="Wrap"
+                                                       FontWeight="Bold"
+                                                       FontSize="9"
+                                                       Foreground="#FF1D5F91"
+                                                       Margin="0,3,0,0"/>
+                                        </StackPanel>
+                                    </Border>
+
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="6"/>
+                                            <ColumnDefinition Width="*"/>
+                                        </Grid.ColumnDefinitions>
+                                        <Button Grid.Column="0"
+                                                Content="ÁP DỤNG GỢI Ý"
+                                                Height="28"
+                                                Background="#FF26734D"
+                                                Foreground="White"
+                                                FontWeight="Bold"
+                                                Cursor="Hand"
+                                                Click="BtnFireApplyDrawingSuggestions_Click"/>
+                                        <Button Grid.Column="2"
+                                                Content="XÓA KẾT QUẢ"
+                                                Height="28"
+                                                Cursor="Hand"
+                                                Click="BtnFireClearDrawingTexts_Click"/>
                                     </Grid>
                                 </StackPanel>
                             </Border>
