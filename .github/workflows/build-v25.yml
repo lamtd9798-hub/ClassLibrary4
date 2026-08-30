@@ -37,6 +37,34 @@ jobs:
             Write-Host 'Multi-system design hook already present.'
           }
 
+          $multiPath = 'ClassLibrary4/BOCTACHUI.MultiDesign.cs'
+          $multi = Get-Content $multiPath -Raw -Encoding UTF8
+          if (-not $multi.Contains('using TextBox = System.Windows.Controls.TextBox;')) {
+            $anchor = "using System.Windows.Media;"
+            if (-not $multi.Contains($anchor)) { throw 'Cannot locate WPF using anchor in MultiDesign.' }
+            $aliases = @'
+using Button = System.Windows.Controls.Button;
+using ComboBox = System.Windows.Controls.ComboBox;
+using ComboBoxItem = System.Windows.Controls.ComboBoxItem;
+using Panel = System.Windows.Controls.Panel;
+using TextBox = System.Windows.Controls.TextBox;
+using UniformGrid = System.Windows.Controls.Primitives.UniformGrid;
+using Brush = System.Windows.Media.Brush;
+using Brushes = System.Windows.Media.Brushes;
+using Color = System.Windows.Media.Color;
+using MessageBox = System.Windows.MessageBox;
+using MessageBoxButton = System.Windows.MessageBoxButton;
+using MessageBoxImage = System.Windows.MessageBoxImage;
+using HorizontalAlignment = System.Windows.HorizontalAlignment;
+using VerticalAlignment = System.Windows.VerticalAlignment;
+'@
+            $multi = $multi.Replace($anchor, $anchor + [Environment]::NewLine + $aliases.TrimEnd())
+            Set-Content $multiPath $multi -Encoding UTF8
+            Write-Host 'Added explicit WPF aliases to MultiDesign.'
+          } else {
+            Write-Host 'WPF aliases already present.'
+          }
+
       - name: Remove obsolete legacy V25 helper files from working tree
         shell: pwsh
         run: |
