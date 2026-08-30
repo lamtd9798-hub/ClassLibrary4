@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<Obfuscator>
+  <Var name="InPath" value="bin\Release\net8.0-windows" />
+  <Var name="OutPath" value="bin\Release\net8.0-windows\Obfuscated" />
+  
+  <Var name="KeepPublicApi" value="true" />
+  <Var name="HidePrivateApi" value="true" />
+  
+  <!-- Phải tắt đổi tên Property, Event, Field để không làm hỏng XAML/WPF binding -->
+  <Var name="RenameProperties" value="false" />
+  <Var name="RenameEvents" value="false" />
+  <Var name="RenameFields" value="false" />
+  
+  <Var name="OptimizeMethods" value="true" />
+  <Var name="SuppressIldasm" value="true" />
+
+  <AssemblySearchPath path="C:\Users\THAI DINH LAM\.nuget\packages\autocad.net\25.0.1\lib\net8.0" />
+  <AssemblySearchPath path="C:\Users\THAI DINH LAM\.nuget\packages\autocad.net.core\25.0.0\lib\net8.0" />
+  <AssemblySearchPath path="C:\Users\THAI DINH LAM\.nuget\packages\autocad.net.model\25.0.0\lib\net8.0" />
+
+  <Module file="$(InPath)\ClassLibrary4.dll" />
+</Obfuscator>
