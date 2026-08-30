@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
 	<PropertyGroup>
 		<TargetFramework>net8.0-windows</TargetFramework>
@@ -77,6 +77,17 @@
 			<Analyzer Remove="@(Analyzer)"
 				Condition="'%(Analyzer.Filename)' == 'OpenCvSharp.Analyzers'" />
 		</ItemGroup>
+	</Target>
+
+	<!--
+	  NETLOAD convenience: sau mỗi Build thành công, luôn cập nhật đúng file
+	  ClassLibrary4.V25.dll ở thư mục project gốc. Đây là file người dùng
+	  đang NETLOAD trong AutoCAD. Đóng AutoCAD trước Build nếu DLL đang bị khóa.
+	-->
+	<Target Name="CopyLatestPluginToNetloadRoot" AfterTargets="Build">
+		<Copy SourceFiles="$(TargetPath)"
+			  DestinationFiles="$(ProjectDir)ClassLibrary4.V25.dll"
+			  SkipUnchangedFiles="false" />
 	</Target>
 
 </Project>
