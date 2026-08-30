@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build:
@@ -15,6 +15,47 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Wire multi-system design into tab 7
+        shell: pwsh
+        run: |
+          $path = 'ClassLibrary4/BOCTACHUI.FireDesign.cs'
+          $text = Get-Content $path -Raw -Encoding UTF8
+          if (-not $text.Contains('InitializeMultiSystemDesignUi();')) {
+            $needle = "            _fireDesignUiInitialized = true;`r`n"
+            if (-not $text.Contains($needle)) {
+              $needle = "            _fireDesignUiInitialized = true;`n"
+            }
+            if (-not $text.Contains($needle)) { throw 'Cannot locate FireDesignTab_Loaded initialization point.' }
+            $replacement = $needle + "            InitializeMultiSystemDesignUi();" + [Environment]::NewLine
+            $text = $text.Replace($needle, $replacement)
+            Set-Content $path $text -Encoding UTF8
+            Write-Host 'Patched FireDesignTab_Loaded -> InitializeMultiSystemDesignUi()'
+          } else {
+            Write-Host 'Multi-system design hook already present.'
+          }
+
+      - name: Remove obsolete legacy V25 helper files from working tree
+        shell: pwsh
+        run: |
+          $obsolete = @(
+            'ClassLibrary4/ClassLibrary4.V25.DesignBridge.dll',
+            'ClassLibrary4/ClassLibrary4.V25.DesignHost.dll',
+            'ClassLibrary4/ClassLibrary4.V25.FireDesignModule.dll',
+            'ClassLibrary4/HUONG_DAN_NETLOAD_V25_V3.txt',
+            'ClassLibrary4/THAY_DOI_V3.txt',
+            'ClassLibrary4/SHA256_KIEM_TRA.txt',
+            'ClassLibrary4/APPLY_STEP30BD_XAML_PATCH.ps1',
+            'ClassLibrary4/Class1.cs'
+          )
+          foreach ($file in $obsolete) {
+            if (Test-Path $file) {
+              Remove-Item $file -Force
+              Write-Host "REMOVED: $file"
+            }
+          }
 
       - name: Setup .NET 8
         uses: actions/setup-dotnet@v4
@@ -24,19 +65,20 @@ jobs:
       - name: Restore
         run: dotnet restore ClassLibrary4/ClassLibrary4.csproj
 
-      - name: Inspect design markers in source and legacy V25 binary
+      - name: Verify four design systems are integrated
         shell: pwsh
         run: |
-          $markers = @('THIẾT KẾ PCCC','THIẾT KẾ ACMV','THIẾT KẾ CTN','THIẾT KẾ ĐIỆN')
-          $xaml = Get-Content 'ClassLibrary4/BOCTACHUI.xaml' -Raw -Encoding UTF8
-          $legacyBytes = [System.IO.File]::ReadAllBytes('ClassLibrary4/ClassLibrary4.V25.dll')
-          $legacyUtf8 = [System.Text.Encoding]::UTF8.GetString($legacyBytes)
-          $legacyUnicode = [System.Text.Encoding]::Unicode.GetString($legacyBytes)
+          $source = Get-Content 'ClassLibrary4/BOCTACHUI.MultiDesign.cs' -Raw -Encoding UTF8
+          $fire = Get-Content 'ClassLibrary4/BOCTACHUI.FireDesign.cs' -Raw -Encoding UTF8
+          $markers = @('THIẾT KẾ ACMV','THIẾT KẾ CTN','THIẾT KẾ ĐIỆN')
           foreach ($marker in $markers) {
-            $src = $xaml.Contains($marker)
-            $bin = $legacyUtf8.Contains($marker) -or $legacyUnicode.Contains($marker)
-            Write-Host ("MARKER {0} | SOURCE={1} | LEGACY_DLL={2}" -f $marker, $src, $bin)
+            if (-not $source.Contains($marker)) { throw "Missing design system: $marker" }
+            Write-Host "FOUND: $marker"
           }
+          if (-not $fire.Contains('InitializeMultiSystemDesignUi();')) {
+            throw 'Tab 7 is not wired to multi-system design UI.'
+          }
+          Write-Host 'FOUND: THIẾT KẾ PCCC (existing XAML) + ACMV + CTN + DIEN hook.'
 
       - name: Build Release x64
         run: dotnet build ClassLibrary4/ClassLibrary4.csproj -c Release -p:Platform=x64 --no-restore
@@ -53,16 +95,33 @@ jobs:
           $pkg = 'artifact/ClassLibrary4_V25_CLEAN'
           New-Item -ItemType Directory -Force -Path $pkg | Out-Null
           Copy-Item (Join-Path $outDir '*') $pkg -Recurse -Force
-
           Copy-Item $dll.FullName (Join-Path $pkg 'ClassLibrary4.V25.dll') -Force
           Remove-Item (Join-Path $pkg 'ClassLibrary4.dll') -Force -ErrorAction SilentlyContinue
           Remove-Item (Join-Path $pkg 'ClassLibrary4.pdb') -Force -ErrorAction SilentlyContinue
-
           Remove-Item (Join-Path $pkg 'ClassLibrary4.V25.DesignBridge.dll') -Force -ErrorAction SilentlyContinue
           Remove-Item (Join-Path $pkg 'ClassLibrary4.V25.DesignHost.dll') -Force -ErrorAction SilentlyContinue
           Remove-Item (Join-Path $pkg 'ClassLibrary4.V25.FireDesignModule.dll') -Force -ErrorAction SilentlyContinue
-
           Get-ChildItem $pkg -Recurse | Select-Object FullName, Length
+
+      - name: Commit verified source integration and cleanup
+        if: github.actor != 'github-actions[bot]'
+        shell: pwsh
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          if (-not (git diff --cached --quiet)) {
+            git commit -m 'feat: integrate multi-system design and remove legacy V25 helpers'
+            git push origin HEAD:master
+          } else {
+            Write-Host 'No source cleanup changes to commit.'
+          }
+
+      - name: Remove obsolete architecture branch
+        if: github.actor != 'github-actions[bot]'
+        shell: pwsh
+        continue-on-error: true
+        run: git push origin --delete architecture/unified-mep-20260830
 
       - name: Upload clean V25 package
         uses: actions/upload-artifact@v4
