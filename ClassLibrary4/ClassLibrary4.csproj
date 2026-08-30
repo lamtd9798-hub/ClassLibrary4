@@ -4,6 +4,8 @@
 		<TargetFramework>net8.0-windows</TargetFramework>
 		<UseWPF>true</UseWPF>
 		<UseWindowsForms>true</UseWindowsForms>
+		<GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+		<GenerateTargetFrameworkAttribute>false</GenerateTargetFrameworkAttribute>
 
 		<!-- AutoCAD 2025 + ONNX Runtime + OpenCV: x64 -->
 		<Platforms>x64</Platforms>
