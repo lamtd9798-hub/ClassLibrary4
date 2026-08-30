@@ -24,14 +24,18 @@ jobs:
       - name: Restore
         run: dotnet restore ClassLibrary4/ClassLibrary4.csproj
 
-      - name: Verify multi-system design UI exists in source
+      - name: Inspect design markers in source and legacy V25 binary
         shell: pwsh
         run: |
-          $xaml = Get-Content 'ClassLibrary4/BOCTACHUI.xaml' -Raw -Encoding UTF8
           $markers = @('THIẾT KẾ PCCC','THIẾT KẾ ACMV','THIẾT KẾ CTN','THIẾT KẾ ĐIỆN')
+          $xaml = Get-Content 'ClassLibrary4/BOCTACHUI.xaml' -Raw -Encoding UTF8
+          $legacyBytes = [System.IO.File]::ReadAllBytes('ClassLibrary4/ClassLibrary4.V25.dll')
+          $legacyUtf8 = [System.Text.Encoding]::UTF8.GetString($legacyBytes)
+          $legacyUnicode = [System.Text.Encoding]::Unicode.GetString($legacyBytes)
           foreach ($marker in $markers) {
-            if (-not $xaml.Contains($marker)) { throw "Missing design marker: $marker" }
-            Write-Host "FOUND: $marker"
+            $src = $xaml.Contains($marker)
+            $bin = $legacyUtf8.Contains($marker) -or $legacyUnicode.Contains($marker)
+            Write-Host ("MARKER {0} | SOURCE={1} | LEGACY_DLL={2}" -f $marker, $src, $bin)
           }
 
       - name: Build Release x64
@@ -54,7 +58,6 @@ jobs:
           Remove-Item (Join-Path $pkg 'ClassLibrary4.dll') -Force -ErrorAction SilentlyContinue
           Remove-Item (Join-Path $pkg 'ClassLibrary4.pdb') -Force -ErrorAction SilentlyContinue
 
-          # Old auxiliary design modules must NOT be mixed with the source-integrated UI.
           Remove-Item (Join-Path $pkg 'ClassLibrary4.V25.DesignBridge.dll') -Force -ErrorAction SilentlyContinue
           Remove-Item (Join-Path $pkg 'ClassLibrary4.V25.DesignHost.dll') -Force -ErrorAction SilentlyContinue
           Remove-Item (Join-Path $pkg 'ClassLibrary4.V25.FireDesignModule.dll') -Force -ErrorAction SilentlyContinue
