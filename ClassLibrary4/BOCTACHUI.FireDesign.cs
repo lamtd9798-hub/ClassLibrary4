@@ -41,6 +41,7 @@ namespace ClassLibrary4
                 return;
 
             _fireDesignUiInitialized = true;
+            InitializeMultiSystemDesignUi();
             DgFireAreas.ItemsSource = _fireDesignAreas;
             UpdateFireDesignAreaSummary();
         }
@@ -605,3 +606,4 @@ namespace ClassLibrary4
             IsSubtraction ? -AreaM2 : AreaM2;
     }
 }
+
