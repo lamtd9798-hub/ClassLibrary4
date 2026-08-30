@@ -7,7 +7,7 @@
   "targets": {
     ".NETCoreApp,Version=v8.0": {},
     ".NETCoreApp,Version=v8.0/win-x64": {
-      "ClassLibrary4/4.0.0": {
+      "ClassLibrary4.V25/25.0.0": {
         "dependencies": {
           "AutoCAD.NET": "25.0.1",
           "Microsoft.ML.OnnxRuntime": "1.29.0",
@@ -15,7 +15,7 @@
           "OpenCvSharp4.runtime.win": "4.13.0.20260627"
         },
         "runtime": {
-          "ClassLibrary4.dll": {}
+          "ClassLibrary4.V25.dll": {}
         }
       },
       "AutoCAD.NET/25.0.1": {
@@ -93,7 +93,7 @@
     }
   },
   "libraries": {
-    "ClassLibrary4/4.0.0": {
+    "ClassLibrary4.V25/25.0.0": {
       "type": "project",
       "serviceable": false,
       "sha512": ""

@@ -1,3 +1,4 @@
+// FIX-CS0104-20260829: khóa rõ Region của AutoCAD và Brushes của WPF.
 #nullable disable
 using System;
 using System.Collections.Generic;
@@ -6,11 +7,13 @@ using System.Globalization;
 using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
-using System.Windows.Media;
 
 using Autodesk.AutoCAD.ApplicationServices;
 using Autodesk.AutoCAD.DatabaseServices;
 using Autodesk.AutoCAD.EditorInput;
+
+using AcadRegion = Autodesk.AutoCAD.DatabaseServices.Region;
+using WpfBrushes = System.Windows.Media.Brushes;
 
 namespace ClassLibrary4
 {
@@ -469,7 +472,7 @@ namespace ClassLibrary4
                     return Math.Abs(drawingArea) > 0.0;
                 }
 
-                if (entity is Autodesk.AutoCAD.DatabaseServices.Region region)
+                if (entity is AcadRegion region)
                 {
                     drawingArea = region.Area;
                     entityType = "Region";
@@ -525,6 +528,14 @@ namespace ClassLibrary4
 
             TxtFireTotalArea.Text =
                 total.ToString("N2", CultureInfo.CurrentCulture) + " m²";
+
+            // Đồng bộ vùng đã quét sang phần tính toán tổng hợp. Nếu chưa có
+            // vùng, người dùng vẫn có thể nhập diện tích thủ công ở bước 6.
+            if (TxtFireCalcTotalArea != null && total > 0.0)
+            {
+                TxtFireCalcTotalArea.Text =
+                    total.ToString("0.##", CultureInfo.InvariantCulture);
+            }
         }
 
         private void SetFireDesignStatus(
@@ -538,10 +549,10 @@ namespace ClassLibrary4
             TxtFireDesignStatus.Text = message ?? string.Empty;
             TxtFireDesignStatus.Foreground =
                 isError
-                    ? System.Windows.Media.Brushes.Firebrick
+                    ? WpfBrushes.Firebrick
                     : isSuccess
-                        ? System.Windows.Media.Brushes.DarkGreen
-                        : System.Windows.Media.Brushes.DimGray;
+                        ? WpfBrushes.DarkGreen
+                        : WpfBrushes.DimGray;
         }
 
         private static bool TryParsePositiveFireDesignNumber(

@@ -1823,7 +1823,7 @@
                                                FontWeight="Bold"
                                                FontSize="15"
                                                HorizontalAlignment="Center"/>
-                                    <TextBlock Text="BƯỚC 1–2 · ĐỌC MẶT BẰNG VÀ THÔNG TIN"
+                                    <TextBlock Text="ĐỌC HỒ SƠ · TÍNH TOÁN · XUẤT BÁO CÁO"
                                                Foreground="#FFFFE8E8"
                                                FontSize="9"
                                                Margin="0,3,0,0"
@@ -2108,6 +2108,636 @@
                                                 Click="BtnFireClearDrawingTexts_Click"/>
                                     </Grid>
                                 </StackPanel>
+                            </Border>
+
+                            <Border BorderBrush="#FFD7C6A7"
+                                    BorderThickness="1"
+                                    CornerRadius="5"
+                                    Background="#FFFFFBF3"
+                                    Padding="8"
+                                    Margin="0,0,0,8"
+                                    Loaded="FireDesignWorkflowPanel_Loaded">
+                                <Expander Header="4. HỒ SƠ CĐT &amp; TIÊU CHUẨN"
+                                          FontWeight="Bold"
+                                          Foreground="#FF76520E"
+                                          IsExpanded="False">
+                                    <StackPanel Margin="0,7,0,0">
+                                        <TextBlock Text="Đọc TXT/CSV/DOCX hoặc dán nội dung yêu cầu. PDF cần chuyển sang DOCX/TXT."
+                                                   TextWrapping="Wrap"
+                                                   FontSize="9"
+                                                   FontWeight="Normal"
+                                                   Foreground="#FF655C4D"
+                                                   Margin="0,0,0,6"/>
+
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="6"/>
+                                                <ColumnDefinition Width="*"/>
+                                            </Grid.ColumnDefinitions>
+                                            <Button Grid.Column="0"
+                                                    Content="ĐỌC FILE CĐT"
+                                                    Height="28"
+                                                    Background="#FFB17A16"
+                                                    Foreground="White"
+                                                    FontWeight="Bold"
+                                                    Cursor="Hand"
+                                                    Click="BtnFireImportOwnerDocument_Click"/>
+                                            <Button Grid.Column="2"
+                                                    Content="PHÂN TÍCH NỘI DUNG"
+                                                    Height="28"
+                                                    Cursor="Hand"
+                                                    Click="BtnFireAnalyzeOwnerRequirements_Click"/>
+                                        </Grid>
+
+                                        <TextBox x:Name="TxtFireOwnerRequirements"
+                                                 Height="90"
+                                                 Margin="0,6,0,5"
+                                                 Padding="5"
+                                                 AcceptsReturn="True"
+                                                 TextWrapping="Wrap"
+                                                 VerticalScrollBarVisibility="Auto"
+                                                 FontSize="9"
+                                                 ToolTip="Dán yêu cầu thiết kế của chủ đầu tư vào đây"/>
+
+                                        <TextBlock x:Name="TxtFireOwnerAnalysis"
+                                                   Text="Chưa phân tích yêu cầu chủ đầu tư."
+                                                   TextWrapping="Wrap"
+                                                   FontSize="9"
+                                                   FontWeight="Normal"
+                                                   Foreground="#FF6B552C"
+                                                   Margin="0,0,0,7"/>
+
+                                        <TextBlock Text="Danh mục kiểm tra hiệu lực ngày 29/08/2026"
+                                                   FontSize="9"
+                                                   FontWeight="Bold"
+                                                   Foreground="#FF333333"
+                                                   Margin="0,0,0,4"/>
+
+                                        <DataGrid x:Name="DgFireStandards"
+                                                  Height="170"
+                                                  AutoGenerateColumns="False"
+                                                  CanUserAddRows="False"
+                                                  CanUserDeleteRows="False"
+                                                  HeadersVisibility="Column"
+                                                  GridLinesVisibility="Horizontal"
+                                                  SelectionMode="Single"
+                                                  SelectionUnit="FullRow"
+                                                  FontSize="9"
+                                                  RowHeight="25">
+                                            <DataGrid.Columns>
+                                                <DataGridCheckBoxColumn Header="✓"
+                                                                        Binding="{Binding IsSelected, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                                        Width="28"/>
+                                                <DataGridTextColumn Header="Tiêu chuẩn"
+                                                                    Binding="{Binding Code}"
+                                                                    IsReadOnly="True"
+                                                                    Width="112"/>
+                                                <DataGridTextColumn Header="Phạm vi / trạng thái"
+                                                                    Binding="{Binding Scope}"
+                                                                    IsReadOnly="True"
+                                                                    Width="*"/>
+                                            </DataGrid.Columns>
+                                        </DataGrid>
+
+                                        <Button Content="MỞ NGUỒN CHÍNH THỨC CỦA DÒNG CHỌN"
+                                                Height="27"
+                                                Margin="0,6,0,0"
+                                                Cursor="Hand"
+                                                Click="BtnFireOpenStandardSource_Click"/>
+
+                                        <TextBlock Text="Lưu ý: TCVN 5738:2021 đã được thay bằng TCVN 7568-14:2025; TCVN 6379:1998 đã được thay bằng bản 2024."
+                                                   TextWrapping="Wrap"
+                                                   FontSize="8.5"
+                                                   FontWeight="Normal"
+                                                   Foreground="#FF8A4B08"
+                                                   Margin="0,5,0,0"/>
+                                    </StackPanel>
+                                </Expander>
+                            </Border>
+
+                            <Border BorderBrush="#FFC3D5C8"
+                                    BorderThickness="1"
+                                    CornerRadius="5"
+                                    Background="#FFF5FBF6"
+                                    Padding="8"
+                                    Margin="0,0,0,8">
+                                <Expander Header="5. HỆ THỐNG CẦN XEM XÉT"
+                                          FontWeight="Bold"
+                                          Foreground="#FF23653B"
+                                          IsExpanded="False">
+                                    <StackPanel Margin="0,7,0,0">
+                                        <TextBlock Text="Phần mềm sàng lọc theo công năng, quy mô và yêu cầu CĐT. Anh có thể tích/bỏ từng hệ."
+                                                   TextWrapping="Wrap"
+                                                   FontSize="9"
+                                                   FontWeight="Normal"
+                                                   Foreground="#FF53655A"
+                                                   Margin="0,0,0,6"/>
+
+                                        <Button Content="XÁC ĐỊNH HỆ THỐNG CẦN XEM XÉT"
+                                                Height="31"
+                                                Background="#FF2E7D4E"
+                                                Foreground="White"
+                                                FontWeight="Bold"
+                                                Cursor="Hand"
+                                                Click="BtnFireSuggestSystems_Click"/>
+
+                                        <DataGrid x:Name="DgFireSystems"
+                                                  Height="225"
+                                                  Margin="0,7,0,5"
+                                                  AutoGenerateColumns="False"
+                                                  CanUserAddRows="False"
+                                                  CanUserDeleteRows="False"
+                                                  HeadersVisibility="Column"
+                                                  GridLinesVisibility="Horizontal"
+                                                  SelectionMode="Single"
+                                                  SelectionUnit="FullRow"
+                                                  FontSize="9"
+                                                  RowHeight="25">
+                                            <DataGrid.Columns>
+                                                <DataGridCheckBoxColumn Header="✓"
+                                                                        Binding="{Binding IsSelected, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                                        Width="28"/>
+                                                <DataGridTextColumn Header="Hệ thống"
+                                                                    Binding="{Binding SystemName}"
+                                                                    IsReadOnly="True"
+                                                                    Width="112"/>
+                                                <DataGridTextColumn Header="Căn cứ sàng lọc"
+                                                                    Binding="{Binding Basis}"
+                                                                    IsReadOnly="True"
+                                                                    Width="*"/>
+                                            </DataGrid.Columns>
+                                        </DataGrid>
+
+                                        <TextBlock x:Name="TxtFireSystemsSummary"
+                                                   Text="Chưa chọn hệ thống."
+                                                   TextWrapping="Wrap"
+                                                   FontSize="9"
+                                                   FontWeight="Normal"
+                                                   Foreground="#FF315943"/>
+                                    </StackPanel>
+                                </Expander>
+                            </Border>
+
+                            <Border BorderBrush="#FFC4D1DF"
+                                    BorderThickness="1"
+                                    CornerRadius="5"
+                                    Background="#FFF5F9FD"
+                                    Padding="8"
+                                    Margin="0,0,0,8">
+                                <Expander Header="6. TÍNH SPRINKLER · BƠM · BỂ · KHỐI LƯỢNG"
+                                          FontWeight="Bold"
+                                          Foreground="#FF245D8C"
+                                          IsExpanded="True">
+                                    <StackPanel Margin="0,7,0,0">
+                                        <TextBlock Text="Diện tích dùng tính (m²)"
+                                                   FontSize="9"
+                                                   FontWeight="Normal"/>
+                                        <TextBox x:Name="TxtFireCalcTotalArea"
+                                                 Height="25"
+                                                 Padding="4,2"
+                                                 Margin="0,2,0,6"
+                                                 ToolTip="Tự nhận từ vùng đã quét hoặc có thể nhập tay"/>
+
+                                        <TextBlock Text="Bộ thông số"
+                                                   FontSize="9"
+                                                   FontWeight="Normal"/>
+                                        <ComboBox x:Name="CmbFireHazardPreset"
+                                                  Height="25"
+                                                  Margin="0,2,0,4"
+                                                  SelectedIndex="0"
+                                                  SelectionChanged="CmbFireHazardPreset_SelectionChanged">
+                                            <ComboBoxItem Content="Nhập tay theo tiêu chuẩn dự án" Tag="MANUAL"/>
+                                            <ComboBoxItem Content="Mẫu kiểm thử – nguy cơ nhẹ" Tag="TEST_LIGHT"/>
+                                            <ComboBoxItem Content="Mẫu kiểm thử – nguy cơ thường" Tag="TEST_ORDINARY"/>
+                                            <ComboBoxItem Content="Mẫu kiểm thử – nguy cơ cao" Tag="TEST_HIGH"/>
+                                        </ComboBox>
+
+                                        <TextBlock x:Name="TxtFirePresetNotice"
+                                                   TextWrapping="Wrap"
+                                                   FontSize="8.5"
+                                                   FontWeight="Normal"
+                                                   Foreground="#FFB15B00"
+                                                   Margin="0,0,0,7"/>
+
+                                        <TextBlock Text="SPRINKLER"
+                                                   FontSize="9"
+                                                   FontWeight="Bold"
+                                                   Foreground="#FF245D8C"
+                                                   Margin="0,0,0,3"/>
+
+                                        <Grid Margin="0,0,0,6">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="6"/>
+                                                <ColumnDefinition Width="*"/>
+                                            </Grid.ColumnDefinitions>
+                                            <Grid.RowDefinitions>
+                                                <RowDefinition Height="Auto"/>
+                                                <RowDefinition Height="Auto"/>
+                                            </Grid.RowDefinitions>
+
+                                            <StackPanel Grid.Row="0" Grid.Column="0">
+                                                <TextBlock Text="Mật độ (L/min·m²)" FontSize="8.5" FontWeight="Normal"/>
+                                                <TextBox x:Name="TxtFireDensity" Height="24" Padding="4,2" Margin="0,2,0,5"/>
+                                            </StackPanel>
+                                            <StackPanel Grid.Row="0" Grid.Column="2">
+                                                <TextBlock Text="Vùng tính (m²)" FontSize="8.5" FontWeight="Normal"/>
+                                                <TextBox x:Name="TxtFireDesignArea" Height="24" Padding="4,2" Margin="0,2,0,5"/>
+                                            </StackPanel>
+                                            <StackPanel Grid.Row="1" Grid.Column="0">
+                                                <TextBlock Text="Bảo vệ/đầu (m²)" FontSize="8.5" FontWeight="Normal"/>
+                                                <TextBox x:Name="TxtFireSprinklerCoverage" Height="24" Padding="4,2" Margin="0,2,0,0"/>
+                                            </StackPanel>
+                                            <StackPanel Grid.Row="1" Grid.Column="2">
+                                                <TextBlock Text="K (L/min/√bar)" FontSize="8.5" FontWeight="Normal"/>
+                                                <TextBox x:Name="TxtFireKFactor" Height="24" Padding="4,2" Margin="0,2,0,0"/>
+                                            </StackPanel>
+                                        </Grid>
+
+                                        <Border Background="#FFEAF4FC"
+                                                BorderBrush="#FFB7D1E7"
+                                                BorderThickness="1"
+                                                CornerRadius="4"
+                                                Padding="6"
+                                                Margin="0,1,0,7"
+                                                Loaded="FireHydraulicPanel_Loaded">
+                                            <StackPanel>
+                                                <TextBlock Text="BỐ TRÍ ĐẦU PHUN TRÊN CAD"
+                                                           FontSize="9"
+                                                           FontWeight="Bold"
+                                                           Foreground="#FF245D8C"/>
+                                                <TextBlock Text="Chọn Polyline kín; phần mềm rải lưới, tạo block và đếm số đầu thực tế."
+                                                           TextWrapping="Wrap"
+                                                           FontSize="8"
+                                                           FontWeight="Normal"
+                                                           Foreground="#FF456277"
+                                                           Margin="0,2,0,5"/>
+
+                                                <Grid Margin="0,0,0,5">
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="*"/>
+                                                        <ColumnDefinition Width="6"/>
+                                                        <ColumnDefinition Width="*"/>
+                                                    </Grid.ColumnDefinitions>
+                                                    <Grid.RowDefinitions>
+                                                        <RowDefinition Height="Auto"/>
+                                                        <RowDefinition Height="Auto"/>
+                                                        <RowDefinition Height="Auto"/>
+                                                    </Grid.RowDefinitions>
+
+                                                    <StackPanel Grid.Row="0" Grid.Column="0">
+                                                        <TextBlock Text="Khoảng X (m)" FontSize="8" FontWeight="Normal"/>
+                                                        <TextBox x:Name="TxtFireLayoutSpacingX" Height="23" Padding="4,2" Margin="0,2,0,4"/>
+                                                    </StackPanel>
+                                                    <StackPanel Grid.Row="0" Grid.Column="2">
+                                                        <TextBlock Text="Khoảng Y (m)" FontSize="8" FontWeight="Normal"/>
+                                                        <TextBox x:Name="TxtFireLayoutSpacingY" Height="23" Padding="4,2" Margin="0,2,0,4"/>
+                                                    </StackPanel>
+                                                    <StackPanel Grid.Row="1" Grid.Column="0">
+                                                        <TextBlock Text="Lùi tường (m)" FontSize="8" FontWeight="Normal"/>
+                                                        <TextBox x:Name="TxtFireLayoutWallOffset" Height="23" Padding="4,2" Margin="0,2,0,4"/>
+                                                    </StackPanel>
+                                                    <StackPanel Grid.Row="1" Grid.Column="2">
+                                                        <TextBlock Text="Góc lưới (°)" FontSize="8" FontWeight="Normal"/>
+                                                        <TextBox x:Name="TxtFireLayoutRotation" Height="23" Padding="4,2" Margin="0,2,0,4"/>
+                                                    </StackPanel>
+                                                    <StackPanel Grid.Row="2" Grid.Column="0" Grid.ColumnSpan="3">
+                                                        <TextBlock Text="Tên block đầu phun" FontSize="8" FontWeight="Normal"/>
+                                                        <TextBox x:Name="TxtFireSprinklerBlockName" Height="23" Padding="4,2" Margin="0,2,0,0"/>
+                                                    </StackPanel>
+                                                </Grid>
+
+                                                <Button Content="BỐ TRÍ ĐẦU PHUN TRÊN VÙNG KÍN"
+                                                        Height="30"
+                                                        Background="#FF1672B3"
+                                                        Foreground="White"
+                                                        FontWeight="Bold"
+                                                        Cursor="Hand"
+                                                        Click="BtnFireLayoutSprinklers_Click"/>
+
+                                                <Grid Margin="0,5,0,5">
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="*"/>
+                                                        <ColumnDefinition Width="5"/>
+                                                        <ColumnDefinition Width="*"/>
+                                                    </Grid.ColumnDefinitions>
+                                                    <Button Grid.Column="0"
+                                                            Content="ĐẾM BLOCK ĐẦU PHUN"
+                                                            Height="26"
+                                                            FontSize="8.5"
+                                                            Cursor="Hand"
+                                                            Click="BtnFireCountSprinklers_Click"/>
+                                                    <Button Grid.Column="2"
+                                                            Content="XÓA KẾT QUẢ"
+                                                            Height="26"
+                                                            FontSize="8.5"
+                                                            Cursor="Hand"
+                                                            Click="BtnFireClearSprinklerLayoutResults_Click"/>
+                                                </Grid>
+
+                                                <DataGrid x:Name="DgFireSprinklerLayouts"
+                                                          Height="128"
+                                                          AutoGenerateColumns="False"
+                                                          CanUserAddRows="False"
+                                                          CanUserDeleteRows="False"
+                                                          IsReadOnly="True"
+                                                          HeadersVisibility="Column"
+                                                          GridLinesVisibility="Horizontal"
+                                                          FontSize="8"
+                                                          RowHeight="23">
+                                                    <DataGrid.Columns>
+                                                        <DataGridTextColumn Header="STT" Binding="{Binding Index}" Width="30"/>
+                                                        <DataGridTextColumn Header="Vùng" Binding="{Binding Boundary}" Width="58"/>
+                                                        <DataGridTextColumn Header="m²" Binding="{Binding AreaM2, StringFormat=N1}" Width="55"/>
+                                                        <DataGridTextColumn Header="Tạo" Binding="{Binding AddedHeadCount}" Width="38"/>
+                                                        <DataGridTextColumn Header="Lưới" Binding="{Binding Spacing}" Width="*"/>
+                                                    </DataGrid.Columns>
+                                                </DataGrid>
+
+                                                <TextBlock x:Name="TxtFireSprinklerLayoutSummary"
+                                                           Text="Chưa bố trí hoặc đếm đầu phun."
+                                                           TextWrapping="Wrap"
+                                                           FontSize="8"
+                                                           FontWeight="Normal"
+                                                           Foreground="#FF315943"
+                                                           Margin="0,4,0,0"/>
+                                            </StackPanel>
+                                        </Border>
+
+                                        <TextBlock Text="HỌNG NƯỚC &amp; THỜI GIAN"
+                                                   FontSize="9"
+                                                   FontWeight="Bold"
+                                                   Foreground="#FF245D8C"
+                                                   Margin="0,3,0,3"/>
+
+                                        <Grid Margin="0,0,0,6">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="6"/>
+                                                <ColumnDefinition Width="*"/>
+                                            </Grid.ColumnDefinitions>
+                                            <Grid.RowDefinitions>
+                                                <RowDefinition Height="Auto"/>
+                                                <RowDefinition Height="Auto"/>
+                                            </Grid.RowDefinitions>
+
+                                            <StackPanel Grid.Row="0" Grid.Column="0">
+                                                <TextBlock Text="1 lăng trong nhà (L/s)" FontSize="8.5" FontWeight="Normal"/>
+                                                <TextBox x:Name="TxtFireIndoorFlow" Height="24" Padding="4,2" Margin="0,2,0,5"/>
+                                            </StackPanel>
+                                            <StackPanel Grid.Row="0" Grid.Column="2">
+                                                <TextBlock Text="Số lăng đồng thời" FontSize="8.5" FontWeight="Normal"/>
+                                                <TextBox x:Name="TxtFireIndoorJetCount" Height="24" Padding="4,2" Margin="0,2,0,5"/>
+                                            </StackPanel>
+                                            <StackPanel Grid.Row="1" Grid.Column="0">
+                                                <TextBlock Text="Ngoài nhà (L/s)" FontSize="8.5" FontWeight="Normal"/>
+                                                <TextBox x:Name="TxtFireOutdoorFlow" Height="24" Padding="4,2" Margin="0,2,0,0"/>
+                                            </StackPanel>
+                                            <StackPanel Grid.Row="1" Grid.Column="2">
+                                                <TextBlock Text="Dự trữ (phút)" FontSize="8.5" FontWeight="Normal"/>
+                                                <TextBox x:Name="TxtFireDuration" Height="24" Padding="4,2" Margin="0,2,0,0"/>
+                                            </StackPanel>
+                                        </Grid>
+
+                                        <TextBlock Text="ỐNG &amp; TUYẾN BẤT LỢI"
+                                                   FontSize="9"
+                                                   FontWeight="Bold"
+                                                   Foreground="#FF245D8C"
+                                                   Margin="0,3,0,3"/>
+
+                                        <Grid Margin="0,0,0,5">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="6"/>
+                                                <ColumnDefinition Width="*"/>
+                                            </Grid.ColumnDefinitions>
+                                            <Grid.RowDefinitions>
+                                                <RowDefinition Height="Auto"/>
+                                                <RowDefinition Height="Auto"/>
+                                                <RowDefinition Height="Auto"/>
+                                            </Grid.RowDefinitions>
+
+                                            <StackPanel Grid.Row="0" Grid.Column="0">
+                                                <TextBlock Text="Hazen-Williams C" FontSize="8.5" FontWeight="Normal"/>
+                                                <TextBox x:Name="TxtFireHazenC" Height="24" Padding="4,2" Margin="0,2,0,5"/>
+                                            </StackPanel>
+                                            <StackPanel Grid.Row="0" Grid.Column="2">
+                                                <TextBlock Text="Vận tốc max (m/s)" FontSize="8.5" FontWeight="Normal"/>
+                                                <TextBox x:Name="TxtFireMaxVelocity" Height="24" Padding="4,2" Margin="0,2,0,5"/>
+                                            </StackPanel>
+                                            <StackPanel Grid.Row="1" Grid.Column="0">
+                                                <TextBlock Text="hf max (m/100m)" FontSize="8.5" FontWeight="Normal"/>
+                                                <TextBox x:Name="TxtFireMaxUnitLoss" Height="24" Padding="4,2" Margin="0,2,0,5"/>
+                                            </StackPanel>
+                                            <StackPanel Grid.Row="1" Grid.Column="2">
+                                                <TextBlock Text="Tuyến bất lợi (m)" FontSize="8.5" FontWeight="Normal"/>
+                                                <TextBox x:Name="TxtFireCriticalPathLength" Height="24" Padding="4,2" Margin="0,2,0,5"/>
+                                            </StackPanel>
+                                            <StackPanel Grid.Row="2" Grid.Column="0">
+                                                <TextBlock Text="Phụ kiện cộng (%)" FontSize="8.5" FontWeight="Normal"/>
+                                                <TextBox x:Name="TxtFireFittingsAllowance" Height="24" Padding="4,2" Margin="0,2,0,0"/>
+                                            </StackPanel>
+                                            <StackPanel Grid.Row="2" Grid.Column="2">
+                                                <TextBlock Text="Đầu phun/nhánh" FontSize="8.5" FontWeight="Normal"/>
+                                                <TextBox x:Name="TxtFireHeadsPerBranch" Height="24" Padding="4,2" Margin="0,2,0,0"/>
+                                            </StackPanel>
+                                        </Grid>
+
+                                        <Button Content="CHỌN TUYẾN ỐNG BẤT LỢI TRÊN CAD"
+                                                Height="29"
+                                                Margin="0,0,0,7"
+                                                Background="#FF4F7292"
+                                                Foreground="White"
+                                                FontWeight="Bold"
+                                                Cursor="Hand"
+                                                Click="BtnFireReadCriticalPath_Click"/>
+
+                                        <TextBlock Text="CỘT ÁP BƠM"
+                                                   FontSize="9"
+                                                   FontWeight="Bold"
+                                                   Foreground="#FF245D8C"
+                                                   Margin="0,3,0,3"/>
+
+                                        <Grid Margin="0,0,0,6">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="6"/>
+                                                <ColumnDefinition Width="*"/>
+                                            </Grid.ColumnDefinitions>
+                                            <Grid.RowDefinitions>
+                                                <RowDefinition Height="Auto"/>
+                                                <RowDefinition Height="Auto"/>
+                                            </Grid.RowDefinitions>
+
+                                            <StackPanel Grid.Row="0" Grid.Column="0">
+                                                <TextBlock Text="Cột áp tĩnh (m)" FontSize="8.5" FontWeight="Normal"/>
+                                                <TextBox x:Name="TxtFireStaticHead" Height="24" Padding="4,2" Margin="0,2,0,5"/>
+                                            </StackPanel>
+                                            <StackPanel Grid.Row="0" Grid.Column="2">
+                                                <TextBlock Text="Áp dư bất lợi (bar)" FontSize="8.5" FontWeight="Normal"/>
+                                                <TextBox x:Name="TxtFireResidualPressure" Height="24" Padding="4,2" Margin="0,2,0,5"/>
+                                            </StackPanel>
+                                            <StackPanel Grid.Row="1" Grid.Column="0">
+                                                <TextBlock Text="Tổn thất khác (m)" FontSize="8.5" FontWeight="Normal"/>
+                                                <TextBox x:Name="TxtFirePipeLoss" Height="24" Padding="4,2" Margin="0,2,0,0"/>
+                                            </StackPanel>
+                                            <StackPanel Grid.Row="1" Grid.Column="2">
+                                                <TextBlock Text="Dự phòng (%)" FontSize="8.5" FontWeight="Normal"/>
+                                                <TextBox x:Name="TxtFireSafetyMargin" Height="24" Padding="4,2" Margin="0,2,0,0"/>
+                                            </StackPanel>
+                                        </Grid>
+
+                                        <TextBlock Text="SUẤT KHỐI LƯỢNG SƠ BỘ"
+                                                   FontSize="9"
+                                                   FontWeight="Bold"
+                                                   Foreground="#FF245D8C"
+                                                   Margin="0,3,0,3"/>
+
+                                        <Grid Margin="0,0,0,6">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="6"/>
+                                                <ColumnDefinition Width="*"/>
+                                            </Grid.ColumnDefinitions>
+                                            <Grid.RowDefinitions>
+                                                <RowDefinition Height="Auto"/>
+                                                <RowDefinition Height="Auto"/>
+                                            </Grid.RowDefinitions>
+
+                                            <StackPanel Grid.Row="0" Grid.Column="0">
+                                                <TextBlock Text="m² / đầu báo" FontSize="8.5" FontWeight="Normal"/>
+                                                <TextBox x:Name="TxtFireDetectorCoverage" Height="24" Padding="4,2" Margin="0,2,0,5"/>
+                                            </StackPanel>
+                                            <StackPanel Grid.Row="0" Grid.Column="2">
+                                                <TextBlock Text="m² / bình chữa cháy" FontSize="8.5" FontWeight="Normal"/>
+                                                <TextBox x:Name="TxtFireExtinguisherCoverage" Height="24" Padding="4,2" Margin="0,2,0,5"/>
+                                            </StackPanel>
+                                            <StackPanel Grid.Row="1" Grid.Column="0">
+                                                <TextBlock Text="Tủ/họng mỗi tầng" FontSize="8.5" FontWeight="Normal"/>
+                                                <TextBox x:Name="TxtFireCabinetsPerFloor" Height="24" Padding="4,2" Margin="0,2,0,0"/>
+                                            </StackPanel>
+                                            <StackPanel Grid.Row="1" Grid.Column="2">
+                                                <TextBlock Text="Nút nhấn mỗi tầng" FontSize="8.5" FontWeight="Normal"/>
+                                                <TextBox x:Name="TxtFireCallPointsPerFloor" Height="24" Padding="4,2" Margin="0,2,0,0"/>
+                                            </StackPanel>
+                                        </Grid>
+
+                                        <CheckBox x:Name="ChkFireEngineerConfirmed"
+                                                  FontSize="9"
+                                                  FontWeight="Normal"
+                                                  Margin="0,4,0,7">
+                                            <TextBlock Text="Tôi đã đối chiếu thông số với tiêu chuẩn và hồ sơ dự án"
+                                                       TextWrapping="Wrap"/>
+                                        </CheckBox>
+
+                                        <Button Content="TÍNH TOÁN TOÀN BỘ"
+                                                Height="34"
+                                                Background="#FF1E64A1"
+                                                Foreground="White"
+                                                FontWeight="Bold"
+                                                Cursor="Hand"
+                                                Click="BtnFireCalculateAll_Click"/>
+
+                                        <Border Background="White"
+                                                BorderBrush="#FFC6D7E7"
+                                                BorderThickness="1"
+                                                CornerRadius="3"
+                                                Padding="6"
+                                                Margin="0,7,0,6">
+                                            <TextBlock x:Name="TxtFireCalculationSummary"
+                                                       Text="Chưa có kết quả tính toán."
+                                                       TextWrapping="Wrap"
+                                                       FontSize="9"
+                                                       FontWeight="Bold"
+                                                       Foreground="#FF154C79"/>
+                                        </Border>
+
+                                        <DataGrid x:Name="DgFireCalculationResults"
+                                                  Height="280"
+                                                  AutoGenerateColumns="False"
+                                                  CanUserAddRows="False"
+                                                  CanUserDeleteRows="False"
+                                                  IsReadOnly="True"
+                                                  HeadersVisibility="Column"
+                                                  GridLinesVisibility="Horizontal"
+                                                  SelectionMode="Single"
+                                                  SelectionUnit="FullRow"
+                                                  FontSize="8.5"
+                                                  RowHeight="24">
+                                            <DataGrid.Columns>
+                                                <DataGridTextColumn Header="STT" Binding="{Binding Index}" Width="32"/>
+                                                <DataGridTextColumn Header="Nhóm" Binding="{Binding Group}" Width="64"/>
+                                                <DataGridTextColumn Header="Chỉ tiêu" Binding="{Binding Item}" Width="*"/>
+                                                <DataGridTextColumn Header="Giá trị" Binding="{Binding Value}" Width="58"/>
+                                                <DataGridTextColumn Header="ĐV" Binding="{Binding Unit}" Width="48"/>
+                                            </DataGrid.Columns>
+                                        </DataGrid>
+                                    </StackPanel>
+                                </Expander>
+                            </Border>
+
+                            <Border BorderBrush="#FFD2C6DE"
+                                    BorderThickness="1"
+                                    CornerRadius="5"
+                                    Background="#FFFAF7FC"
+                                    Padding="8"
+                                    Margin="0,0,0,8">
+                                <Expander Header="7. LƯU DỰ ÁN &amp; XUẤT KẾT QUẢ"
+                                          FontWeight="Bold"
+                                          Foreground="#FF67427C"
+                                          IsExpanded="True">
+                                    <StackPanel Margin="0,7,0,0">
+                                        <Grid Margin="0,0,0,6">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="6"/>
+                                                <ColumnDefinition Width="*"/>
+                                            </Grid.ColumnDefinitions>
+                                            <Button Grid.Column="0"
+                                                    Content="LƯU DỰ ÁN"
+                                                    Height="28"
+                                                    Cursor="Hand"
+                                                    Click="BtnFireSaveProject_Click"/>
+                                            <Button Grid.Column="2"
+                                                    Content="MỞ DỰ ÁN"
+                                                    Height="28"
+                                                    Cursor="Hand"
+                                                    Click="BtnFireLoadProject_Click"/>
+                                        </Grid>
+
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="6"/>
+                                                <ColumnDefinition Width="*"/>
+                                            </Grid.ColumnDefinitions>
+                                            <Button Grid.Column="0"
+                                                    Content="XUẤT CSV / EXCEL"
+                                                    Height="30"
+                                                    Background="#FF6B4A80"
+                                                    Foreground="White"
+                                                    FontWeight="Bold"
+                                                    Cursor="Hand"
+                                                    Click="BtnFireExportReport_Click"/>
+                                            <Button Grid.Column="2"
+                                                    Content="CHÈN BẢNG VÀO CAD"
+                                                    Height="30"
+                                                    Background="#FF6B4A80"
+                                                    Foreground="White"
+                                                    FontWeight="Bold"
+                                                    Cursor="Hand"
+                                                    Click="BtnFireInsertResultTable_Click"/>
+                                        </Grid>
+
+                                        <TextBlock Text="File dự án lưu toàn bộ thông tin, vùng diện tích, hệ thống và thông số để mở lại trên máy khác."
+                                                   TextWrapping="Wrap"
+                                                   FontSize="8.5"
+                                                   FontWeight="Normal"
+                                                   Foreground="#FF6A5D70"
+                                                   Margin="0,5,0,0"/>
+                                    </StackPanel>
+                                </Expander>
                             </Border>
 
                             <Border BorderBrush="#FFB9D7C1"
