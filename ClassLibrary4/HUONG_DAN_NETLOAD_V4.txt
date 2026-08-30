@@ -1,0 +1,38 @@
+CLASSLIBRARY4 V25 - THIẾT KẾ MEP 5 TAB V4
+=========================================
+
+CÀI ĐẶT
+1. Đóng hoàn toàn tất cả cửa sổ AutoCAD.
+2. Giải nén toàn bộ ZIP vào MỘT THƯ MỤC MỚI.
+3. Không trộn chung với V1/V2/V3, không chép vào bin hoặc obj.
+4. Mở AutoCAD, gõ NETLOAD.
+5. CHỈ chọn ClassLibrary4.V25.dll.
+6. Hai DLL dưới đây phải nằm cùng thư mục nhưng KHÔNG NETLOAD trực tiếp:
+   - ClassLibrary4.V25.DesignBridge.dll
+   - ClassLibrary4.V25.FireDesignModule.dll
+7. Gõ HIENBANG để mở bảng như phiên bản V25 gốc.
+
+GIAO DIỆN THIẾT KẾ MỚI
+- Tab 1. FF: giữ toàn bộ chức năng PCCC đã có.
+- Tab 2. HÚT KHÓI: hút khói, gió bù, tăng áp, ống gió, ESP và quạt.
+- Tab 3. CTN: nhu cầu nước, WSFU/DFU, bơm/bể, DN cấp/thoát và nước mưa.
+- Tab 4. ACMV: tải lạnh, gió tươi/cấp, ống gió, quạt, nước lạnh và nước ngưng.
+- Tab 5. SIZE CÁP: dòng tải, hiệu chỉnh, phát nóng, sụt áp, ngắn mạch,
+  chọn cáp, CB, PE và trung tính.
+
+QUÉT CAD
+- Hút khói và ACMV có thể quét Polyline kín/Hatch/Region/Circle lấy diện tích.
+- CTN có thể quét vùng mái lấy diện tích nước mưa.
+- Hút khói, CTN, ACMV và cáp có thể chọn tuyến CAD lấy chiều dài.
+- Nếu INSUNITS chưa khai báo, phần mềm tạm giả định đơn vị bản vẽ là mm và
+  sẽ hiện cảnh báo.
+
+LƯU Ý QUAN TRỌNG
+- Các số mặc định chỉ để chạy thử giao diện và thuật toán.
+- Phải thay bằng thông số đã tra theo công năng, địa phương, hồ sơ chủ đầu tư,
+  tiêu chuẩn áp dụng và catalogue thiết bị/cáp.
+- Kết quả chọn size là kết quả sơ bộ hỗ trợ kỹ sư, không tự thay thế thuyết
+  minh thiết kế, kiểm tra phối hợp hệ thống hoặc hồ sơ thẩm duyệt.
+- AutoCAD không gỡ DLL đã NETLOAD khỏi bộ nhớ. Muốn thử bản khác phải đóng
+  AutoCAD hoàn toàn rồi mở lại.
+
