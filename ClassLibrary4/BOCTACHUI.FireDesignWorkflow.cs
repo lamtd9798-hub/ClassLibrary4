@@ -15,6 +15,10 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Xml.Linq;
 
+using WpfComboBox = System.Windows.Controls.ComboBox;
+using WpfComboBoxItem = System.Windows.Controls.ComboBoxItem;
+using WpfTextBox = System.Windows.Controls.TextBox;
+
 using Autodesk.AutoCAD.ApplicationServices;
 using Autodesk.AutoCAD.DatabaseServices;
 using Autodesk.AutoCAD.EditorInput;
@@ -293,7 +297,7 @@ namespace ClassLibrary4
             }
         }
 
-        private static void SetFireTextIfEmpty(TextBox textBox, string value)
+        private static void SetFireTextIfEmpty(WpfTextBox textBox, string value)
         {
             if (textBox != null && string.IsNullOrWhiteSpace(textBox.Text))
                 textBox.Text = value;
@@ -1297,7 +1301,7 @@ namespace ClassLibrary4
         }
 
         private static void RequirePositiveFireNumber(
-            TextBox textBox,
+            WpfTextBox textBox,
             string fieldName,
             List<string> errors,
             out double value)
@@ -1307,7 +1311,7 @@ namespace ClassLibrary4
         }
 
         private static void RequireNonNegativeFireNumber(
-            TextBox textBox,
+            WpfTextBox textBox,
             string fieldName,
             List<string> errors,
             out double value)
@@ -1317,7 +1321,7 @@ namespace ClassLibrary4
         }
 
         private static void RequirePositiveFireInteger(
-            TextBox textBox,
+            WpfTextBox textBox,
             string fieldName,
             List<string> errors,
             out int value)
@@ -1737,21 +1741,21 @@ namespace ClassLibrary4
             UpdateFireWorkflowSummaries();
         }
 
-        private static void SetFireText(TextBox textBox, string value)
+        private static void SetFireText(WpfTextBox textBox, string value)
         {
             if (textBox != null && value != null)
                 textBox.Text = value;
         }
 
-        private static string GetFireComboTag(ComboBox comboBox)
+        private static string GetFireComboTag(WpfComboBox comboBox)
         {
-            return (comboBox?.SelectedItem as ComboBoxItem)
+            return (comboBox?.SelectedItem as WpfComboBoxItem)
                        ?.Tag
                        ?.ToString() ?? string.Empty;
         }
 
         private static void SelectFireComboByTag(
-            ComboBox comboBox,
+            WpfComboBox comboBox,
             string tag)
         {
             if (comboBox == null)
@@ -1759,7 +1763,7 @@ namespace ClassLibrary4
 
             foreach (object item in comboBox.Items)
             {
-                if (item is ComboBoxItem comboItem &&
+                if (item is WpfComboBoxItem comboItem &&
                     string.Equals(
                         comboItem.Tag?.ToString(),
                         tag,

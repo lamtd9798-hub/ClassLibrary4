@@ -1,0 +1,11 @@
+V3 - SUA LOI HOI QUY GIAO DIEN
+=============================
+
+- Loai bo hoan toan DesignHost cu co lop ClassLibrary4.BOCTACHUI trung lap.
+- Tach tab THIET KE thanh UserControl doc lap:
+  ClassLibrary4.FireDesign.FireDesignControl.
+- Bridge chi doi Header/Content cua dung tab EXCEL.
+- Khong di chuyen TabItem, khong sua Items cua MainSystemTabs.
+- Giu nguyen resource XAML va toan bo ham AI moi trong ClassLibrary4.V25.dll.
+- Bo sung day du phan doc TEXT/BLOCK va thuy luc/bố tri dau phun.
+
