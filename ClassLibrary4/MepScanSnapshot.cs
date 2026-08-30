@@ -12,7 +12,9 @@ namespace ClassLibrary4
         Duct = 2
     }
 
-    internal sealed class MepGraphPipeNode
+    // Snapshot DTO names are intentionally different from the existing
+    // MepGraphPipeNode / MepGraphDeviceNode classes in MepGraphEngine.cs.
+    internal sealed class MepSnapshotPipeNode
     {
         public string Key { get; set; } = "";
         public string Dn { get; set; } = "";
@@ -30,7 +32,7 @@ namespace ClassLibrary4
         public string SourceHandle { get; set; } = "";
     }
 
-    internal sealed class MepGraphDeviceNode
+    internal sealed class MepSnapshotDeviceNode
     {
         public string Key { get; set; } = "";
         public string Label { get; set; } = "";
@@ -52,9 +54,9 @@ namespace ClassLibrary4
     {
         // Existing deterministic pipe graph remains authoritative for pipe/GNN.
         public MepGraphSnapshot PipeGraph { get; set; }
-        public List<MepGraphPipeNode> Pipes { get; set; } = new List<MepGraphPipeNode>();
+        public List<MepSnapshotPipeNode> Pipes { get; set; } = new List<MepSnapshotPipeNode>();
         public List<MepGraphDuctNode> Ducts { get; set; } = new List<MepGraphDuctNode>();
-        public List<MepGraphDeviceNode> Devices { get; set; } = new List<MepGraphDeviceNode>();
+        public List<MepSnapshotDeviceNode> Devices { get; set; } = new List<MepSnapshotDeviceNode>();
         public List<MepGraphDomainEdge> Edges { get; set; } = new List<MepGraphDomainEdge>();
     }
 
