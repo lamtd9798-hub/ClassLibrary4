@@ -24,22 +24,46 @@ jobs:
       - name: Restore
         run: dotnet restore ClassLibrary4/ClassLibrary4.csproj
 
+      - name: Verify multi-system design UI exists in source
+        shell: pwsh
+        run: |
+          $xaml = Get-Content 'ClassLibrary4/BOCTACHUI.xaml' -Raw -Encoding UTF8
+          $markers = @('THIẾT KẾ PCCC','THIẾT KẾ ACMV','THIẾT KẾ CTN','THIẾT KẾ ĐIỆN')
+          foreach ($marker in $markers) {
+            if (-not $xaml.Contains($marker)) { throw "Missing design marker: $marker" }
+            Write-Host "FOUND: $marker"
+          }
+
       - name: Build Release x64
         run: dotnet build ClassLibrary4/ClassLibrary4.csproj -c Release -p:Platform=x64 --no-restore
 
-      - name: Collect NETLOAD DLL
+      - name: Collect clean NETLOAD package
         shell: pwsh
         run: |
-          New-Item -ItemType Directory -Force -Path artifact | Out-Null
           $dll = Get-ChildItem -Path ClassLibrary4/bin -Filter ClassLibrary4.dll -Recurse |
             Sort-Object LastWriteTime -Descending |
             Select-Object -First 1
           if (-not $dll) { throw 'ClassLibrary4.dll was not produced.' }
-          Copy-Item $dll.FullName artifact/ClassLibrary4.V25.dll -Force
 
-      - name: Upload V25 DLL
+          $outDir = $dll.Directory.FullName
+          $pkg = 'artifact/ClassLibrary4_V25_CLEAN'
+          New-Item -ItemType Directory -Force -Path $pkg | Out-Null
+          Copy-Item (Join-Path $outDir '*') $pkg -Recurse -Force
+
+          Copy-Item $dll.FullName (Join-Path $pkg 'ClassLibrary4.V25.dll') -Force
+          Remove-Item (Join-Path $pkg 'ClassLibrary4.dll') -Force -ErrorAction SilentlyContinue
+          Remove-Item (Join-Path $pkg 'ClassLibrary4.pdb') -Force -ErrorAction SilentlyContinue
+
+          # Old auxiliary design modules must NOT be mixed with the source-integrated UI.
+          Remove-Item (Join-Path $pkg 'ClassLibrary4.V25.DesignBridge.dll') -Force -ErrorAction SilentlyContinue
+          Remove-Item (Join-Path $pkg 'ClassLibrary4.V25.DesignHost.dll') -Force -ErrorAction SilentlyContinue
+          Remove-Item (Join-Path $pkg 'ClassLibrary4.V25.FireDesignModule.dll') -Force -ErrorAction SilentlyContinue
+
+          Get-ChildItem $pkg -Recurse | Select-Object FullName, Length
+
+      - name: Upload clean V25 package
         uses: actions/upload-artifact@v4
         with:
-          name: ClassLibrary4.V25
-          path: artifact/ClassLibrary4.V25.dll
+          name: ClassLibrary4.V25.CLEAN
+          path: artifact/ClassLibrary4_V25_CLEAN
           if-no-files-found: error
