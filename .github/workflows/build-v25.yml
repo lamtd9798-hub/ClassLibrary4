@@ -1,0 +1,45 @@
+name: Build ClassLibrary4 V25
+
+on:
+  push:
+    branches: [ master ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Restore
+        run: dotnet restore ClassLibrary4/ClassLibrary4.csproj
+
+      - name: Build Release x64
+        run: dotnet build ClassLibrary4/ClassLibrary4.csproj -c Release -p:Platform=x64 --no-restore
+
+      - name: Collect NETLOAD DLL
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path artifact | Out-Null
+          $dll = Get-ChildItem -Path ClassLibrary4/bin -Filter ClassLibrary4.dll -Recurse |
+            Sort-Object LastWriteTime -Descending |
+            Select-Object -First 1
+          if (-not $dll) { throw 'ClassLibrary4.dll was not produced.' }
+          Copy-Item $dll.FullName artifact/ClassLibrary4.V25.dll -Force
+
+      - name: Upload V25 DLL
+        uses: actions/upload-artifact@v4
+        with:
+          name: ClassLibrary4.V25
+          path: artifact/ClassLibrary4.V25.dll
+          if-no-files-found: error
