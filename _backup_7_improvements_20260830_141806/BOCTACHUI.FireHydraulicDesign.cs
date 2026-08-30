@@ -334,28 +334,19 @@ namespace ClassLibrary4
                             "LINE,LWPOLYLINE,POLYLINE,ARC,SPLINE")
                     };
 
-                    SelectionSet hydraulicSelection = null;
+                    PromptSelectionResult selection =
+                        doc.Editor.GetSelection(
+                            options,
+                            new SelectionFilter(filterValues));
 
-                    if (!MepScanSessionStore.TryGetFreshSelection(
-                            doc,
-                            out hydraulicSelection))
+                    if (selection.Status != PromptStatus.OK ||
+                        selection.Value == null ||
+                        selection.Value.Count == 0)
                     {
-                        PromptSelectionResult selection =
-                            doc.Editor.GetSelection(
-                                options,
-                                new SelectionFilter(filterValues));
-
-                        if (selection.Status != PromptStatus.OK ||
-                            selection.Value == null ||
-                            selection.Value.Count == 0)
-                        {
-                            SetFireDesignStatus(
-                                "Đã hủy hoặc chưa chọn tuyến ống bất lợi.",
-                                isError: false);
-                            return;
-                        }
-
-                        hydraulicSelection = selection.Value;
+                        SetFireDesignStatus(
+                            "Đã hủy hoặc chưa chọn tuyến ống bất lợi.",
+                            isError: false);
+                        return;
                     }
 
                     double lengthToMeters =
@@ -371,7 +362,7 @@ namespace ClassLibrary4
                     using (Transaction transaction =
                            doc.Database.TransactionManager.StartTransaction())
                     {
-                        foreach (SelectedObject selected in hydraulicSelection)
+                        foreach (SelectedObject selected in selection.Value)
                         {
                             if (selected == null || !selected.ObjectId.IsValid)
                                 continue;

@@ -1,4 +1,4 @@
-#nullable disable
+﻿#nullable disable
 using System;
 using System.Collections.Generic;
 using System.Drawing;
@@ -436,8 +436,6 @@ namespace ClassLibrary4
                     {
                         _onnxRuns++;
                     }
-
-                    MepAiRuntimeDiagnostics.MarkRun("ONNX");
 
                     using (IDisposableReadOnlyCollection<DisposableNamedOnnxValue> outputs =
                         _session.Run(inputs))

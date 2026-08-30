@@ -1,4 +1,4 @@
-#nullable disable
+﻿#nullable disable
 using System;
 using System.Collections.Generic;
 using System.Globalization;
@@ -385,8 +385,6 @@ namespace ClassLibrary4
                                 nodeMask));
                     }
                 }
-
-                MepAiRuntimeDiagnostics.MarkRun("GNN");
 
                 using (IDisposableReadOnlyCollection<DisposableNamedOnnxValue> outputs =
                     _session.Run(inputs))

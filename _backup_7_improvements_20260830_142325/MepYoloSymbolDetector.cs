@@ -1,4 +1,4 @@
-#nullable disable
+﻿#nullable disable
 using System;
 using System.Collections.Generic;
 using System.Drawing;
@@ -194,8 +194,6 @@ namespace ClassLibrary4
                     {
                         input
                     };
-
-                MepAiRuntimeDiagnostics.MarkRun("YOLO");
 
                 using IDisposableReadOnlyCollection<DisposableNamedOnnxValue> outputs =
                     _session.Run(inputs);

@@ -414,11 +414,6 @@ namespace ClassLibrary4
                 SelectionSet workingSelection =
                     psr.Value;
 
-                MepScanSessionStore.CaptureSelection(
-                    doc,
-                    workingSelection.GetObjectIds(),
-                    new[] { "MEP", "PIPE", "DUCT", "HVAC", "DEVICE" });
-
                 // Duct context chạy im lặng để VCD/FD/FSD lấy đúng WxH.
                 MepDuctScanResult ductContext =
                     new MepDuctScanResult();
@@ -607,11 +602,6 @@ namespace ClassLibrary4
 
                 SelectionSet workingSelection =
                     psr.Value;
-
-                MepScanSessionStore.CaptureSelection(
-                    doc,
-                    workingSelection.GetObjectIds(),
-                    new[] { "MEP", "PIPE", "DUCT", "HVAC", "DEVICE" });
 
                 if (TxtAiAutoStatus != null)
                 {

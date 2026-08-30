@@ -1,0 +1,11 @@
+{
+  "base_commit": "342e91d578c690bd6813b264b9f68b86621f3b95",
+  "github_write_performed_for_this_package": false,
+  "files": [
+    "APPLY_7_IMPROVEMENTS.ps1",
+    "RESTORE_FROM_BACKUP.ps1",
+    "README_7_IMPROVEMENTS.txt",
+    "files/MepRuntimeIntegration.cs",
+    "files/MepCloudServices.cs"
+  ]
+}

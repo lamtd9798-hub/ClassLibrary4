@@ -41,7 +41,6 @@ namespace ClassLibrary4
                 return;
 
             _fireDesignUiInitialized = true;
-            InitializeMultiSystemDesignUi();
             DgFireAreas.ItemsSource = _fireDesignAreas;
             UpdateFireDesignAreaSummary();
         }
@@ -93,32 +92,19 @@ namespace ClassLibrary4
                             "LWPOLYLINE,POLYLINE,HATCH,REGION,CIRCLE")
                     };
 
-                    SelectionSet fireSelection = null;
+                    PromptSelectionResult selection =
+                        ed.GetSelection(
+                            options,
+                            new SelectionFilter(values));
 
-                    if (!MepScanSessionStore.TryGetFreshSelection(
-                            doc,
-                            out fireSelection))
+                    if (selection.Status != PromptStatus.OK ||
+                        selection.Value == null ||
+                        selection.Value.Count == 0)
                     {
-                        PromptSelectionResult selection =
-                            ed.GetSelection(
-                                options,
-                                new SelectionFilter(values));
-
-                        if (selection.Status != PromptStatus.OK ||
-                            selection.Value == null ||
-                            selection.Value.Count == 0)
-                        {
-                            SetFireDesignStatus(
-                                "Đã hủy quét hoặc chưa chọn được vùng nào.",
-                                isError: false);
-                            return;
-                        }
-
-                        fireSelection = selection.Value;
-                        MepScanSessionStore.CaptureSelection(
-                            doc,
-                            fireSelection.GetObjectIds(),
-                            new[] { "PCCC", "AREA" });
+                        SetFireDesignStatus(
+                            "Đã hủy quét hoặc chưa chọn được vùng nào.",
+                            isError: false);
+                        return;
                     }
 
                     double areaToSquareMeters =
@@ -130,7 +116,7 @@ namespace ClassLibrary4
                     using (Transaction transaction =
                         db.TransactionManager.StartTransaction())
                     {
-                        foreach (SelectedObject selected in fireSelection)
+                        foreach (SelectedObject selected in selection.Value)
                         {
                             if (selected == null ||
                                 selected.ObjectId.IsNull ||
@@ -619,4 +605,3 @@ namespace ClassLibrary4
             IsSubtraction ? -AreaM2 : AreaM2;
     }
 }
-

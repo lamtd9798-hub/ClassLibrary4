@@ -16,7 +16,6 @@ namespace ClassLibrary4
             TestCanonicalLabelMapping();
             TestDuctParserDoesNotTreatFireDnAsDuct();
             TestSnapshotFingerprintStable();
-            MepRuntimeIntegrationSelfTests.RunAll();
         }
 
         private static void TestLabelAcceptedWhileDnNeedsReview()

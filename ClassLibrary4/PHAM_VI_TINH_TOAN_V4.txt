@@ -1,0 +1,47 @@
+PHẠM VI TÍNH TOÁN V4
+====================
+
+1. FF
+- Đọc vùng kín và tổng diện tích.
+- Đọc TEXT/MTEXT/Block, nhận tầng/phòng/công năng.
+- Nhập yêu cầu chủ đầu tư, sàng lọc hệ thống và bộ tiêu chuẩn.
+- Sprinkler, họng nước, bơm, bể, DN ống, tuyến bất lợi.
+- Bố trí/đếm block đầu phun và xuất bảng kết quả.
+
+2. HÚT KHÓI
+- Q theo ACH hoặc suất m³/h trên m².
+- Lưu lượng quạt hút và gió bù.
+- Kích thước ống chữ nhật theo vận tốc/tỷ lệ cạnh.
+- Cột áp quạt từ ma sát, cục bộ, thiết bị và dự phòng.
+- Tăng áp theo rò lọt Cd·A·sqrt(2ΔP/ρ) và cửa mở A·v.
+
+3. CTN
+- Nước trung bình/ngày lớn nhất/giờ lớn nhất.
+- Bảng thiết bị có thể chỉnh WSFU và DFU.
+- Q thiết kế, bơm, bể sinh hoạt, DN ống cấp, Hazen-Williams.
+- Ống thoát ngang theo Manning sơ bộ.
+- Nước mưa Q=C·i·A/3600 và DN mỗi ống đứng.
+
+4. ACMV
+- Tải truyền nhiệt, kính, người, đèn, thiết bị và gió tươi.
+- Phương pháp chi tiết hoặc suất tải W/m².
+- Tải hiện/ẩn, kW, BTU/h, RT và công suất chuẩn gần trên.
+- Gió tươi, gió cấp, ống gió, ESP và công suất quạt.
+- Nước lạnh: lưu lượng, DN, tổn thất và bơm mạch kín.
+- Nước ngưng sơ bộ. Ống đồng DX bắt buộc tra catalogue theo model.
+
+5. SIZE CÁP
+- 1 pha/3 pha, cosφ, hiệu suất, nhu cầu, khởi động và dự phòng.
+- Cu/Al, PVC/XLPE, không khí/ống/chôn đất, nhiều tuyến song song.
+- Hệ số nhiệt độ, nhóm cáp và hệ số khác.
+- Kiểm tra phát nóng, sụt áp làm việc/khởi động và S>=I√t/k.
+- Chọn tiết diện, CB, Icu/Ics sơ bộ, PE và trung tính.
+- Dòng cho phép tích hợp là preset chạy thử; bắt buộc đối chiếu catalogue.
+
+TIÊU CHUẨN THAM CHIẾU
+- QCVN 06:2022/BXD + Sửa đổi 1:2023.
+- TCVN 5687:2024.
+- TCVN 4513:1988; TCVN 4474:1987.
+- TCVN 7957:2023; TCVN 13606:2023.
+- TCVN 7447-5-52:2010; TCVN 9207:2012.
+

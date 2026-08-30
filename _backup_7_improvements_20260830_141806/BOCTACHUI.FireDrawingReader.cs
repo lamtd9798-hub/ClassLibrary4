@@ -125,32 +125,19 @@ namespace ClassLibrary4
                             "TEXT,MTEXT,INSERT,MULTILEADER")
                     };
 
-                    SelectionSet fireTextSelection = null;
+                    PromptSelectionResult selection =
+                        ed.GetSelection(
+                            options,
+                            new SelectionFilter(values));
 
-                    if (!MepScanSessionStore.TryGetFreshSelection(
-                            doc,
-                            out fireTextSelection))
+                    if (selection.Status != PromptStatus.OK ||
+                        selection.Value == null ||
+                        selection.Value.Count == 0)
                     {
-                        PromptSelectionResult selection =
-                            ed.GetSelection(
-                                options,
-                                new SelectionFilter(values));
-
-                        if (selection.Status != PromptStatus.OK ||
-                            selection.Value == null ||
-                            selection.Value.Count == 0)
-                        {
-                            SetFireDesignStatus(
-                                "Đã hủy quét hoặc vùng chọn không có chữ/block.",
-                                isError: false);
-                            return;
-                        }
-
-                        fireTextSelection = selection.Value;
-                        MepScanSessionStore.CaptureSelection(
-                            doc,
-                            fireTextSelection.GetObjectIds(),
-                            new[] { "PCCC", "TEXT", "BLOCK" });
+                        SetFireDesignStatus(
+                            "Đã hủy quét hoặc vùng chọn không có chữ/block.",
+                            isError: false);
+                        return;
                     }
 
                     var candidates =
@@ -161,7 +148,7 @@ namespace ClassLibrary4
                     using (Transaction transaction =
                         db.TransactionManager.StartTransaction())
                     {
-                        foreach (SelectedObject selected in fireTextSelection)
+                        foreach (SelectedObject selected in selection.Value)
                         {
                             if (selected == null ||
                                 selected.ObjectId.IsNull ||
